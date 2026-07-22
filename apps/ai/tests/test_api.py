@@ -1,29 +1,22 @@
 """Suite de pruebas de la API SegurIA (FastAPI TestClient).
 
 Cubre: catálogo, cotizador (casos borde), documentos, auth de servicio/gerente,
-path traversal, insights y motor proactivo. Ejecuta con:
-    cd services/insurance-api && .venv/bin/python -m pytest -q
+path traversal, insights y motor proactivo.
+
+Corre contra PostgreSQL (compose en localhost:5432) en un esquema aislado
+`seguria_test` que conftest crea al inicio y DROPa al final:
+    DATABASE_URL=postgresql://seguria:seguria@localhost:5432/seguria \\
+        .venv/bin/python -m pytest tests/ -q
+Sin Postgres, conftest salta la suite con un motivo claro (no falla).
 """
-import os
-import tempfile
-
-os.environ.setdefault("SEGURIA_DB", os.path.join(tempfile.gettempdir(), "seguria_test.db"))
-os.environ.setdefault("MANAGER_API_KEY", "test-mgr")
-os.environ.setdefault("SERVICE_API_KEY", "test-svc")
-
 import pytest
 from fastapi.testclient import TestClient
 
-# Recrea DB limpia para el test
-for suffix in ("", "-wal", "-shm"):
-    p = os.environ["SEGURIA_DB"] + suffix
-    if os.path.exists(p):
-        os.remove(p)
-
-from app.db import init_db  # noqa: E402
+# El esquema de test, las API keys y DATABASE_URL los fija conftest.py ANTES de
+# importar `app.*`; el esquema `seguria_test` (tablas + seeds) lo prepara su fixture
+# de sesión autouse. Aquí solo construimos el cliente HTTP.
 from app.main import app  # noqa: E402
 
-init_db()  # crea esquema + seeds sin depender del lifespan
 client = TestClient(app)
 MGR = {"X-API-Key": "test-mgr"}
 SVC = {"X-Service-Key": "test-svc"}

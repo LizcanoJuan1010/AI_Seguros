@@ -1,20 +1,21 @@
 """Agregaciones para el panel gerencial y para la skill insights-gerente."""
-import sqlite3
 from typing import Any
+
+import psycopg
 
 from .db import COUNTRY_NAMES
 
 FUNNEL_ORDER = ["nuevo", "descubrimiento", "cotizado", "documento", "cerrado", "perdido"]
 
 
-def summary(conn: sqlite3.Connection) -> dict[str, Any]:
+def summary(conn: psycopg.Connection) -> dict[str, Any]:
     totals = conn.execute(
         """SELECT (SELECT COUNT(*) FROM leads) leads,
                   (SELECT COUNT(*) FROM quotes) quotes,
                   (SELECT COUNT(*) FROM leads WHERE stage='cerrado') cerrados,
                   -- solo productos de prima mensual; los de viaje (prima_por_dia)
                   -- son por-viaje y mezclarían unidades
-                  (SELECT ROUND(COALESCE(SUM(q.premium_monthly_usd),0),2)
+                  (SELECT ROUND(COALESCE(SUM(q.premium_monthly_usd),0)::numeric,2)::double precision
                      FROM quotes q JOIN products p ON p.id=q.product_id
                      WHERE q.status='aceptada' AND p.prima_por_dia=0) prima_mensual_usd"""
     ).fetchone()
@@ -43,8 +44,8 @@ def summary(conn: sqlite3.Connection) -> dict[str, Any]:
     timeseries = [
         {"fecha": r["d"], "cotizaciones": r["n"]}
         for r in conn.execute(
-            """SELECT date(created_at) d, COUNT(*) n FROM quotes
-               GROUP BY date(created_at) ORDER BY d""")
+            """SELECT to_char(created_at,'YYYY-MM-DD') d, COUNT(*) n FROM quotes
+               GROUP BY to_char(created_at,'YYYY-MM-DD') ORDER BY d""")
     ]
     return {
         "kpis": {

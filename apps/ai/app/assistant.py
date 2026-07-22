@@ -362,7 +362,7 @@ def _latest_quote_for(user_id: str) -> dict | None:
             """SELECT q.*, p.nombre AS producto, p.tipo, p.aseguradora, p.coberturas
                FROM quotes q JOIN products p ON p.id = q.product_id
                JOIN leads l ON l.id = q.lead_id
-               WHERE l.phone = ? ORDER BY q.id DESC LIMIT 1""",
+               WHERE l.phone = %s ORDER BY q.id DESC LIMIT 1""",
             (user_id,)).fetchone()
         return dict(row) if row else None
     finally:

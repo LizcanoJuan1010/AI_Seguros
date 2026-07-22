@@ -5,8 +5,9 @@ prima_mensual = prima_base * factor_edad * factores_de_riesgo * (suma/suma_base)
 convertida a moneda local con la última tasa FX del regulador.
 """
 import json
-import sqlite3
 from typing import Any
+
+import psycopg
 
 from .db import COUNTRY_CURRENCY, COUNTRY_NAMES, latest_fx
 
@@ -26,7 +27,7 @@ def _age_factor(age_table: dict[str, float], age: int) -> tuple[float, str]:
     return factor, f"{rng} (extrapolado)"
 
 
-def quote_product(conn: sqlite3.Connection, product: sqlite3.Row, *,
+def quote_product(conn: psycopg.Connection, product: dict, *,
                   country: str, age: int | None, sum_assured_usd: float | None,
                   extras: dict[str, Any]) -> dict[str, Any]:
     factores = json.loads(product["factores"])
@@ -95,7 +96,7 @@ def quote_product(conn: sqlite3.Connection, product: sqlite3.Row, *,
     }
 
 
-def recommend(conn: sqlite3.Connection, *, country: str, tipo: str | None,
+def recommend(conn: psycopg.Connection, *, country: str, tipo: str | None,
               age: int | None, sum_assured_usd: float | None,
               budget_monthly_usd: float | None, extras: dict[str, Any],
               max_options: int = 3) -> list[dict[str, Any]]:

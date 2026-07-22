@@ -27,10 +27,13 @@ MAX_PER_USER = 50  # tope de recuerdos por `(tenant_id, user_id)` (se recorta al
 
 DEFAULT_TENANT = "demo"  # fallback de partición (los endpoints inyectan el tenant real)
 
+# La tabla `memory` vive en el esquema dedicado `seguria` (mismo esquema que el resto
+# del data-layer del servicio IA; las tablas del dominio Prisma están en `public`).
 # Esquema base: tabla sin la UNIQUE inline (la crea la migración idempotente, con nombre
 # estable, para que ON CONFLICT (tenant_id, user_id, hash) tenga índice de respaldo).
 CREATE_SQL = """
-CREATE TABLE IF NOT EXISTS memory (
+CREATE SCHEMA IF NOT EXISTS seguria;
+CREATE TABLE IF NOT EXISTS seguria.memory (
   id BIGSERIAL PRIMARY KEY, tenant_id TEXT NOT NULL DEFAULT 'demo',
   user_id TEXT NOT NULL, content TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'general', hash TEXT NOT NULL,
@@ -43,19 +46,20 @@ CREATE TABLE IF NOT EXISTS memory (
 #  2) soltamos la unique/índice viejos por eje único,
 #  3) creamos la unique `(tenant_id, user_id, hash)` y el índice de ranking por par.
 MIGRATE_SQL = """
-ALTER TABLE memory ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'demo';
-ALTER TABLE memory DROP CONSTRAINT IF EXISTS memory_user_id_hash_key;
-DROP INDEX IF EXISTS memory_user_rank;
+ALTER TABLE seguria.memory ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'demo';
+ALTER TABLE seguria.memory DROP CONSTRAINT IF EXISTS memory_user_id_hash_key;
+DROP INDEX IF EXISTS seguria.memory_user_rank;
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'memory_tenant_user_hash_key'
+      AND conrelid = 'seguria.memory'::regclass
   ) THEN
-    ALTER TABLE memory
+    ALTER TABLE seguria.memory
       ADD CONSTRAINT memory_tenant_user_hash_key UNIQUE (tenant_id, user_id, hash);
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS memory_tenant_user_rank
-  ON memory (tenant_id, user_id, score DESC, updated_at DESC);
+  ON seguria.memory (tenant_id, user_id, score DESC, updated_at DESC);
 """
 
 # Estado del módulo (se puebla en el lifespan de FastAPI vía init_pool()).
@@ -123,15 +127,15 @@ async def add_memory(user_id: str, content: str, category: str = "general",
         try:
             async with _pool.acquire() as conn:
                 await conn.execute(
-                    """INSERT INTO memory (tenant_id, user_id, content, category, hash)
+                    """INSERT INTO seguria.memory (tenant_id, user_id, content, category, hash)
                        VALUES ($1, $2, $3, $4, $5)
                        ON CONFLICT (tenant_id, user_id, hash)
                        DO UPDATE SET score = memory.score + 1, updated_at = now()""",
                     tenant_id, user_id, content, category, h)
                 await conn.execute(
-                    """DELETE FROM memory
+                    """DELETE FROM seguria.memory
                         WHERE tenant_id = $1 AND user_id = $2 AND id NOT IN (
-                          SELECT id FROM memory WHERE tenant_id = $1 AND user_id = $2
+                          SELECT id FROM seguria.memory WHERE tenant_id = $1 AND user_id = $2
                           ORDER BY score DESC, updated_at DESC LIMIT $3)""",
                     tenant_id, user_id, MAX_PER_USER)
             return
@@ -163,7 +167,7 @@ async def get_memory_context(user_id: str, limit: int = 20,
         try:
             async with _pool.acquire() as conn:
                 recs = await conn.fetch(
-                    """SELECT content, category FROM memory
+                    """SELECT content, category FROM seguria.memory
                         WHERE tenant_id = $1 AND user_id = $2
                         ORDER BY score DESC, updated_at DESC LIMIT $3""",
                     tenant_id, user_id, limit)
@@ -198,7 +202,7 @@ async def search_memories(user_id: str, query: str, limit: int = 3,
         try:
             async with _pool.acquire() as conn:
                 recs = await conn.fetch(
-                    """SELECT content FROM memory
+                    """SELECT content FROM seguria.memory
                          WHERE tenant_id = $1 AND user_id = $2
                            AND to_tsvector('spanish', content)
                                @@ plainto_tsquery('spanish', $3)
@@ -206,7 +210,7 @@ async def search_memories(user_id: str, query: str, limit: int = 3,
                     tenant_id, user_id, q, limit)
                 if not recs:
                     recs = await conn.fetch(
-                        """SELECT content FROM memory
+                        """SELECT content FROM seguria.memory
                              WHERE tenant_id = $1 AND user_id = $2
                                AND content ILIKE '%' || $3 || '%'
                            ORDER BY score DESC, updated_at DESC LIMIT $4""",

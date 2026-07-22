@@ -4,25 +4,32 @@ interacciones nacen de una sugerencia del asistente, no del usuario).
 Reglas deterministas sobre el estado del funnel — el LLM solo redacta encima.
 Consumido por: skill `seguimiento-proactivo` de Hermes (cron) y panel gerencial.
 """
-import sqlite3
 from typing import Any
+
+import psycopg
 
 from .db import COUNTRY_NAMES
 
 
-def client_nudges(conn: sqlite3.Connection, phone: str | None = None) -> list[dict[str, Any]]:
+def client_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
     """Sugerencias de seguimiento por cliente. Sin phone: todos los accionables."""
-    where, params = ("AND l.phone = ?", [phone]) if phone else ("", [])
+    where, params = ("AND l.phone = %s", [phone]) if phone else ("", [])
     nudges: list[dict] = []
 
-    # Cotizó hace 2+ días y no pidió el documento → recordatorio con su mejor opción
+    # Cotizó hace 2+ días y no pidió el documento → recordatorio con su mejor opción.
+    # DISTINCT ON toma la cotización más reciente por lead (equivale al MAX(created_at)
+    # + columnas "bare" de SQLite, que en un MAX toman valores de esa misma fila).
     for r in conn.execute(f"""
-        SELECT l.phone, l.name, l.country, q.id quote_id, p.nombre producto,
-               q.premium_monthly_local, q.currency,
-               julianday('now') - julianday(MAX(q.created_at)) dias
-        FROM leads l JOIN quotes q ON q.lead_id=l.id JOIN products p ON p.id=q.product_id
-        WHERE l.stage='cotizado' {where}
-        GROUP BY l.id HAVING dias >= 2""", params):
+        SELECT phone, name, country, quote_id, producto, premium_monthly_local, currency, dias
+        FROM (
+            SELECT DISTINCT ON (l.id)
+                   l.phone, l.name, l.country, q.id quote_id, p.nombre producto,
+                   q.premium_monthly_local, q.currency,
+                   EXTRACT(EPOCH FROM (now() - q.created_at)) / 86400.0 dias
+            FROM leads l JOIN quotes q ON q.lead_id=l.id JOIN products p ON p.id=q.product_id
+            WHERE l.stage='cotizado' {where}
+            ORDER BY l.id, q.created_at DESC
+        ) t WHERE dias >= 2""", params):
         nudges.append({
             "phone": r["phone"], "tipo": "seguimiento_cotizacion",
             "prioridad": "alta" if r["dias"] >= 5 else "media",
@@ -36,7 +43,7 @@ def client_nudges(conn: sqlite3.Connection, phone: str | None = None) -> list[di
 
     # Recibió el documento y no cerró en 3+ días → oferta de llamada con asesor
     for r in conn.execute(f"""
-        SELECT l.phone, l.name, julianday('now') - julianday(l.updated_at) dias
+        SELECT l.phone, l.name, EXTRACT(EPOCH FROM (now() - l.updated_at)) / 86400.0 dias
         FROM leads l WHERE l.stage='documento' {where}""", params):
         if r["dias"] >= 3:
             nudges.append({
@@ -48,7 +55,8 @@ def client_nudges(conn: sqlite3.Connection, phone: str | None = None) -> list[di
 
     # En descubrimiento sin cotizar hace 1+ día → retomar con una pregunta simple
     for r in conn.execute(f"""
-        SELECT l.phone, l.name, l.country, julianday('now') - julianday(l.updated_at) dias
+        SELECT l.phone, l.name, l.country,
+               EXTRACT(EPOCH FROM (now() - l.updated_at)) / 86400.0 dias
         FROM leads l WHERE l.stage IN ('nuevo','descubrimiento') {where}""", params):
         if r["dias"] >= 1:
             nudges.append({
@@ -63,16 +71,16 @@ def client_nudges(conn: sqlite3.Connection, phone: str | None = None) -> list[di
     return nudges
 
 
-def manager_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def manager_alerts(conn: psycopg.Connection) -> list[dict[str, Any]]:
     """Alertas de negocio para el gerente."""
     alerts: list[dict] = []
     k = conn.execute("""
         SELECT (SELECT COUNT(*) FROM leads) leads,
                (SELECT COUNT(*) FROM leads WHERE stage='cerrado') cerrados,
                (SELECT COUNT(*) FROM leads WHERE stage='cotizado'
-                  AND julianday('now') - julianday(updated_at) >= 3) estancados,
+                  AND updated_at <= now() - interval '3 days') estancados,
                (SELECT COUNT(*) FROM quotes
-                  WHERE julianday('now') - julianday(created_at) <= 7) cotiz_7d""").fetchone()
+                  WHERE created_at >= now() - interval '7 days') cotiz_7d""").fetchone()
     conv = round(100 * k["cerrados"] / k["leads"], 1) if k["leads"] else 0
     if conv < 20 and k["leads"] >= 10:
         alerts.append({"tipo": "conversion_baja", "prioridad": "alta",
@@ -88,7 +96,7 @@ def manager_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                        "accion": "Verificar el canal de WhatsApp y la campaña de adquisición."})
     top = conn.execute("""
         SELECT p.nombre, COUNT(*) n FROM quotes q JOIN products p ON p.id=q.product_id
-        WHERE julianday('now') - julianday(q.created_at) <= 7
+        WHERE q.created_at >= now() - interval '7 days'
         GROUP BY p.id ORDER BY n DESC LIMIT 1""").fetchone()
     if top:
         alerts.append({"tipo": "tendencia", "prioridad": "info",

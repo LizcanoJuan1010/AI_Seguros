@@ -13,8 +13,9 @@ misma capacidad agéntica al canal web (SPA) y sirve de fallback API-first.
 import json
 import logging
 import re
-import sqlite3
 from typing import Any
+
+import psycopg
 
 from .config import (BACKEND_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL,
                      DEEPSEEK_MODEL, MANAGER_PHONES)
@@ -191,7 +192,7 @@ TOOLS_SCHEMA = [
 CHECKOUT_REQUIRED = ("full_name", "document_id")  # mínimos para emitir
 
 
-def _checkout_table(conn: sqlite3.Connection) -> None:
+def _checkout_table(conn: psycopg.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS checkout_session (
         session_key TEXT PRIMARY KEY,
         full_name TEXT,
@@ -204,16 +205,16 @@ def _checkout_table(conn: sqlite3.Connection) -> None:
         department TEXT,
         consent INTEGER DEFAULT 0,
         consent_at TEXT,
-        updated_at TEXT DEFAULT (datetime('now')))""")
+        updated_at TIMESTAMPTZ DEFAULT now())""")
 
 
-def _get_checkout(conn: sqlite3.Connection, key: str) -> dict:
+def _get_checkout(conn: psycopg.Connection, key: str) -> dict:
     _checkout_table(conn)
-    row = conn.execute("SELECT * FROM checkout_session WHERE session_key=?", (key,)).fetchone()
+    row = conn.execute("SELECT * FROM checkout_session WHERE session_key=%s", (key,)).fetchone()
     return dict(row) if row else {}
 
 
-def _save_checkout(conn: sqlite3.Connection, key: str, **fields) -> dict:
+def _save_checkout(conn: psycopg.Connection, key: str, **fields) -> dict:
     """Upsert de los campos no nulos del cliente/consentimiento en la sesión."""
     _checkout_table(conn)
     current = _get_checkout(conn, key)
@@ -224,13 +225,13 @@ def _save_checkout(conn: sqlite3.Connection, key: str, **fields) -> dict:
     cols = ("full_name", "document_type", "document_id", "birth_date", "email",
             "phone", "city", "department", "consent", "consent_at")
     if current:
-        sets = ", ".join(f"{c}=?" for c in cols) + ", updated_at=datetime('now')"
-        conn.execute(f"UPDATE checkout_session SET {sets} WHERE session_key=?",
+        sets = ", ".join(f"{c}=%s" for c in cols) + ", updated_at=now()"
+        conn.execute(f"UPDATE checkout_session SET {sets} WHERE session_key=%s",
                      (*[merged.get(c) for c in cols], key))
     else:
         conn.execute(
             f"INSERT INTO checkout_session (session_key, {', '.join(cols)}) "
-            f"VALUES (?{',?' * len(cols)})",
+            f"VALUES (%s{',%s' * len(cols)})",
             (key, *[merged.get(c) for c in cols]))
     conn.commit()
     return _get_checkout(conn, key)
@@ -238,15 +239,15 @@ def _save_checkout(conn: sqlite3.Connection, key: str, **fields) -> dict:
 
 # --- Store flexible (JSON) para el intake completo: todos los campos del catálogo ---
 
-def _intake_table(conn: sqlite3.Connection) -> None:
+def _intake_table(conn: psycopg.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS intake_session (
         session_key TEXT PRIMARY KEY, datos TEXT DEFAULT '{}',
-        updated_at TEXT DEFAULT (datetime('now')))""")
+        updated_at TIMESTAMPTZ DEFAULT now())""")
 
 
-def _get_intake(conn: sqlite3.Connection, key: str) -> dict:
+def _get_intake(conn: psycopg.Connection, key: str) -> dict:
     _intake_table(conn)
-    row = conn.execute("SELECT datos FROM intake_session WHERE session_key=?", (key,)).fetchone()
+    row = conn.execute("SELECT datos FROM intake_session WHERE session_key=%s", (key,)).fetchone()
     try:
         return json.loads(row["datos"]) if row and row["datos"] else {}
     except (json.JSONDecodeError, TypeError):
@@ -262,14 +263,14 @@ _INTAKE_TO_CHECKOUT = {
 }
 
 
-def _save_intake(conn: sqlite3.Connection, key: str, campos: dict) -> dict:
+def _save_intake(conn: psycopg.Connection, key: str, campos: dict) -> dict:
     """Mezcla campos en el store JSON y refleja los clave en checkout_session."""
     _intake_table(conn)
     datos = _get_intake(conn, key)
     datos.update({k: v for k, v in campos.items() if v is not None})
     conn.execute(
-        "INSERT INTO intake_session (session_key, datos, updated_at) VALUES (?,?,datetime('now')) "
-        "ON CONFLICT(session_key) DO UPDATE SET datos=excluded.datos, updated_at=datetime('now')",
+        "INSERT INTO intake_session (session_key, datos, updated_at) VALUES (%s,%s,now()) "
+        "ON CONFLICT(session_key) DO UPDATE SET datos=excluded.datos, updated_at=now()",
         (key, json.dumps(datos, ensure_ascii=False)))
     conn.commit()
     # refleja identidad/contacto hacia el checkout para poder emitir
@@ -285,7 +286,7 @@ def _checkout_missing(sess: dict) -> list[str]:
     return [labels[f] for f in CHECKOUT_REQUIRED if not (sess.get(f) or "").strip()]
 
 
-def _emitir_poliza(conn: sqlite3.Connection, args: dict, *, phone: str,
+def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
                    tenant_id: str) -> dict:
     """Cierra la venta: valida sesión + consentimiento, llama al backend NestJS
     (`POST {BACKEND_URL}/api/v1/checkout`) reenviando `X-Tenant-Id`, genera el PDF
@@ -373,8 +374,8 @@ def _emitir_poliza(conn: sqlite3.Connection, args: dict, *, phone: str,
     # Marca el lead como cerrado localmente (best-effort, para el panel gerencial)
     try:
         if phone:
-            conn.execute("UPDATE leads SET stage='cerrado', updated_at=datetime('now') "
-                         "WHERE phone=? AND stage NOT IN ('cerrado','perdido')", (phone,))
+            conn.execute("UPDATE leads SET stage='cerrado', updated_at=now() "
+                         "WHERE phone=%s AND stage NOT IN ('cerrado','perdido')", (phone,))
             conn.commit()
     except Exception:
         log.debug("no se pudo actualizar el lead a cerrado", exc_info=True)
@@ -435,14 +436,13 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             lead_id = _upsert_lead(conn, phone, args.get("name"), country, args.get("age"),
                                    stage="cotizado" if options else "descubrimiento")
             for o in options:
-                cur = conn.execute(
+                o["quote_id"] = conn.execute(
                     """INSERT INTO quotes (lead_id, product_id, country, currency, sum_assured_usd,
                        premium_monthly_usd, premium_monthly_local, breakdown)
-                       VALUES (?,?,?,?,?,?,?,?)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                     (lead_id, o["product_id"], country, o["moneda"], o["suma_asegurada_usd"],
                      o["prima_mensual_usd"], o["prima_mensual_local"],
-                     json.dumps(o["breakdown"], ensure_ascii=False)))
-                o["quote_id"] = cur.lastrowid
+                     json.dumps(o["breakdown"], ensure_ascii=False))).fetchone()["id"]
                 o.pop("breakdown", None)
             conn.commit()
             return {"opciones": options}
@@ -452,11 +452,11 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                 return {"error": "falta quote_id; cotiza primero y usa el quote_id de la opción elegida"}
             q = conn.execute(
                 """SELECT q.*, p.nombre producto, p.tipo, p.aseguradora, p.coberturas, p.prima_por_dia
-                   FROM quotes q JOIN products p ON p.id=q.product_id WHERE q.id=?""",
+                   FROM quotes q JOIN products p ON p.id=q.product_id WHERE q.id=%s""",
                 (args["quote_id"],)).fetchone()
             if not q:
                 return {"error": "quote_id no existe; cotiza primero"}
-            lead = dict(conn.execute("SELECT * FROM leads WHERE id=?", (q["lead_id"],)).fetchone() or {}) if q["lead_id"] else None
+            lead = dict(conn.execute("SELECT * FROM leads WHERE id=%s", (q["lead_id"],)).fetchone() or {}) if q["lead_id"] else None
             quote_dict = {
                 "product_id": q["product_id"], "producto": q["producto"], "tipo": q["tipo"],
                 "aseguradora": q["aseguradora"], "pais": COUNTRY_NAMES.get(q["country"], q["country"]),
@@ -468,10 +468,10 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                 "periodicidad": "por viaje" if q["prima_por_dia"] else "mensual",
             }
             path = build_quote_pdf(quote_dict, lead)
-            conn.execute("UPDATE quotes SET status='documento' WHERE id=?", (args["quote_id"],))
+            conn.execute("UPDATE quotes SET status='documento' WHERE id=%s", (args["quote_id"],))
             if q["lead_id"]:
-                conn.execute("UPDATE leads SET stage='documento', updated_at=datetime('now') "
-                             "WHERE id=? AND stage NOT IN ('cerrado','perdido')", (q["lead_id"],))
+                conn.execute("UPDATE leads SET stage='documento', updated_at=now() "
+                             "WHERE id=%s AND stage NOT IN ('cerrado','perdido')", (q["lead_id"],))
             conn.commit()
             from pathlib import Path
             return {"download_url": f"/api/documents/{Path(path).name}",
@@ -535,9 +535,9 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                 return {"error": "acceso denegado: solo gerentes"}
             rows = conn.execute(
                 """SELECT l.name, l.country, l.stage, l.updated_at, COUNT(q.id) cotizaciones,
-                          ROUND(COALESCE(SUM(q.premium_monthly_usd),0),2) prima_usd
+                          ROUND(COALESCE(SUM(q.premium_monthly_usd),0)::numeric,2)::double precision prima_usd
                    FROM leads l LEFT JOIN quotes q ON q.lead_id=l.id
-                   GROUP BY l.id ORDER BY l.updated_at DESC LIMIT ?""",
+                   GROUP BY l.id ORDER BY l.updated_at DESC LIMIT %s""",
                 (min(int(args.get("limit", 20)), 100),)).fetchall()
             return [dict(r) for r in rows]
 
@@ -594,9 +594,9 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
         conn.close()
 
 
-# ---------- Historial de sesión (SQLite) ----------
+# ---------- Historial de sesión (PostgreSQL) ----------
 
-def _history_table(conn: sqlite3.Connection) -> None:
+def _history_table(conn: psycopg.Connection) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS chat_history (
         session_id TEXT, seq INTEGER, message TEXT,
         PRIMARY KEY (session_id, seq))""")
@@ -606,7 +606,7 @@ def _load_history(session_id: str, limit: int = 30) -> list[dict]:
     conn = get_conn()
     _history_table(conn)
     rows = conn.execute(
-        "SELECT message FROM chat_history WHERE session_id=? ORDER BY seq DESC LIMIT ?",
+        "SELECT message FROM chat_history WHERE session_id=%s ORDER BY seq DESC LIMIT %s",
         (session_id, limit)).fetchall()
     conn.close()
     msgs = [json.loads(r["message"]) for r in reversed(rows)]
@@ -622,12 +622,12 @@ def _load_history(session_id: str, limit: int = 30) -> list[dict]:
 def _append_history(session_id: str, messages: list[dict]) -> None:
     conn = get_conn()
     _history_table(conn)
-    row = conn.execute("SELECT COALESCE(MAX(seq),0) m FROM chat_history WHERE session_id=?",
+    row = conn.execute("SELECT COALESCE(MAX(seq),0) m FROM chat_history WHERE session_id=%s",
                        (session_id,)).fetchone()
     seq = row["m"]
     for m in messages:
         seq += 1
-        conn.execute("INSERT INTO chat_history (session_id, seq, message) VALUES (?,?,?)",
+        conn.execute("INSERT INTO chat_history (session_id, seq, message) VALUES (%s,%s,%s)",
                      (session_id, seq, json.dumps(m, ensure_ascii=False)))
     conn.commit()
     conn.close()

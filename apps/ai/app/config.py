@@ -12,8 +12,14 @@ try:
 except ImportError:
     pass
 DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", PROJECT_ROOT / "data" / "market"))
-DB_PATH = Path(os.getenv("SEGURIA_DB", BASE_DIR.parent / "seguria.db"))
 DOCS_DIR = Path(os.getenv("SEGURIA_DOCS_DIR", BASE_DIR.parent / "generated_docs"))
+
+# NOTA: el servicio IA usa PostgreSQL EXCLUSIVAMENTE (cero SQLite). Todo el
+# data-layer vive en el esquema `seguria` de la misma base que la memoria
+# multi-tenant (ver DATABASE_URL abajo y app/db.py). `SEGURIA_DB`/`DB_PATH`
+# quedaron OBSOLETOS y se eliminaron. El esquema es configurable vía
+# `SEGURIA_DB_SCHEMA` (default `seguria`; la suite usa `seguria_test`).
+DB_SCHEMA = os.getenv("SEGURIA_DB_SCHEMA", "seguria")
 
 # Rol gerente: números de WhatsApp autorizados (separados por coma) y API key del panel
 MANAGER_PHONES = {p.strip() for p in os.getenv("MANAGER_PHONES", "").split(",") if p.strip()}

@@ -176,17 +176,16 @@ def _upsert_lead(conn, phone: str | None, name: str | None, country: str,
                  age: int | None, stage: str) -> int | None:
     if not phone:
         return None
-    row = conn.execute("SELECT id, stage FROM leads WHERE phone=?", (phone,)).fetchone()
+    row = conn.execute("SELECT id, stage FROM leads WHERE phone=%s", (phone,)).fetchone()
     if row:
         conn.execute(
-            """UPDATE leads SET name=COALESCE(?,name), country=?, age=COALESCE(?,age),
-               stage=?, updated_at=datetime('now') WHERE id=?""",
+            """UPDATE leads SET name=COALESCE(%s,name), country=%s, age=COALESCE(%s,age),
+               stage=%s, updated_at=now() WHERE id=%s""",
             (name, country, age, stage, row["id"]))
         return row["id"]
-    cur = conn.execute(
-        "INSERT INTO leads (phone, name, country, age, stage) VALUES (?,?,?,?,?)",
-        (phone, name, country, age, stage))
-    return cur.lastrowid
+    return conn.execute(
+        "INSERT INTO leads (phone, name, country, age, stage) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+        (phone, name, country, age, stage)).fetchone()["id"]
 
 
 @app.post("/api/quotes")
@@ -204,15 +203,15 @@ def create_quotes(req: QuoteRequest) -> dict:
                            stage="cotizado" if options else "descubrimiento")
     quote_ids = []
     for o in options:
-        cur = conn.execute(
+        qid = conn.execute(
             """INSERT INTO quotes (lead_id, product_id, country, currency, sum_assured_usd,
                premium_monthly_usd, premium_monthly_local, breakdown)
-               VALUES (?,?,?,?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (lead_id, o["product_id"], country, o["moneda"], o["suma_asegurada_usd"],
              o["prima_mensual_usd"], o["prima_mensual_local"],
-             json.dumps(o["breakdown"], ensure_ascii=False)))
-        o["quote_id"] = cur.lastrowid
-        quote_ids.append(cur.lastrowid)
+             json.dumps(o["breakdown"], ensure_ascii=False))).fetchone()["id"]
+        o["quote_id"] = qid
+        quote_ids.append(qid)
     conn.commit()
     conn.close()
     return {"lead_id": lead_id, "opciones": options,
@@ -226,17 +225,17 @@ def quote_document(quote_id: int) -> dict:
     conn = get_conn()
     q = conn.execute(
         """SELECT q.*, p.nombre producto, p.tipo, p.aseguradora, p.coberturas, p.prima_por_dia
-           FROM quotes q JOIN products p ON p.id=q.product_id WHERE q.id=?""",
+           FROM quotes q JOIN products p ON p.id=q.product_id WHERE q.id=%s""",
         (quote_id,)).fetchone()
     if not q:
         conn.close()
         raise HTTPException(404, "Cotización no encontrada")
     lead = None
     if q["lead_id"]:
-        lead = dict(conn.execute("SELECT * FROM leads WHERE id=?", (q["lead_id"],)).fetchone() or {})
-        conn.execute("UPDATE leads SET stage='documento', updated_at=datetime('now') "
-                     "WHERE id=? AND stage NOT IN ('cerrado','perdido')", (q["lead_id"],))
-    conn.execute("UPDATE quotes SET status='documento' WHERE id=?", (quote_id,))
+        lead = dict(conn.execute("SELECT * FROM leads WHERE id=%s", (q["lead_id"],)).fetchone() or {})
+        conn.execute("UPDATE leads SET stage='documento', updated_at=now() "
+                     "WHERE id=%s AND stage NOT IN ('cerrado','perdido')", (q["lead_id"],))
+    conn.execute("UPDATE quotes SET status='documento' WHERE id=%s", (quote_id,))
     quote_dict = {
         "product_id": q["product_id"], "producto": q["producto"], "tipo": q["tipo"],
         "aseguradora": q["aseguradora"], "pais": COUNTRY_NAMES.get(q["country"], q["country"]),
@@ -328,7 +327,7 @@ def insights_leads() -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
         """SELECT l.*, COUNT(q.id) cotizaciones,
-                  ROUND(COALESCE(SUM(q.premium_monthly_usd),0),2) prima_usd
+                  ROUND(COALESCE(SUM(q.premium_monthly_usd),0)::numeric,2)::double precision prima_usd
            FROM leads l LEFT JOIN quotes q ON q.lead_id=l.id
            GROUP BY l.id ORDER BY l.updated_at DESC LIMIT 100""").fetchall()
     conn.close()
