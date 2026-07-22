@@ -29,15 +29,16 @@ docker compose ps             # todos "Up"
 ```
 Guía completa de despliegue y emparejamiento de WhatsApp: [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md).
 
-## Solo la API (sin Docker)
+## Solo el servicio IA (sin Docker)
 ```bash
 bash scripts/setup.sh api
-cd services/insurance-api && .venv/bin/uvicorn app.main:app --port 8085
+cd apps/ai && .venv/bin/uvicorn app.main:app --port 8085
 ```
 
 ## Agente por WhatsApp (nativo, sin Docker)
-Sigue [agent/README.md](agent/README.md): configura DeepSeek en `~/.hermes/`, arranca
-desde `agent/` para cargar la persona y las 7 skills, y empareja WhatsApp:
+Sigue [services/hermes-agent/README.md](services/hermes-agent/README.md): configura DeepSeek
+en `~/.hermes/`, arranca desde `services/hermes-agent/` para cargar la persona y las skills,
+y empareja WhatsApp:
 
 | Skill | Qué hace |
 |---|---|
@@ -53,19 +54,23 @@ desde `agent/` para cargar la persona y las 7 skills, y empareja WhatsApp:
 `data/market/` contiene datos **copiados** (nunca modificados en origen) de
 `latam-insurance-pipeline-kgm-main`: aseguradoras canónicas de 10+ reguladores y
 tasas FX oficiales. Los módulos de referencia de Paloma (WhatsApp Cloud API,
-docx builder, Metabase client) están en `services/insurance-api/app/reference/` y
+docx builder, Metabase client) están en `apps/ai/app/reference/` y
 `services/baileys-bridge/`.
 
-## Estructura
+## Estructura (monorepo polyglot)
 ```
-agent/                    # workspace Hermes (SOUL.md, AGENTS.md, skills/)
-services/insurance-api/   # FastAPI + SQLite + SPA + orquestador DeepSeek (8085) + tests
-services/baileys-bridge/  # plan B WhatsApp (perfil docker "baileys")
-data/market/              # aseguradoras LATAM + FX (copiados de reguladores)
-deploy/                   # Dockerfile Hermes, DEPLOYMENT.md, systemd
-docker-compose.yml        # stack completo: api + tts + hermes + baileys
-docs/PLAN.md, AUDITORIA.md# plan maestro y auditoría
-scripts/setup.sh          # instalación nativa por componente
+apps/
+  backend/      # NestJS + Prisma — dominio (leads, quotes, policies, checkout) → Postgres (3001)
+  frontend/     # React 19 + Vite + Tailwind — SPA + chat /asistente (nginx :8090)
+  ai/           # Python FastAPI — cerebro: chat SSE, cotizador, memoria, cierre/emisión, PDF (8085)
+services/
+  hermes-agent/     # workspace Hermes (SOUL.md, AGENTS.md, skills/) — canal WhatsApp
+  baileys-bridge/   # plan B WhatsApp (perfil docker "baileys")
+data/market/    # aseguradoras LATAM + FX (copiados de reguladores) + catálogo
+deploy/         # nginx, Dockerfiles (frontend, hermes), systemd, DEPLOYMENT.md
+docs/           # PLAN, FUSION, AUDITORIA, RETO_COLSUBSIDIO
+scripts/        # setup.sh, deploy_agent.sh
+docker-compose.yml   # postgres + redis + backend + ai + frontend (+ perfiles: voz/hermes/baileys)
 ```
 
 ## Cumplimiento

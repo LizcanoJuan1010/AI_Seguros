@@ -7,17 +7,17 @@ TARGET="${1:-api}"
 
 setup_api() {
   echo "==> SegurIA API (FastAPI + SQLite)"
-  cd "$ROOT/services/insurance-api"
+  cd "$ROOT/apps/ai"
   command -v uv >/dev/null || { echo "Instala uv: https://docs.astral.sh/uv/"; exit 1; }
   uv venv .venv 2>/dev/null || true
   uv pip install -r requirements.txt --python .venv/bin/python
-  echo "OK. Arranca con: cd services/insurance-api && .venv/bin/uvicorn app.main:app --port 8085"
+  echo "OK. Arranca con: cd apps/ai && .venv/bin/uvicorn app.main:app --port 8085"
 }
 
 setup_hermes() {
   echo "==> Hermes Agent (NousResearch)"
   command -v hermes >/dev/null || curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-  echo "Luego: cd agent && hermes   (config de modelo y gateway en agent/README.md)"
+  echo "Luego: cd services/hermes-agent && hermes   (config en services/hermes-agent/README.md)"
 }
 
 setup_officecli() {

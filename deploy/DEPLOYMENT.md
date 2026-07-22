@@ -56,7 +56,7 @@ docker compose exec hermes-agent hermes whatsapp
 # El emparejamiento persiste en el volumen hermes-platforms; no hay que repetirlo.
 ```
 Producción sin riesgo de bloqueo: usa WhatsApp Cloud API oficial de Meta (cliente de
-referencia en `services/insurance-api/app/reference/whatsapp_official_client.py`) o el
+referencia en `apps/ai/app/reference/whatsapp_official_client.py`) o el
 `baileys-bridge` (`docker compose --profile baileys up -d`).
 
 ## 5. Prueba el agente sin WhatsApp (modo headless)

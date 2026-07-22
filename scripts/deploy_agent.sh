@@ -4,7 +4,7 @@
 # Uso: bash scripts/deploy_agent.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AGENT="$ROOT/agent"
+AGENT="$ROOT/services/hermes-agent"
 HH="${HERMES_HOME:-$HOME/.hermes}"
 
 command -v hermes >/dev/null || { echo "Hermes no está instalado. Ejecuta: bash scripts/setup.sh hermes"; exit 1; }
