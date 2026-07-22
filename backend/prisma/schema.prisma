@@ -1,0 +1,316 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  AGENTE @map("agente")
+  GERENTE @map("gerente")
+  ADMIN @map("admin")
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVO @map("activo")
+  INACTIVO @map("inactivo")
+  VACACIONES @map("vacaciones")
+
+  @@map("user_status")
+}
+
+enum InsuranceType {
+  VIDA @map("vida")
+  AUTO @map("auto")
+  SALUD @map("salud")
+
+  @@map("insurance_type")
+}
+
+enum CallStatus {
+  EN_CURSO @map("en_curso")
+  COMPLETADA @map("completada")
+  ABANDONADA @map("abandonada")
+  TRANSFERIDA_HUMANO @map("transferida_humano")
+  FALLIDA @map("fallida")
+
+  @@map("call_status")
+}
+
+enum LeadIntent {
+  CALIENTE @map("caliente")
+  TIBIO @map("tibio")
+  FRIO @map("frio")
+
+  @@map("lead_intent")
+}
+
+enum LeadStatus {
+  NUEVO @map("nuevo")
+  CONTACTADO @map("contactado")
+  COTIZADO @map("cotizado")
+  NEGOCIACION @map("negociacion")
+  CERRADO_GANADO @map("cerrado_ganado")
+  CERRADO_PERDIDO @map("cerrado_perdido")
+
+  @@map("lead_status")
+}
+
+enum QuoteStatus {
+  BORRADOR @map("borrador")
+  ENVIADA @map("enviada")
+  ACEPTADA @map("aceptada")
+  RECHAZADA @map("rechazada")
+  VENCIDA @map("vencida")
+
+  @@map("quote_status")
+}
+
+enum PolicyStatus {
+  VIGENTE @map("vigente")
+  CANCELADA @map("cancelada")
+  VENCIDA @map("vencida")
+  SUSPENDIDA @map("suspendida")
+
+  @@map("policy_status")
+}
+
+enum SpeakerType {
+  IA @map("ia")
+  CLIENTE @map("cliente")
+
+  @@map("speaker_type")
+}
+
+enum EventType {
+  LLAMADA_SALIENTE @map("llamada_saliente")
+  WHATSAPP @map("whatsapp")
+  EMAIL @map("email")
+  REUNION @map("reunion")
+  NOTA @map("nota")
+  CAMBIO_ESTADO @map("cambio_estado")
+  REASIGNACION @map("reasignacion")
+
+  @@map("event_type")
+}
+
+model Team {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  managerId String?  @map("manager_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  manager User?  @relation("TeamManager", fields: [managerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_teams_manager")
+  users   User[] @relation("TeamMembers")
+  alerts  Alert[]
+
+  @@map("teams")
+}
+
+model User {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId    String?    @map("team_id") @db.Uuid
+  fullName  String     @map("full_name")
+  email     String     @unique
+  phone     String?
+  role      UserRole   @default(AGENTE)
+  status    UserStatus @default(ACTIVO)
+  avatarUrl String?    @map("avatar_url")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team         Team?       @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "users_team_id_fkey")
+  managedTeams Team[]      @relation("TeamManager")
+  leads        Lead[]
+  leadEvents   LeadEvent[]
+  quotes       Quote[]
+  policies     Policy[]
+  alerts       Alert[]
+
+  @@map("users")
+}
+
+model Customer {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullName      String?   @map("full_name")
+  email         String?
+  phone         String?
+  documentType  String?   @default("CC") @map("document_type")
+  documentId    String?   @map("document_id")
+  birthDate     DateTime? @map("birth_date") @db.Date
+  city          String?
+  department    String?
+  consentData   Boolean   @default(false) @map("consent_data")
+  consentAt     DateTime? @map("consent_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  aiCalls  AiCall[]
+  leads    Lead[]
+  policies Policy[]
+
+  @@unique([documentType, documentId])
+  @@index([phone], map: "idx_customers_phone")
+  @@map("customers")
+}
+
+model Product {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  insuranceType  InsuranceType @map("insurance_type")
+  name           String
+  description    String?
+  basePremiumCop Decimal?      @map("base_premium_cop") @db.Decimal(14, 2)
+  coverageSchema Json?         @map("coverage_schema") @db.JsonB
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  quotes Quote[]
+
+  @@map("products")
+}
+
+model AiCall {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId   String?     @map("customer_id") @db.Uuid
+  status       CallStatus  @default(EN_CURSO)
+  startedAt    DateTime    @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt      DateTime?   @map("ended_at") @db.Timestamptz(6)
+  durationSec  Int?        @default(dbgenerated()) @map("duration_sec")
+  recordingUrl String?     @map("recording_url")
+  summary      String?
+  intent       LeadIntent?
+  intentScore  Decimal?    @map("intent_score") @db.Decimal(3, 2)
+  sentiment    String?
+  metadata     Json?       @default("{}") @db.JsonB
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  customer Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "ai_calls_customer_id_fkey")
+  messages CallMessage[]
+  lead     Lead?
+
+  @@index([customerId], map: "idx_ai_calls_customer")
+  @@index([startedAt(sort: Desc)], map: "idx_ai_calls_started_at")
+  @@map("ai_calls")
+}
+
+model CallMessage {
+  id       String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  callId   String      @map("call_id") @db.Uuid
+  speaker  SpeakerType
+  content  String
+  spokenAt DateTime    @default(now()) @map("spoken_at") @db.Timestamptz(6)
+
+  call AiCall @relation(fields: [callId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "call_messages_call_id_fkey")
+
+  @@index([callId, spokenAt], map: "idx_call_messages_call")
+  @@map("call_messages")
+}
+
+model Lead {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId     String        @map("customer_id") @db.Uuid
+  aiCallId       String?       @unique @map("ai_call_id") @db.Uuid
+  agentId        String?       @map("agent_id") @db.Uuid
+  insuranceType  InsuranceType? @map("insurance_type")
+  status         LeadStatus    @default(NUEVO)
+  intent         LeadIntent    @default(TIBIO)
+  assignedAt     DateTime?     @map("assigned_at") @db.Timestamptz(6)
+  firstContactAt DateTime?     @map("first_contact_at") @db.Timestamptz(6)
+  closedAt       DateTime?     @map("closed_at") @db.Timestamptz(6)
+  lostReason     String?       @map("lost_reason")
+  aiNextSteps    Json?         @map("ai_next_steps") @db.JsonB
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "leads_customer_id_fkey")
+  aiCall   AiCall?     @relation(fields: [aiCallId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_ai_call_id_fkey")
+  agent    User?       @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_agent_id_fkey")
+  events   LeadEvent[]
+  quotes   Quote[]
+  alerts   Alert[]
+
+  @@index([agentId, status], map: "idx_leads_agent_status")
+  @@index([createdAt(sort: Desc)], map: "idx_leads_created_at")
+  @@map("leads")
+}
+
+model LeadEvent {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId    String    @map("lead_id") @db.Uuid
+  agentId   String?   @map("agent_id") @db.Uuid
+  eventType EventType @map("event_type")
+  notes     String?
+  payload   Json?     @default("{}") @db.JsonB
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  lead  Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
+  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+
+  @@index([leadId, createdAt], map: "idx_lead_events_lead")
+  @@map("lead_events")
+}
+
+model Quote {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId            String      @map("lead_id") @db.Uuid
+  productId         String      @map("product_id") @db.Uuid
+  createdBy         String?     @map("created_by") @db.Uuid
+  coverage          Json        @default("{}") @db.JsonB
+  monthlyPremiumCop Decimal     @map("monthly_premium_cop") @db.Decimal(14, 2)
+  status            QuoteStatus @default(BORRADOR)
+  validUntil        DateTime?   @map("valid_until") @db.Date
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quotes_lead_id_fkey")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "quotes_product_id_fkey")
+  creator   User?    @relation(fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "quotes_created_by_fkey")
+  policy    Policy?
+
+  @@index([leadId], map: "idx_quotes_lead")
+  @@map("quotes")
+}
+
+model Policy {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quoteId           String       @unique @map("quote_id") @db.Uuid
+  customerId        String       @map("customer_id") @db.Uuid
+  agentId           String?      @map("agent_id") @db.Uuid
+  policyNumber      String       @unique @map("policy_number")
+  status            PolicyStatus @default(VIGENTE)
+  startDate         DateTime     @map("start_date") @db.Date
+  endDate           DateTime     @map("end_date") @db.Date
+  monthlyPremiumCop Decimal      @map("monthly_premium_cop") @db.Decimal(14, 2)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  quote    Quote    @relation(fields: [quoteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_quote_id_fkey")
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_customer_id_fkey")
+  agent    User?    @relation(fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_agent_id_fkey")
+
+  @@index([agentId], map: "idx_policies_agent")
+  @@map("policies")
+}
+
+model Alert {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId     String?   @map("team_id") @db.Uuid
+  leadId     String?   @map("lead_id") @db.Uuid
+  agentId    String?   @map("agent_id") @db.Uuid
+  message    String
+  severity   String    @default("media")
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  team  Team? @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "alerts_team_id_fkey")
+  lead  Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "alerts_lead_id_fkey")
+  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "alerts_agent_id_fkey")
+
+  @@map("alerts")
+}
