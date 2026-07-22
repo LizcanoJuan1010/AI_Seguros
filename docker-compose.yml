@@ -1,0 +1,80 @@
+services:
+  # ---------- Backend: catálogo, cotizador, leads, documentos, insights + SPA ----------
+  seguria-api:
+    build: ./services/insurance-api
+    image: seguria/api:latest
+    ports:
+      - "8085:8085"
+    environment:
+      - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
+      - MANAGER_PHONES=${MANAGER_PHONES:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - METABASE_URL=${METABASE_URL:-}
+      - METABASE_API_KEY=${METABASE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - SEGURIA_DATA_DIR=/data/market
+    volumes:
+      - ./data/market:/data/market:ro
+      - seguria-state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8085/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------- Voz: TTS local en español (Kokoro, API OpenAI-compatible) ----------
+  seguria-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    ports:
+      - "8880:8880"
+    volumes:
+      - kokoro-cache:/app/.cache
+    restart: unless-stopped
+
+  # ---------- Agente Hermes: persona SegurIA + skills + WhatsApp + OfficeCLI ----------
+  hermes-agent:
+    build:
+      context: .
+      dockerfile: deploy/hermes.Dockerfile
+    image: seguria/hermes:latest
+    depends_on:
+      - seguria-api
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - SEGURIA_API_URL=http://seguria-api:8085
+      - SEGURIA_TTS_URL=http://seguria-tts:8880
+      - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
+      # gateway = arranca WhatsApp (requiere emparejar QR); idle = contenedor vivo para exec
+      - HERMES_MODE=${HERMES_MODE:-idle}
+    volumes:
+      - ./agent:/workspace:ro
+      - hermes-sessions:/root/.hermes/sessions
+      - hermes-platforms:/root/.hermes/platforms
+      - hermes-memories:/root/.hermes/memories
+    restart: unless-stopped
+
+  # ---------- WhatsApp plan B (Baileys, API compatible Evolution) ----------
+  baileys-bridge:
+    build: ./services/baileys-bridge
+    image: seguria/baileys:latest
+    profiles: ["baileys"]
+    ports:
+      - "8080:8080"
+    environment:
+      - API_KEY=${BAILEYS_API_KEY:-seguria-baileys}
+    volumes:
+      - baileys-instances:/data/instances
+    restart: unless-stopped
+
+volumes:
+  seguria-state:
+  kokoro-cache:
+  hermes-sessions:
+  hermes-platforms:
+  hermes-memories:
+  baileys-instances:
