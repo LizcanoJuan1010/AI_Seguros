@@ -10,7 +10,6 @@ from typing import Any
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import insights as insights_mod
@@ -333,8 +332,4 @@ def insights_leads() -> list[dict]:
     conn.close()
     return [dict(r) for r in rows]
 
-
-# ---------- SPA ----------
-
-static_dir = Path(__file__).parent / "static"
-app.mount("/", StaticFiles(directory=static_dir, html=True), name="spa")
+# El servicio IA solo expone /api/*; la SPA la sirve apps/frontend (nginx enruta /).
