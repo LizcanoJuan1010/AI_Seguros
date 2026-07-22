@@ -1,0 +1,147 @@
+# SegurIA × Tequendama — stack de fusión (arquitectura polyglot).
+#   frontend(nginx) -> /api/v1 -> backend(NestJS)   -> postgres
+#                   -> /api    -> seguria-ai(Python) -> postgres + redis
+# Servicios opcionales (voz, agente Hermes, baileys) bajo perfiles.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=seguria
+      - POSTGRES_PASSWORD=seguria
+      - POSTGRES_DB=seguria
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seguria"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Dominio: CRM de seguros (NestJS + Prisma) ----------
+  backend:
+    build: ./apps/backend
+    image: seguria/backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://seguria:seguria@postgres:5432/seguria?schema=public
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
+      - JWT_ACCESS_MINUTES=${JWT_ACCESS_MINUTES:-480}
+      - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
+    ports:
+      - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
+    restart: unless-stopped
+
+  # ---------- Cerebro IA: chat SSE, cotizador, memoria, PDF (Python) ----------
+  seguria-ai:
+    build: ./apps/ai
+    image: seguria/ai:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://seguria:seguria@postgres:5432/seguria
+      - REDIS_URL=redis://redis:6379/0
+      - BACKEND_URL=http://backend:3000
+      - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
+      - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
+      - MANAGER_PHONES=${MANAGER_PHONES:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - SEGURIA_DATA_DIR=/data/market
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+    volumes:
+      - ./data/market:/data/market:ro
+      - seguria-state:/app/state
+    ports:
+      - "8085:8085"
+    restart: unless-stopped
+
+  # ---------- Frontend (Tequendama React servido por nginx + proxy APIs) ----------
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: ../../deploy/frontend.Dockerfile
+    image: seguria/frontend:latest
+    depends_on:
+      - backend
+      - seguria-ai
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"   # 8080 del host lo ocupa palomaos-evolution-api de otro proyecto
+    restart: unless-stopped
+
+  # ---------- Voz TTS (opcional) ----------
+  seguria-tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    profiles: ["voz"]
+    ports:
+      - "8880:8880"
+    volumes:
+      - kokoro-cache:/app/.cache
+    restart: unless-stopped
+
+  # ---------- Agente Hermes (opcional, consola/WhatsApp) ----------
+  hermes-agent:
+    build:
+      context: .
+      dockerfile: deploy/hermes.Dockerfile
+    image: seguria/hermes:latest
+    profiles: ["hermes"]
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - SEGURIA_API_URL=http://seguria-ai:8085
+      - SEGURIA_TTS_URL=http://seguria-tts:8880
+      - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
+      - HERMES_MODE=${HERMES_MODE:-idle}
+    volumes:
+      - ./services/hermes-agent:/workspace:ro
+      - hermes-sessions:/root/.hermes/sessions
+      - hermes-platforms:/root/.hermes/platforms
+      - hermes-memories:/root/.hermes/memories
+    restart: unless-stopped
+
+  baileys-bridge:
+    build: ./services/baileys-bridge
+    image: seguria/baileys:latest
+    profiles: ["baileys"]
+    ports:
+      - "8081:8080"
+    environment:
+      - API_KEY=${BAILEYS_API_KEY:-seguria-baileys}
+    volumes:
+      - baileys-instances:/data/instances
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  redis-data:
+  seguria-state:
+  kokoro-cache:
+  hermes-sessions:
+  hermes-platforms:
+  hermes-memories:
+  baileys-instances:

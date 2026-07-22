@@ -1,0 +1,171 @@
+{
+  "_comment": "Catálogo REAL de información requerida para vender/emitir seguros en Colombia. Base: KYC/Habeas Data (Ley 1581/2012), SARLAFT/conocimiento del cliente (Superfinanciera, Decreto 1674 PEP), declaración de asegurabilidad (Colsubsidio, Art. 1058/1158 Código de Comercio) y underwriting por producto (Fasecolda). Cada campo alimenta la lógica de intake del backend (qué pedir, validar, o poner en formulario).",
+  "grupos": {
+    "identificacion": "Identificación del tomador/asegurado (KYC · Habeas Data)",
+    "contacto": "Datos de contacto y ubicación",
+    "sarlaft": "Conocimiento del cliente (SARLAFT · origen de fondos · PEP)",
+    "salud": "Declaración de asegurabilidad / salud",
+    "beneficiarios": "Beneficiarios de la póliza",
+    "vehiculo": "Datos del vehículo y del conductor",
+    "inmueble": "Datos del inmueble y contenidos",
+    "viaje": "Datos del viaje y viajeros",
+    "pyme": "Datos del negocio",
+    "pago": "Medio de pago",
+    "autorizaciones": "Consentimientos y autorizaciones legales"
+  },
+  "campos_comunes": {
+    "identificacion": [
+      {"id": "nombre_completo", "label": "Nombres y apellidos completos", "tipo": "text", "required": true},
+      {"id": "tipo_documento", "label": "Tipo de documento", "tipo": "select", "required": true, "opciones": ["CC", "CE", "PA", "TI", "NIT"], "default": "CC"},
+      {"id": "numero_documento", "label": "Número de documento", "tipo": "text", "required": true, "validacion": "solo_digitos"},
+      {"id": "fecha_nacimiento", "label": "Fecha de nacimiento", "tipo": "date", "required": true},
+      {"id": "sexo", "label": "Sexo", "tipo": "select", "required": true, "opciones": ["F", "M", "Otro"]},
+      {"id": "nacionalidad", "label": "Nacionalidad", "tipo": "text", "required": true, "default": "Colombiana"},
+      {"id": "lugar_expedicion", "label": "Lugar de expedición del documento", "tipo": "text", "required": false}
+    ],
+    "contacto": [
+      {"id": "email", "label": "Correo electrónico", "tipo": "email", "required": true, "validacion": "email"},
+      {"id": "telefono", "label": "Celular / WhatsApp", "tipo": "phone", "required": true},
+      {"id": "direccion", "label": "Dirección de residencia", "tipo": "text", "required": true},
+      {"id": "ciudad", "label": "Ciudad", "tipo": "text", "required": true},
+      {"id": "departamento", "label": "Departamento", "tipo": "text", "required": false}
+    ],
+    "sarlaft": [
+      {"id": "ocupacion", "label": "Ocupación / profesión", "tipo": "text", "required": true},
+      {"id": "actividad_economica", "label": "Actividad económica (CIIU o descripción)", "tipo": "text", "required": true},
+      {"id": "ingresos_mensuales", "label": "Ingresos mensuales (COP)", "tipo": "number", "required": true},
+      {"id": "egresos_mensuales", "label": "Egresos mensuales (COP)", "tipo": "number", "required": false},
+      {"id": "origen_fondos", "label": "Origen de los fondos", "tipo": "select", "required": true, "opciones": ["Salario", "Negocio propio", "Honorarios", "Pensión", "Rentas", "Otro"]},
+      {"id": "maneja_moneda_extranjera", "label": "¿Realiza operaciones en moneda extranjera?", "tipo": "bool", "required": true, "default": false},
+      {"id": "es_pep", "label": "¿Es Persona Expuesta Políticamente (PEP) o familiar/asociado de una?", "tipo": "bool", "required": true, "default": false, "help": "Decreto 1674/2016. Si es sí, se piden cargo, entidad y relación."},
+      {"id": "pep_detalle", "label": "Detalle PEP (cargo, entidad, relación)", "tipo": "text", "required": false, "condicional": {"campo": "es_pep", "igual": true}},
+      {"id": "declara_origen_licito", "label": "Declaro que mis recursos provienen de actividades lícitas", "tipo": "bool", "required": true, "default": false}
+    ],
+    "autorizaciones": [
+      {"id": "autoriza_habeas_data", "label": "Autorizo el tratamiento de mis datos personales (Ley 1581/2012)", "tipo": "bool", "required": true, "default": false, "legal": "Ley 1581/2012"},
+      {"id": "autoriza_centrales", "label": "Autorizo consultar y reportar a centrales de riesgo y bases de seguros", "tipo": "bool", "required": true, "default": false},
+      {"id": "declara_veracidad", "label": "Declaro que la información es veraz (Art. 1058 C. de Comercio · reticencia)", "tipo": "bool", "required": true, "default": false, "legal": "Art. 1058 y 1158 Código de Comercio"}
+    ]
+  },
+  "por_tipo": {
+    "vida": {
+      "nombre": "Seguro de Vida",
+      "grupos": ["identificacion", "contacto", "sarlaft", "salud", "beneficiarios", "autorizaciones", "pago"],
+      "suma_asegurada": {"id": "suma_asegurada", "label": "Suma asegurada deseada (COP)", "tipo": "number", "required": true},
+      "salud": [
+        {"id": "peso_kg", "label": "Peso (kg)", "tipo": "number", "required": true},
+        {"id": "estatura_cm", "label": "Estatura (cm)", "tipo": "number", "required": true},
+        {"id": "fumador", "label": "¿Fuma? ¿cuántos cigarrillos/día?", "tipo": "text", "required": true},
+        {"id": "consume_alcohol", "label": "¿Consume alcohol con frecuencia?", "tipo": "bool", "required": true, "default": false},
+        {"id": "deportes_riesgo", "label": "¿Practica deportes/actividades de alto riesgo? ¿cuáles?", "tipo": "text", "required": true},
+        {"id": "enfermedades", "label": "¿Padece o ha padecido: cardiovascular, renal, tensión alta, derrames, cáncer, leucemia, inmunológico, respiratorio, VIH/SIDA, diabetes? Detalle.", "tipo": "text", "required": true, "help": "Declaración de asegurabilidad Colsubsidio / Art. 1058"},
+        {"id": "cirugias_tratamientos", "label": "¿Cirugías, tratamientos o medicamentos actuales?", "tipo": "text", "required": false},
+        {"id": "ocupacion_riesgo", "label": "¿Su ocupación implica riesgo (alturas, minería, explosivos, etc.)?", "tipo": "bool", "required": true, "default": false}
+      ]
+    },
+    "salud": {
+      "nombre": "Seguro de Salud / Medicina Prepagada",
+      "grupos": ["identificacion", "contacto", "sarlaft", "salud", "autorizaciones", "pago"],
+      "salud": [
+        {"id": "peso_kg", "label": "Peso (kg)", "tipo": "number", "required": true},
+        {"id": "estatura_cm", "label": "Estatura (cm)", "tipo": "number", "required": true},
+        {"id": "preexistencias", "label": "Enfermedades o condiciones preexistentes (diagnósticos previos)", "tipo": "text", "required": true, "help": "Omitirlas puede terminar el contrato (Art. 1058)."},
+        {"id": "medicamentos_actuales", "label": "Medicamentos que toma actualmente", "tipo": "text", "required": false},
+        {"id": "cirugias_previas", "label": "Cirugías o tratamientos previos", "tipo": "text", "required": false},
+        {"id": "embarazo", "label": "¿Embarazo en curso? (afecta carencias de maternidad)", "tipo": "bool", "required": false, "default": false},
+        {"id": "dependientes", "label": "Número de dependientes a incluir", "tipo": "number", "required": true, "default": 0},
+        {"id": "dependientes_detalle", "label": "Datos y salud de cada dependiente (nombre, documento, fecha nac., preexistencias)", "tipo": "list", "required": false, "condicional": {"campo": "dependientes", "mayor_que": 0}}
+      ]
+    },
+    "auto": {
+      "nombre": "Seguro de Automóvil",
+      "grupos": ["identificacion", "contacto", "sarlaft", "vehiculo", "autorizaciones", "pago"],
+      "vehiculo": [
+        {"id": "placa", "label": "Placa del vehículo", "tipo": "text", "required": true},
+        {"id": "marca", "label": "Marca", "tipo": "text", "required": true},
+        {"id": "linea", "label": "Línea / referencia", "tipo": "text", "required": true},
+        {"id": "modelo_anio", "label": "Modelo (año)", "tipo": "number", "required": true},
+        {"id": "valor_comercial", "label": "Valor comercial / a asegurar (COP)", "tipo": "number", "required": true},
+        {"id": "uso", "label": "Uso del vehículo", "tipo": "select", "required": true, "opciones": ["Particular", "Público", "Comercial", "Taxi"]},
+        {"id": "cero_km", "label": "¿Es 0 km?", "tipo": "bool", "required": false, "default": false},
+        {"id": "accesorios_blindaje", "label": "Accesorios especiales, rines o blindaje (declarar)", "tipo": "text", "required": false},
+        {"id": "ciudad_circulacion", "label": "Ciudad de circulación habitual", "tipo": "text", "required": true},
+        {"id": "conductor_estado_civil", "label": "Estado civil del conductor principal", "tipo": "select", "required": true, "opciones": ["Soltero", "Casado", "Unión libre", "Divorciado", "Viudo"]},
+        {"id": "historial_siniestros", "label": "¿Siniestros o pérdidas totales en los últimos 3 años?", "tipo": "text", "required": true},
+        {"id": "soat_vigente", "label": "¿SOAT vigente?", "tipo": "bool", "required": true, "default": true},
+        {"id": "tecnomecanica", "label": "¿Revisión técnico-mecánica vigente? (obligatoria si >6 años)", "tipo": "bool", "required": false}
+      ]
+    },
+    "hogar": {
+      "nombre": "Seguro de Hogar",
+      "grupos": ["identificacion", "contacto", "sarlaft", "inmueble", "autorizaciones", "pago"],
+      "inmueble": [
+        {"id": "direccion_inmueble", "label": "Dirección del inmueble a asegurar", "tipo": "text", "required": true},
+        {"id": "tipo_inmueble", "label": "Tipo de inmueble", "tipo": "select", "required": true, "opciones": ["Casa", "Apartamento", "Local"]},
+        {"id": "estrato", "label": "Estrato", "tipo": "number", "required": false},
+        {"id": "area_m2", "label": "Área (m²)", "tipo": "number", "required": false},
+        {"id": "valor_inmueble", "label": "Valor del inmueble (estructura, COP)", "tipo": "number", "required": true},
+        {"id": "valor_contenidos", "label": "Valor de los contenidos (COP)", "tipo": "number", "required": true},
+        {"id": "tipo_construccion", "label": "Tipo de construcción (material)", "tipo": "text", "required": false},
+        {"id": "tenencia", "label": "¿Propietario o arrendatario?", "tipo": "select", "required": true, "opciones": ["Propietario", "Arrendatario"]},
+        {"id": "zona_sismica", "label": "¿Zona de riesgo sísmico/inundación?", "tipo": "bool", "required": false, "default": false}
+      ]
+    },
+    "viaje": {
+      "nombre": "Seguro de Viaje",
+      "grupos": ["identificacion", "contacto", "viaje", "autorizaciones", "pago"],
+      "viaje": [
+        {"id": "destino", "label": "Destino (país/región)", "tipo": "text", "required": true},
+        {"id": "fecha_salida", "label": "Fecha de salida", "tipo": "date", "required": true},
+        {"id": "fecha_regreso", "label": "Fecha de regreso", "tipo": "date", "required": true},
+        {"id": "num_viajeros", "label": "Número de viajeros", "tipo": "number", "required": true, "default": 1},
+        {"id": "edades_viajeros", "label": "Edades de los viajeros", "tipo": "text", "required": true},
+        {"id": "motivo", "label": "Motivo del viaje", "tipo": "select", "required": false, "opciones": ["Turismo", "Negocios", "Estudio", "Otro"]},
+        {"id": "preexistencias_viaje", "label": "¿Algún viajero con condición médica preexistente?", "tipo": "text", "required": false},
+        {"id": "deportes_viaje", "label": "¿Practicarán deportes de aventura?", "tipo": "bool", "required": false, "default": false}
+      ]
+    },
+    "pyme": {
+      "nombre": "Seguro PyME / Multiriesgo",
+      "grupos": ["identificacion", "contacto", "sarlaft", "pyme", "autorizaciones", "pago"],
+      "pyme": [
+        {"id": "razon_social", "label": "Razón social / nombre del negocio", "tipo": "text", "required": true},
+        {"id": "nit", "label": "NIT", "tipo": "text", "required": true},
+        {"id": "actividad_negocio", "label": "Actividad del negocio", "tipo": "text", "required": true},
+        {"id": "direccion_negocio", "label": "Dirección del establecimiento", "tipo": "text", "required": true},
+        {"id": "valor_activos", "label": "Valor de activos/mercancía a asegurar (COP)", "tipo": "number", "required": true},
+        {"id": "num_empleados", "label": "Número de empleados", "tipo": "number", "required": false},
+        {"id": "actividad_riesgo_alta", "label": "¿Manipula materiales inflamables/peligrosos?", "tipo": "bool", "required": false, "default": false}
+      ]
+    },
+    "accidentes": {
+      "nombre": "Accidentes Personales",
+      "grupos": ["identificacion", "contacto", "sarlaft", "beneficiarios", "autorizaciones", "pago"],
+      "extra": [
+        {"id": "ocupacion_riesgo", "label": "¿Ocupación de riesgo?", "tipo": "bool", "required": true, "default": false},
+        {"id": "suma_asegurada", "label": "Suma asegurada deseada (COP)", "tipo": "number", "required": false}
+      ]
+    }
+  },
+  "beneficiarios": {
+    "descripcion": "Para vida y accidentes: uno o varios beneficiarios cuya participación sume 100%.",
+    "campos_por_beneficiario": [
+      {"id": "nombre", "label": "Nombre completo del beneficiario", "tipo": "text", "required": true},
+      {"id": "documento", "label": "Documento del beneficiario", "tipo": "text", "required": true},
+      {"id": "parentesco", "label": "Parentesco", "tipo": "select", "required": true, "opciones": ["Cónyuge", "Hijo(a)", "Padre", "Madre", "Hermano(a)", "Otro"]},
+      {"id": "participacion", "label": "Participación (%)", "tipo": "number", "required": true, "validacion": "porcentaje"}
+    ],
+    "regla": "La suma de participaciones debe ser 100%."
+  },
+  "documentos_soporte": {
+    "descripcion": "Documentos que la persona puede enviar por WhatsApp; el agente los lee y extrae datos.",
+    "por_tipo": {
+      "comun": ["Documento de identidad (cédula) — extrae nombre, número, fecha nac."],
+      "auto": ["Tarjeta de propiedad — extrae placa, marca, modelo, propietario", "SOAT", "Licencia de conducción"],
+      "vida": ["Exámenes médicos recientes (si aplica)"],
+      "salud": ["Historia clínica / exámenes (para preexistencias)"],
+      "hogar": ["Certificado de tradición / avalúo (opcional)"],
+      "pyme": ["RUT", "Cámara de comercio"]
+    }
+  }
+}
