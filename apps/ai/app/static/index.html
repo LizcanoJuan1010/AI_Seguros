@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SegurIA — Seguros a tu medida</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --ring: rgba(11,11,11,.10);
+    --brand: #0f4c81; --series-1: #2a78d6;
+    --ord-1:#86b6ef; --ord-2:#5598e7; --ord-3:#2a78d6; --ord-4:#1c5cab; --ord-5:#104281; --ord-6:#c3c2b7;
+    --good: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --page: #0d0d0d;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --baseline: #383835; --ring: rgba(255,255,255,.10);
+      --brand: #3987e5; --series-1: #3987e5;
+      --ord-1:#86b6ef; --ord-2:#5598e7; --ord-3:#3987e5; --ord-4:#1c5cab; --ord-5:#184f95; --ord-6:#383835;
+      --good: #0ca30c;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--page); color: var(--ink); }
+  header { background: var(--brand); color: #fff; padding: 14px 22px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1.15rem; }
+  header .tag { font-size: .8rem; opacity: .85; }
+  nav { margin-left: auto; display: flex; gap: 8px; }
+  nav button { border: 1px solid rgba(255,255,255,.4); background: transparent; color: #fff; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: .85rem; }
+  nav button.active { background: #fff; color: var(--brand); font-weight: 600; }
+  main { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  h2 { font-size: 1.02rem; margin-bottom: 10px; }
+  h3 { font-size: .92rem; margin-bottom: 8px; color: var(--ink-2); }
+  label { display: block; font-size: .8rem; color: var(--ink-2); margin: 8px 0 3px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--baseline); border-radius: 8px; background: var(--page); color: var(--ink); font-size: .9rem; }
+  .grid { display: grid; gap: 12px; }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .btn { background: var(--brand); border: none; color: #fff; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: .9rem; margin-top: 14px; }
+  .btn.sec { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
+  .opt { border: 1px solid var(--grid); border-radius: 10px; padding: 14px; }
+  .opt .prima { font-size: 1.3rem; font-weight: 700; color: var(--brand); }
+  .opt .usd { font-size: .8rem; color: var(--muted); }
+  .opt ul { padding-left: 18px; font-size: .82rem; color: var(--ink-2); margin: 8px 0; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { background: var(--surface-1); border: 1px solid var(--ring); border-radius: 12px; padding: 14px; }
+  .kpi .v { font-size: 1.55rem; font-weight: 700; }
+  .kpi .l { font-size: .74rem; color: var(--ink-2); margin-top: 2px; }
+  .kpi .d { font-size: .74rem; color: var(--good); }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row .lbl { width: 130px; font-size: .78rem; color: var(--ink-2); text-align: right; flex: none; }
+  .row .track { flex: 1; height: 18px; display: flex; align-items: center; }
+  .row .bar { height: 14px; border-radius: 0 4px 4px 0; background: var(--series-1); min-width: 2px; transition: width .4s; }
+  .row .val { font-size: .76rem; color: var(--ink-2); margin-left: 6px; font-variant-numeric: tabular-nums; }
+  svg text { fill: var(--muted); font-size: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--grid); padding: 6px 8px; }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: .72rem; border: 1px solid var(--grid); }
+  .hidden { display: none; }
+  .note { font-size: .78rem; color: var(--muted); margin-top: 10px; }
+  #tip { position: fixed; background: var(--ink); color: var(--page); padding: 4px 9px; border-radius: 6px; font-size: .75rem; pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 10; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  /* Chat */
+  #chatBox { height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 6px 2px; }
+  .msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; font-size: .9rem; line-height: 1.35; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.bot { align-self: flex-start; background: var(--page); border: 1px solid var(--grid); border-bottom-left-radius: 4px; }
+  .msg.bot a.doc { display: inline-block; margin-top: 6px; padding: 6px 12px; background: var(--brand); color: #fff; border-radius: 8px; text-decoration: none; font-size: .8rem; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .chip { border: 1px solid var(--brand); color: var(--brand); background: transparent; border-radius: 16px; padding: 5px 13px; font-size: .8rem; cursor: pointer; }
+  .chip:hover { background: var(--brand); color: #fff; }
+  #chatForm { display: flex; gap: 8px; margin-top: 10px; }
+  #chatForm input { flex: 1; }
+  .typing { color: var(--muted); font-size: .8rem; padding: 4px 8px; }
+  details summary { cursor: pointer; font-size: .92rem; font-weight: 600; padding: 4px 0; }
+  .alerta { border-left: 3px solid var(--brand); padding: 8px 12px; margin: 8px 0; font-size: .84rem; background: var(--page); border-radius: 0 8px 8px 0; }
+  .alerta .p-alta { color: #d03b3b; font-weight: 600; }
+  .alerta .p-media { color: #c98500; font-weight: 600; }
+  .alerta .p-baja, .alerta .p-info { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="tip"></div>
+<header>
+  <div><h1>🛡️ SegurIA</h1><div class="tag">Seguros a tu medida, en tu idioma — WhatsApp · Voz · LATAM</div></div>
+  <nav>
+    <button id="tabCliente" class="active" onclick="show('cliente')">Asesor</button>
+    <button id="tabGerente" onclick="show('gerente')">Panel gerencial</button>
+  </nav>
+</header>
+<main>
+
+<!-- ===== Vista cliente ===== -->
+<section id="cliente">
+  <div class="card">
+    <h2>💬 Habla con SegurIA</h2>
+    <div id="chatBox"></div>
+    <div class="chips" id="chips"></div>
+    <form id="chatForm" onsubmit="return sendChat(event)">
+      <input id="chatInput" placeholder="Escríbele a SegurIA… ej. quiero proteger a mi familia" autocomplete="off">
+      <button class="btn" style="margin-top:0" type="submit">Enviar</button>
+    </form>
+    <p class="note">También por WhatsApp con texto o nota de voz — mismo cerebro, misma memoria.</p>
+  </div>
+  <div class="card"><details>
+    <summary>⚡ Cotizador rápido (sin conversación)</summary>
+    <p class="note">Mismo motor de cotización, en modo formulario.</p>
+    <div class="grid g3">
+      <div><label>País</label><select id="qPais"></select></div>
+      <div><label>Tipo de seguro</label>
+        <select id="qTipo">
+          <option value="">Recomiéndame</option><option value="vida">Vida</option>
+          <option value="salud">Salud</option><option value="auto">Auto</option>
+          <option value="hogar">Hogar</option><option value="viaje">Viaje</option>
+          <option value="pyme">PyME</option><option value="accidentes">Accidentes</option>
+        </select></div>
+      <div><label>Edad</label><input id="qEdad" type="number" value="30" min="18" max="85"></div>
+      <div><label>Presupuesto mensual (USD, opcional)</label><input id="qPresu" type="number" placeholder="ej. 40"></div>
+      <div><label>Dependientes (hijos)</label><input id="qDep" type="number" value="0" min="0"></div>
+      <div><label>Valor del bien USD (auto/hogar/pyme)</label><input id="qBien" type="number" placeholder="ej. 15000"></div>
+      <div><label>Días de viaje (solo seguro de viaje)</label><input id="qDias" type="number" placeholder="ej. 15" min="1"></div>
+      <div><label>Tu nombre (opcional)</label><input id="qNombre" placeholder="Ana Torres"></div>
+      <div><label>WhatsApp (opcional)</label><input id="qTel" placeholder="+57 300 ..."></div>
+    </div>
+    <button class="btn" onclick="cotizar()">Ver mis opciones</button>
+  </details></div>
+  <div id="opciones" class="grid g3"></div>
+</section>
+
+<!-- ===== Vista gerente ===== -->
+<section id="gerente" class="hidden">
+  <div class="card" id="loginCard">
+    <h2>Acceso gerencial</h2>
+    <label>API key</label><input id="mKey" value="demo-gerente-2026" style="max-width:280px">
+    <button class="btn" onclick="loadInsights()">Entrar</button>
+  </div>
+  <div id="panel" class="hidden">
+    <div class="kpis" id="kpis"></div>
+    <div class="card" style="margin-top:16px"><h3>🔔 Alertas y seguimientos proactivos</h3><div id="alertas"></div></div>
+    <div class="charts" style="margin-top:16px">
+      <div class="card"><h3>Funnel de ventas</h3><div id="funnel"></div></div>
+      <div class="card"><h3>Cotizaciones por día</h3><svg id="ts" width="100%" height="150" viewBox="0 0 340 150" preserveAspectRatio="none"></svg></div>
+      <div class="card"><h3>Actividad por país (leads)</h3><div id="paises"></div></div>
+      <div class="card"><h3>Productos más cotizados</h3><div id="productos"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h3>Leads recientes</h3><div style="overflow-x:auto"><table id="leads"></table></div></div>
+    <p class="note" id="mbNote"></p>
+  </div>
+</section>
+</main>
+
+<script>
+const api = (p, opt) => fetch(p, opt).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const $ = id => document.getElementById(id);
+// Escape de datos controlables por el usuario antes de inyectarlos con innerHTML
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const tip = $('tip');
+function hover(el, text) {
+  el.addEventListener('mousemove', e => { tip.textContent = text; tip.style.opacity = 1; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px'; });
+  el.addEventListener('mouseleave', () => tip.style.opacity = 0);
+}
+function show(view) {
+  $('cliente').classList.toggle('hidden', view !== 'cliente');
+  $('gerente').classList.toggle('hidden', view !== 'gerente');
+  $('tabCliente').classList.toggle('active', view === 'cliente');
+  $('tabGerente').classList.toggle('active', view === 'gerente');
+}
+const fmt = n => Number(n).toLocaleString('es', { maximumFractionDigits: 0 });
+
+api('/api/countries').then(cs => {
+  $('qPais').innerHTML = cs.map(c => `<option value="${c.code}" ${c.code==='CO'?'selected':''}>${c.nombre}</option>`).join('');
+});
+
+// ===== Chat conversacional =====
+const sessionId = localStorage.getItem('seguriaSession') ||
+  (() => { const s = 'web-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('seguriaSession', s); return s; })();
+
+function bubble(text, who, docs) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + who;
+  div.textContent = text;
+  (docs || []).forEach(u => {
+    const a = document.createElement('a');
+    a.className = 'doc'; a.href = u; a.target = '_blank'; a.textContent = '📄 Descargar cotización PDF';
+    div.appendChild(document.createElement('br')); div.appendChild(a);
+  });
+  $('chatBox').appendChild(div);
+  $('chatBox').scrollTop = $('chatBox').scrollHeight;
+  return div;
+}
+function setChips(items) {
+  $('chips').innerHTML = '';
+  (items || []).forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.textContent = t;
+    b.onclick = () => { $('chatInput').value = t; sendChat(); };
+    $('chips').appendChild(b);
+  });
+}
+async function sendChat(e) {
+  if (e) e.preventDefault();
+  const text = $('chatInput').value.trim();
+  if (!text) return false;
+  $('chatInput').value = ''; setChips([]);
+  bubble(text, 'user');
+  const typing = document.createElement('div');
+  typing.className = 'typing'; typing.textContent = 'SegurIA está escribiendo…';
+  $('chatBox').appendChild(typing); $('chatBox').scrollTop = $('chatBox').scrollHeight;
+  try {
+    const r = await api('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id: sessionId, message: text }) });
+    typing.remove();
+    if (r.error === 'llm_no_configurado') {
+      bubble(r.reply, 'bot');
+      setChips([]);
+      document.querySelector('#cliente details').open = true;
+      return false;
+    }
+    bubble(r.reply, 'bot', r.documents);
+    setChips(r.quick_replies);
+  } catch (err) {
+    typing.remove();
+    bubble('Ups, tuve un problema técnico. Intenta de nuevo en un momento.', 'bot');
+  }
+  return false;
+}
+// Bienvenida proactiva (estilo Erica: el asistente inicia)
+bubble('¡Hola! Soy SegurIA 👋 Te ayudo a encontrar el seguro ideal para ti o tu familia, en tu país y en tu presupuesto. ¿Qué te gustaría proteger?', 'bot');
+setChips(['A mi familia', 'Mi salud', 'Mi carro', 'Voy a viajar']);
+
+async function cotizar() {
+  const body = {
+    country: $('qPais').value, tipo: $('qTipo').value || null,
+    age: +$('qEdad').value || null,
+    budget_monthly_usd: +$('qPresu').value || null,
+    name: $('qNombre').value || null, phone: $('qTel').value || null,
+    extras: { dependientes: +$('qDep').value || 0, valor_bien_usd: +$('qBien').value || 0, dias_viaje: +$('qDias').value || 0 }
+  };
+  const r = await api('/api/quotes', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  $('opciones').innerHTML = r.opciones.length ? r.opciones.map(o => `
+    <div class="card opt">
+      <strong>${o.producto}</strong> <span class="note">· ${o.aseguradora}</span>
+      <div class="prima">${fmt(o.prima_mensual_local)} ${o.moneda}<span class="usd"> /${o.periodicidad}</span></div>
+      <div class="usd">≈ USD ${o.prima_mensual_usd.toFixed(2)} · suma asegurada USD ${fmt(o.suma_asegurada_usd)}</div>
+      <ul>${o.coberturas.slice(0,4).map(c=>`<li>${c}</li>`).join('')}</ul>
+      <button class="btn sec" onclick="descargar(${o.quote_id})">Descargar cotización PDF</button>
+    </div>`).join('')
+    : `<div class="card">No hay productos de ese tipo en tu país todavía. Prueba otro tipo o escríbenos por WhatsApp.</div>`;
+}
+async function descargar(id) {
+  const r = await api(`/api/quotes/${id}/document`, { method: 'POST' });
+  window.open(r.download_url, '_blank');
+}
+
+async function loadInsights() {
+  const H = { 'X-API-Key': $('mKey').value };
+  let d;
+  try { d = await api('/api/insights/summary', { headers: H }); }
+  catch { alert('API key inválida'); return; }
+  $('loginCard').classList.add('hidden'); $('panel').classList.remove('hidden');
+
+  const k = d.kpis;
+  $('kpis').innerHTML = [
+    [fmt(k.leads_totales), 'Leads totales'],
+    [fmt(k.cotizaciones), 'Cotizaciones emitidas'],
+    [fmt(k.ventas_cerradas), 'Ventas cerradas'],
+    [k.tasa_conversion_pct + '%', 'Conversión lead → venta'],
+    ['USD ' + fmt(k.prima_mensual_vendida_usd), 'Prima mensual vendida'],
+  ].map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+
+  // Funnel: rampa ordinal azul (etapas ordenadas); "perdido" en neutral
+  const ord = ['--ord-1','--ord-2','--ord-3','--ord-4','--ord-5','--ord-6'];
+  const fMax = Math.max(...d.funnel.map(f => f.leads), 1);
+  $('funnel').innerHTML = '';
+  d.funnel.forEach((f, i) => {
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = `<div class="lbl">${f.etapa}</div><div class="track"><div class="bar" style="width:${100*f.leads/fMax}%;background:var(${ord[i]})"></div><span class="val">${f.leads}</span></div>`;
+    hover(row, `${f.etapa}: ${f.leads} leads`);
+    $('funnel').appendChild(row);
+  });
+
+  const bars = (elId, items, lbl, val, unit) => {
+    const max = Math.max(...items.map(val), 1);
+    $(elId).innerHTML = '';
+    items.slice(0, 8).forEach(it => {
+      const row = document.createElement('div'); row.className = 'row';
+      row.innerHTML = `<div class="lbl">${esc(lbl(it))}</div><div class="track"><div class="bar" style="width:${100*val(it)/max}%"></div><span class="val">${fmt(val(it))}${unit||''}</span></div>`;
+      hover(row, `${lbl(it)}: ${fmt(val(it))}${unit||''}`);
+      $(elId).appendChild(row);
+    });
+  };
+  bars('paises', d.por_pais, x => x.pais, x => x.leads);
+  bars('productos', d.por_producto, x => x.producto, x => x.cotizaciones);
+
+  // Serie temporal (línea única, SVG)
+  const ts = d.cotizaciones_por_dia, svg = $('ts');
+  if (ts.length > 1) {
+    const max = Math.max(...ts.map(t => t.cotizaciones), 1);
+    const X = i => 8 + i * (324 / (ts.length - 1)), Y = v => 130 - (v / max) * 110;
+    const pts = ts.map((t, i) => `${X(i)},${Y(t.cotizaciones)}`).join(' ');
+    svg.innerHTML =
+      `<line x1="8" y1="130" x2="332" y2="130" stroke="var(--baseline)"/>` +
+      `<polyline points="${pts}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>` +
+      ts.map((t, i) => `<circle cx="${X(i)}" cy="${Y(t.cotizaciones)}" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" data-i="${i}"/>`).join('') +
+      `<text x="8" y="146">${ts[0].fecha}</text><text x="332" y="146" text-anchor="end">${ts[ts.length-1].fecha}</text>`;
+    svg.querySelectorAll('circle').forEach((c, i) => hover(c, `${ts[i].fecha}: ${ts[i].cotizaciones} cotizaciones`));
+  } else { svg.outerHTML = '<p class="note">Aún no hay serie temporal suficiente.</p>'; }
+
+  try {
+    const pro = await api('/api/proactive', { headers: H });
+    const items = [
+      ...pro.alertas_gerente.map(a => ({ p: a.prioridad, t: a.detalle, x: a.accion })),
+      ...pro.nudges_clientes.slice(0, 5).map(n => ({ p: n.prioridad, t: n.sugerencia, x: 'Seguimiento a ' + n.phone })),
+    ];
+    $('alertas').innerHTML = items.length
+      ? items.map(i => `<div class="alerta"><span class="p-${esc(i.p)}">[${esc(i.p)}]</span> ${esc(i.t)}<br><span class="note">→ ${esc(i.x)}</span></div>`).join('')
+      : '<p class="note">Sin alertas pendientes. Todo al día ✅</p>';
+  } catch { $('alertas').innerHTML = '<p class="note">No se pudieron cargar las alertas.</p>'; }
+
+  const leads = await api('/api/insights/leads', { headers: H });
+  $('leads').innerHTML = '<tr><th>Nombre</th><th>País</th><th>Etapa</th><th>Cotizaciones</th><th>Prima USD</th><th>Actualizado</th></tr>' +
+    leads.slice(0, 20).map(l => `<tr><td>${esc(l.name)||'—'}</td><td>${esc(l.country)}</td><td><span class="pill">${esc(l.stage)}</span></td><td>${fmt(l.cotizaciones)}</td><td>${fmt(l.prima_usd)}</td><td>${esc((l.updated_at||'').slice(0,10))}</td></tr>`).join('');
+
+  $('mbNote').textContent = d.metabase.enabled
+    ? 'Metabase conectado: ' + (d.metabase.dashboards||[]).map(x=>x.name).join(', ')
+    : 'Metabase no configurado — mostrando insights del motor local. Configura METABASE_URL y METABASE_API_KEY para enlazar dashboards.';
+}
+</script>
+</body>
+</html>
