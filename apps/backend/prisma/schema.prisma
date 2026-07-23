@@ -88,6 +88,17 @@ enum SpeakerType {
   @@map("speaker_type")
 }
 
+enum PaymentStatus {
+  PENDING @map("pending")
+  APPROVED @map("approved")
+  DECLINED @map("declined")
+  VOIDED @map("voided")
+  ERROR @map("error")
+  REFUND_REQUESTED @map("refund_requested")
+
+  @@map("payment_status")
+}
+
 enum EventType {
   LLAMADA_SALIENTE @map("llamada_saliente")
   WHATSAPP @map("whatsapp")
@@ -113,6 +124,7 @@ model Team {
   leads     Lead[]
   quotes    Quote[]
   policies  Policy[]
+  payments  Payment[]
 
   @@map("teams")
 }
@@ -312,6 +324,36 @@ model Policy {
   @@index([agentId], map: "idx_policies_agent")
   @@index([teamId], map: "idx_policies_team")
   @@map("policies")
+}
+
+// Pago de una póliza vía pasarela (Wompi sandbox) o simulado (provider "demo").
+// Lo crea el servicio IA al generar el link de pago; el estado lo actualizan el
+// webhook `POST /api/v1/payments/webhook` (transaction.updated) y el polling de
+// `verificar_pago`. `reference` es la referencia SEG-... que viaja por todo el flujo.
+model Payment {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?       @map("team_id") @db.Uuid
+  reference     String        @unique
+  provider      String        @default("wompi")
+  linkId        String?       @map("link_id")
+  transactionId String?       @map("transaction_id")
+  checkoutUrl   String?       @map("checkout_url")
+  amountCop     Decimal       @map("amount_cop") @db.Decimal(14, 2)
+  currency      String        @default("COP")
+  method        String?
+  status        PaymentStatus @default(PENDING)
+  concept       String?
+  sessionKey    String?       @map("session_key")
+  disputeReason String?       @map("dispute_reason")
+  metadata      Json?         @default("{}") @db.JsonB
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "payments_team_id_fkey")
+
+  @@index([teamId], map: "idx_payments_team")
+  @@index([linkId], map: "idx_payments_link")
+  @@map("payments")
 }
 
 model Alert {

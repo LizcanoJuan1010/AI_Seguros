@@ -59,12 +59,17 @@ const AuthContext = createContext<AuthContextValue>({
 // Endpoints y claves de almacenamiento
 // ---------------------------------------------------------------------------
 
-const LOGIN_ENDPOINT = 'http://localhost:3000/api/v1/auth/login'
-const REFRESH_ENDPOINT = 'http://localhost:3000/api/v1/auth/refresh'
+// Rutas relativas: nginx (prod) y el proxy de Vite (dev) las reenvían al
+// backend NestJS. Un host absoluto aquí rompe la sesión al desplegar (el
+// refresh falla y "saca" al usuario).
+const LOGIN_ENDPOINT = '/api/v1/auth/login'
+const REFRESH_ENDPOINT = '/api/v1/auth/refresh'
 
 const LS_ACCESS = 'teq_access_token'
 const LS_REFRESH = 'teq_refresh_token'
 const LS_USER = 'teq_user'
+/** Último email usado — prellenar el formulario de ingreso. */
+export const LS_LAST_EMAIL = 'teq_last_email'
 
 function lsGet(key: string): string | null {
   try {

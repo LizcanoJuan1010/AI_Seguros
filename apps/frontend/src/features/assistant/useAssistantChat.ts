@@ -49,6 +49,26 @@ export type AssistantPolicy = {
   title: string
 }
 
+/** Estado del pago real (evento `payment_link`, pasarela Wompi o modo demo). */
+export type PaymentStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'DECLINED'
+  | 'VOIDED'
+  | 'ERROR'
+  | 'REFUND_REQUESTED'
+
+export type AssistantPayment = {
+  reference: string
+  /** URL del checkout seguro de Wompi (null en modo demo). */
+  checkout_url?: string | null
+  amount_cop?: number
+  concept?: string
+  status: PaymentStatus
+  provider?: string
+  demo?: boolean
+}
+
 export type ChatRole = 'user' | 'assistant'
 
 export type ChatMessage = {
@@ -62,6 +82,8 @@ export type ChatMessage = {
   documents: AssistantDocument[]
   /** Paso actual del flujo de cierre (último `checkout_step` recibido). */
   checkout?: CheckoutState
+  /** Pago real en curso asociado a este mensaje (evento `payment_link`). */
+  payment?: AssistantPayment
   /** Póliza emitida asociada a este mensaje (evento `policy`). */
   policy?: AssistantPolicy
   error?: string
@@ -80,6 +102,7 @@ type SseEvent =
   | { event: 'quick_replies'; data: { items?: string[] } }
   | { event: 'document'; data: { download_url: string; title?: string } }
   | { event: 'checkout_step'; data: { step: CheckoutStep; fields?: string[] } }
+  | { event: 'payment_link'; data: AssistantPayment }
   | {
       event: 'policy'
       data: { policyNumber: string; download_url: string; title?: string }
@@ -304,6 +327,25 @@ export function useAssistantChat() {
             ...m,
             thinking: undefined,
             checkout: { step, fields: d.fields },
+          }))
+          break
+        }
+        case 'payment_link': {
+          const d = frame.data as Partial<AssistantPayment>
+          if (!d?.reference) break
+          patchMessage(id, (m) => ({
+            ...m,
+            thinking: undefined,
+            // Merge con el pago previo: una actualización de estado (p. ej.
+            // verificar_pago) puede venir sin checkout_url y no debe borrarlo.
+            payment: {
+              ...(m.payment?.reference === d.reference ? m.payment : {}),
+              ...Object.fromEntries(
+                Object.entries(d).filter(([, v]) => v !== null && v !== undefined),
+              ),
+              reference: d.reference,
+              status: (d.status ?? m.payment?.status ?? 'PENDING') as PaymentStatus,
+            } as AssistantPayment,
           }))
           break
         }

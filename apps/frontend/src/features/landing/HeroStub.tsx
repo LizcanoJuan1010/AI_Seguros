@@ -15,8 +15,10 @@ export function HeroStub() {
         </div>
         <h1 className="text-display-lg-mobile leading-tight tracking-tight text-primary md:text-display-lg">
           Tu seguro, <br className="md:hidden" />{' '}
-          <span className="italic text-secondary">a una llamada</span> de
-          distancia.
+          <span className="font-hand font-semibold text-secondary">
+            a una llamada
+          </span>{' '}
+          de distancia.
         </h1>
         <p className="mx-auto max-w-2xl text-body-lg text-on-surface-variant">
           Experimenta el futuro de la protección con nuestra IA especializada.

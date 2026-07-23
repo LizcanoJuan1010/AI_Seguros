@@ -94,6 +94,72 @@ async def assistant_upload(file: UploadFile = File(...), session_id: str = "", p
             "resumen": parsed.get("resumen")}
 
 
+# ---------- Historial de conversaciones (patrón Paloma) ----------
+
+def _parse_history_row(raw: str) -> dict | None:
+    """Devuelve {role, content} si la fila es un mensaje visible del chat."""
+    try:
+        m = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    role = m.get("role")
+    content = (m.get("content") or "").strip()
+    if role not in ("user", "assistant") or not content or m.get("tool_calls"):
+        return None
+    if content.startswith("[sistema]"):  # correcciones internas del loop
+        return None
+    return {"role": role, "content": content}
+
+
+@app.get("/api/assistant/sessions")
+def assistant_sessions(limit: int = 30) -> list[dict[str, Any]]:
+    """Lista las conversaciones guardadas (más recientes primero) con un
+    preview del primer mensaje del usuario — para el panel de historial."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT session_id, COUNT(*) AS total, MAX(seq) AS last_seq
+               FROM chat_history GROUP BY session_id
+               ORDER BY MAX(seq) DESC LIMIT %s""",
+            (min(int(limit), 100),)).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            first_rows = conn.execute(
+                "SELECT message FROM chat_history WHERE session_id=%s ORDER BY seq ASC LIMIT 12",
+                (r["session_id"],)).fetchall()
+            preview, visibles = "", 0
+            for fr in first_rows:
+                msg = _parse_history_row(fr["message"])
+                if not msg:
+                    continue
+                visibles += 1
+                if not preview and msg["role"] == "user":
+                    preview = msg["content"][:90]
+            out.append({"session_id": r["session_id"], "mensajes": r["total"],
+                        "preview": preview or "(conversación sin mensajes de usuario)"})
+        return out
+    finally:
+        conn.close()
+
+
+@app.get("/api/assistant/history/{session_id}")
+def assistant_history(session_id: str, limit: int = 300) -> list[dict[str, str]]:
+    """Mensajes visibles (usuario/asistente) de una conversación, en orden."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT message FROM chat_history WHERE session_id=%s ORDER BY seq ASC LIMIT %s",
+            (session_id, min(int(limit), 1000))).fetchall()
+        out = []
+        for r in rows:
+            msg = _parse_history_row(r["message"])
+            if msg:
+                out.append(msg)
+        return out
+    finally:
+        conn.close()
+
+
 def require_manager(x_api_key: str = Header(default="")) -> None:
     if x_api_key != MANAGER_API_KEY:
         raise HTTPException(403, "Se requiere API key de gerente (header X-API-Key)")

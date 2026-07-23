@@ -81,9 +81,10 @@ class _MarkerBuffer:
         return self.buf
 
 
-# Herramientas del cierre autónomo: su salida se mapea a eventos checkout_step/policy
-# (no al evento `document`, que es para la cotización).
-_CHECKOUT_TOOLS = {"capturar_datos_cliente", "registrar_consentimiento", "emitir_poliza"}
+# Herramientas del cierre autónomo: su salida se mapea a eventos checkout_step/
+# policy/payment_link (no al evento `document`, que es para la cotización).
+_CHECKOUT_TOOLS = {"capturar_datos_cliente", "registrar_consentimiento", "emitir_poliza",
+                   "generar_link_pago", "verificar_pago", "solicitar_aclaracion"}
 
 
 def _summarize_tool(name: str, result) -> tuple[str, dict]:
@@ -113,14 +114,43 @@ def _summarize_tool(name: str, result) -> tuple[str, dict]:
     if name == "emitir_poliza" and isinstance(result, dict) and result.get("policyNumber"):
         return (f"Póliza emitida {result['policyNumber']}",
                 {"policyNumber": result["policyNumber"], "degraded": result.get("degraded", False)})
+    if name == "generar_link_pago" and isinstance(result, dict) and result.get("reference"):
+        return (("Pago demo preparado" if result.get("demo") else "Link de pago generado"),
+                {"reference": result["reference"], "checkout_url": result.get("checkout_url")})
+    if name == "verificar_pago" and isinstance(result, dict) and result.get("reference"):
+        return (f"Pago {result.get('estado', result.get('status', ''))}",
+                {"reference": result["reference"], "status": result.get("status")})
+    if name == "solicitar_aclaracion" and isinstance(result, dict) and result.get("reference"):
+        return (("Pago anulado" if result.get("status") == "VOIDED" else "Aclaración registrada"),
+                {"reference": result["reference"], "status": result.get("status")})
     return "Listo", {}
+
+
+def _payment_frame(result: dict) -> str:
+    """Frame SSE `payment_link` con el estado del pago (tarjeta en el chat)."""
+    return _frame("payment_link", {
+        "reference": result.get("reference"),
+        "checkout_url": result.get("checkout_url"),
+        "amount_cop": result.get("amount_cop"),
+        "concept": result.get("concept"),
+        "status": result.get("status") or "PENDING",
+        "provider": result.get("provider"),
+        "demo": bool(result.get("demo")),
+    })
 
 
 def _checkout_frames(name: str, result) -> list[str]:
     """Mapea la salida de las herramientas de cierre a eventos SSE
-    `checkout_step` (datos/consentimiento/pago/emision) y `policy`."""
+    `checkout_step` (datos/consentimiento/pago/emision), `payment_link` y
+    `policy`."""
     frames: list[str] = []
     if not isinstance(result, dict):
+        return frames
+    if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
+        if result.get("reference"):
+            if name == "generar_link_pago":
+                frames.append(_frame("checkout_step", {"step": "pago"}))
+            frames.append(_payment_frame(result))
         return frames
     if name == "capturar_datos_cliente":
         frames.append(_frame("checkout_step", {"step": "datos",
