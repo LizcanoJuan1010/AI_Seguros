@@ -94,6 +94,7 @@ export function LoginModal() {
           )}
 
           <Button
+            type="submit"
             variant="primary"
             className="mt-1 w-full justify-center rounded-md py-3"
             disabled={submitting}

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Download } from 'lucide-react'
 import 'highlight.js/styles/github.css'
 
 /**
@@ -86,16 +86,33 @@ const components: Components = {
       {children}
     </p>
   ),
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-semibold text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ children, href }) => {
+    const url = href ?? ''
+    // Documentos generados (cotización/póliza): botón de descarga directa,
+    // sin abrir pestaña nueva.
+    if (url.includes('/api/documents/')) {
+      return (
+        <a
+          href={url}
+          download
+          className="my-1 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-label-md font-bold text-on-primary no-underline shadow-sm transition-transform hover:scale-[1.02] active:scale-95"
+        >
+          <Download size={16} />
+          {children}
+        </a>
+      )
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-semibold text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
+      >
+        {children}
+      </a>
+    )
+  },
   ul: ({ children }) => (
     <ul className="mb-3 ml-1 list-disc space-y-1 pl-4 text-body-md text-on-surface marker:text-primary/60 last:mb-0">
       {children}

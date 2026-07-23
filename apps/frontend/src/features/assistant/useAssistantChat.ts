@@ -49,7 +49,7 @@ export type AssistantPolicy = {
   title: string
 }
 
-/** Estado del pago real (evento `payment_link`, pasarela Wompi o modo demo). */
+/** Estado del pago real (evento `payment_link`, pasarela Polar o modo demo). */
 export type PaymentStatus =
   | 'PENDING'
   | 'APPROVED'
@@ -60,7 +60,7 @@ export type PaymentStatus =
 
 export type AssistantPayment = {
   reference: string
-  /** URL del checkout seguro de Wompi (null en modo demo). */
+  /** URL del checkout seguro de Polar (null en modo demo). */
   checkout_url?: string | null
   amount_cop?: number
   concept?: string

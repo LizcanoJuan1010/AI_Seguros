@@ -6,6 +6,7 @@ import { CheckoutStepper, PaymentCard, PolicyCard } from './PolicyCard'
 import { useAssistantChat } from './useAssistantChat'
 import { ChatHistoryPanel } from './ChatHistoryPanel'
 import { authHeaders } from '../../lib/authFetch'
+import { downloadFile } from '../../lib/download'
 
 /** Tipos de documento aceptados en el chat (extractores del servicio IA). */
 const UPLOAD_ACCEPT =
@@ -132,7 +133,7 @@ function DocumentChip({ doc }: { doc: AssistantDocument }) {
     <Button
       variant="cta"
       className="rounded-full"
-      onClick={() => window.open(doc.download_url, '_blank', 'noopener')}
+      onClick={() => downloadFile(doc.download_url)}
     >
       <Icon name="download" className="text-[18px]" />
       {doc.title}

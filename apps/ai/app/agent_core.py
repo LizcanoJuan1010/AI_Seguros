@@ -51,10 +51,12 @@ RECOLECCIÓN DE INFORMACIÓN REAL (para poder emitir de verdad):
 CÓMO CERRAR (usa las herramientas, en este orden):
 1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC). Fecha de nacimiento, email y ciudad son deseables pero opcionales. Pídelos de forma natural, no como formulario.
 2. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
-3. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, PSE o Nequi, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Wompi). NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
+3. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
 4. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
 
 POSVENTA DE PAGOS: si el cliente reporta un cobro errado o duplicado, quiere el reembolso o ejerce su derecho de retracto, usa `solicitar_aclaracion(motivo)`: intenta la anulación en línea y, si no se puede, deja la aclaración registrada. Explícale el resultado y los tiempos con transparencia.
+
+INFORMES PERIÓDICOS: tras emitir la póliza (o si el cliente muestra interés continuo), ofrécele UNA vez recibir un informe por correo del estado de su seguro: "¿Te gustaría que te envíe un informe de tu seguro al correo? Puede ser semanal o mensual". Si acepta y te da el email, llama `suscribir_informes(email, frecuencia)`. Nunca lo suscribas sin su sí explícito.
 
 DIVULGACIÓN (transparencia obligatoria antes de emitir): nombre de la aseguradora emisora, coberturas clave, exclusiones principales y la prima. No emitas si el cliente no vio la oferta.
 
@@ -155,21 +157,21 @@ TOOLS_SCHEMA = [
         }}}},
     {"type": "function", "function": {
         "name": "generar_link_pago",
-        "description": "Genera el link de pago REAL (Wompi: tarjeta débito/crédito, PSE, Nequi) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
+        "description": "Genera el link de pago REAL (Polar: tarjeta débito/crédito, cobro en COP) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
         "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
             "monto_cop": {"type": "number", "description": "Monto a cobrar en COP (normalmente la prima mensual de la opción elegida)"},
             "descripcion": {"type": "string", "description": "Concepto del cobro, ej. 'Primera mensualidad — Seguro de Vida'"},
         }}}},
     {"type": "function", "function": {
         "name": "verificar_pago",
-        "description": "Consulta el estado real del pago (webhook del backend + API de Wompi). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
+        "description": "Consulta el estado real del pago (webhook del backend + API de Polar). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
         "parameters": {"type": "object", "properties": {
             "reference": {"type": "string", "description": "Referencia SEG-... (opcional: por defecto el último pago de la sesión)"},
-            "transaction_id": {"type": "string", "description": "ID de transacción Wompi del comprobante, si el cliente lo tiene"},
+            "transaction_id": {"type": "string", "description": "ID de la orden de Polar del comprobante, si el cliente lo tiene"},
         }}}},
     {"type": "function", "function": {
         "name": "solicitar_aclaracion",
-        "description": "Aclaración/disputa de un pago ya realizado: intenta anular (void) la transacción para reembolso inmediato y, si no es posible, registra la aclaración para gestión con la pasarela. Úsala ante cobros errados/duplicados o derecho de retracto.",
+        "description": "Aclaración/disputa de un pago ya realizado: intenta el reembolso total de la orden en línea y, si no es posible, registra la aclaración para gestión con la pasarela. Úsala ante cobros errados/duplicados o derecho de retracto.",
         "parameters": {"type": "object", "required": ["motivo"], "properties": {
             "motivo": {"type": "string", "description": "Motivo del cliente, ej. 'cobro duplicado', 'derecho de retracto'"},
             "reference": {"type": "string", "description": "Referencia SEG-... del pago (opcional: por defecto el último de la sesión)"},
@@ -208,6 +210,13 @@ TOOLS_SCHEMA = [
         "name": "perfilar_cliente",
         "description": "Hiper-perfilamiento: analiza los datos recolectados y devuelve etapa de vida, segmento de riesgo, capacidad de pago, necesidades detectadas, productos recomendados, propensión y banderas. Úsalo para personalizar la recomendación.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "suscribir_informes",
+        "description": "Suscribe al cliente a informes periódicos por correo sobre el estado de su seguro (cotizaciones, póliza, recomendaciones). Úsala SOLO cuando el cliente acepte explícitamente recibirlos y haya dado su email. Frecuencias: semanal | mensual (también diaria si la pide).",
+        "parameters": {"type": "object", "required": ["email", "frecuencia"], "properties": {
+            "email": {"type": "string", "description": "Correo del cliente"},
+            "frecuencia": {"type": "string", "enum": ["diaria", "semanal", "mensual"]},
+        }}}},
 ]
 
 
@@ -337,7 +346,7 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
     payment_reference = (args.get("payment_reference") or "").strip() or None
 
     # Con pago real, la póliza solo se emite contra un pago APPROVED (el estado
-    # lo mantienen el webhook de Wompi y verificar_pago; misma filosofía que el
+    # lo mantienen el webhook de Polar y verificar_pago; misma filosofía que el
     # consentimiento: sin herramienta no hay emisión).
     if payment_method not in ("simulado", "demo"):
         from . import payments
@@ -564,7 +573,7 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
         if name == "emitir_poliza":
             return _emitir_poliza(conn, args, phone=phone, tenant_id=tenant_id)
 
-        # ---------- Pagos reales (Wompi sandbox / modo demo) ----------
+        # ---------- Pagos reales (Polar sandbox / modo demo) ----------
         if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
             from . import payments
             fn = {"generar_link_pago": payments.generar_link_pago,
@@ -635,6 +644,21 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             datos = _get_intake(conn, skey)
             merged = {**datos, **_get_checkout(conn, skey)}
             return profiling.build_profile(merged)
+
+        if name == "suscribir_informes":
+            try:
+                from . import reports as reports_mod
+            except Exception as exc:
+                return {"error": f"informes no disponibles: {exc}"}
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            out = reports_mod.subscribe(
+                str(args.get("email") or ""), tipo="cliente",
+                frecuencia=str(args.get("frecuencia") or "mensual"),
+                phone=real_phone)
+            if "error" in out:
+                return out
+            return {**out, "mensaje": ("Suscripción registrada. Confírmale al cliente "
+                                       "que recibirá su informe y con qué frecuencia.")}
 
         return {"error": f"herramienta desconocida: {name}"}
     finally:

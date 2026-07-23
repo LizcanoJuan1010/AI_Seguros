@@ -326,15 +326,16 @@ model Policy {
   @@map("policies")
 }
 
-// Pago de una póliza vía pasarela (Wompi sandbox) o simulado (provider "demo").
-// Lo crea el servicio IA al generar el link de pago; el estado lo actualizan el
-// webhook `POST /api/v1/payments/webhook` (transaction.updated) y el polling de
-// `verificar_pago`. `reference` es la referencia SEG-... que viaja por todo el flujo.
+// Pago de una póliza vía pasarela (Polar sandbox) o simulado (provider "demo").
+// Lo crea el servicio IA al generar el checkout; el estado lo actualizan el
+// webhook `POST /api/v1/payments/webhook` (order.paid / refund.*) y el polling
+// de `verificar_pago`. `reference` es la referencia SEG-... que viaja por todo
+// el flujo; `linkId` guarda el checkout_id y `transactionId` la orden de Polar.
 model Payment {
   id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId        String?       @map("team_id") @db.Uuid
   reference     String        @unique
-  provider      String        @default("wompi")
+  provider      String        @default("polar")
   linkId        String?       @map("link_id")
   transactionId String?       @map("transaction_id")
   checkoutUrl   String?       @map("checkout_url")

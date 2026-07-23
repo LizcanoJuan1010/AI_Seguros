@@ -3,6 +3,7 @@ import { KpiCards } from '../features/manager/KpiCards'
 import { AgentsTable } from '../features/manager/AgentsTable'
 import { AlertsPanel } from '../features/manager/AlertsPanel'
 import { Leaderboard } from '../features/manager/Leaderboard'
+import { ReportsCard } from '../features/manager/ReportsCard'
 import { AiPrediction } from '../features/manager/AiPrediction'
 import { agents as mockAgents, alerts as mockAlerts, kpis as mockKpis, leaders } from '../data/mock/manager'
 import type { AgentRow, Alert, Kpi } from '../data/mock/types'
@@ -161,6 +162,7 @@ export function ManagerDashboardPage() {
         <aside className="flex w-full flex-col gap-6 lg:w-80">
           {alerts.length > 0 && <AlertsPanel items={alerts} />}
           <Leaderboard entries={leaders} />
+          <ReportsCard />
         </aside>
       </div>
 
