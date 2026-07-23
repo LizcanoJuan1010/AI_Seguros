@@ -2,8 +2,52 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../../components/ui/Icon'
 import { Button } from '../../components/ui/Button'
 import { MessageMarkdown } from './MessageMarkdown'
-import { CheckoutStepper, PolicyCard } from './PolicyCard'
+import { CheckoutStepper, PaymentCard, PolicyCard } from './PolicyCard'
 import { useAssistantChat } from './useAssistantChat'
+import { ChatHistoryPanel } from './ChatHistoryPanel'
+import { authHeaders } from '../../lib/authFetch'
+
+/** Tipos de documento aceptados en el chat (extractores del servicio IA). */
+const UPLOAD_ACCEPT =
+  '.pdf,.doc,.docx,.xls,.xlsx,.pptx,.txt,.csv,.md,.json,.png,.jpg,.jpeg,.webp'
+const MAX_UPLOAD_MB = 10
+
+/**
+ * Adjunto en preparación (estilo Gemini/GPT): el archivo se sube al soltarlo,
+ * pero NO se envía al asistente hasta que el usuario mande el mensaje —
+ * puede acumular varios y escribir sobre ellos.
+ */
+type StagedDoc = {
+  key: string
+  name: string
+  status: 'uploading' | 'ready' | 'error'
+  fileId?: string
+  tipo?: string
+}
+
+function docIcon(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (ext === 'pdf') return 'picture_as_pdf'
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return 'image'
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'table_chart'
+  if (['ppt', 'pptx'].includes(ext)) return 'co_present'
+  return 'description'
+}
+
+/** Bloque de adjuntos que viaja al final del mensaje (el agente lee los file_id). */
+const ATTACH_BLOCK_RE = /\n*\[Documentos adjuntos: ([\s\S]*?)\]\s*$/
+
+function buildAttachBlock(docs: StagedDoc[]): string {
+  const list = docs
+    .map(
+      (d) =>
+        `"${d.name}" (file_id: ${d.fileId}${
+          d.tipo && d.tipo !== 'desconocido' ? `, parece ${d.tipo.replaceAll('_', ' ')}` : ''
+        })`,
+    )
+    .join(', ')
+  return `\n\n[Documentos adjuntos: ${list}. Léelos con analizar_documento.]`
+}
 import type {
   AssistantDocument,
   ChatMessage,
@@ -27,6 +71,9 @@ const TOOL_LABELS: Record<string, string> = {
   generar_pdf: 'Generando PDF',
   documento: 'Documento',
   insights: 'Insights',
+  generar_link_pago: 'Link de pago',
+  verificar_pago: 'Verificando pago',
+  solicitar_aclaracion: 'Aclaración de pago',
 }
 
 function toolLabel(tool: string, status: ToolCall['status']): string {
@@ -174,6 +221,8 @@ function AssistantBubble({
           {message.checkout && !message.policy ? (
             <CheckoutStepper current={message.checkout.step} />
           ) : null}
+
+          {message.payment ? <PaymentCard payment={message.payment} /> : null}
         </div>
       </div>
 
@@ -200,10 +249,32 @@ function AssistantBubble({
 }
 
 function UserBubble({ message }: { message: ChatMessage }) {
+  // El bloque técnico de adjuntos se muestra como chips, no como texto crudo.
+  const match = message.content.match(ATTACH_BLOCK_RE)
+  const text = match
+    ? message.content.replace(ATTACH_BLOCK_RE, '').trim()
+    : message.content
+  const attachedNames = match
+    ? Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1])
+    : []
+
   return (
     <div className="flex items-start justify-end gap-3">
       <div className="max-w-[85%] rounded-2xl rounded-tr-none bg-primary-container p-4 text-white shadow-md">
-        <p className="whitespace-pre-wrap text-body-md">{message.content}</p>
+        {text && <p className="whitespace-pre-wrap text-body-md">{text}</p>}
+        {attachedNames.length > 0 && (
+          <div className={`flex flex-wrap gap-2 ${text ? 'mt-3' : ''}`}>
+            {attachedNames.map((name) => (
+              <span
+                key={name}
+                className="flex items-center gap-1.5 rounded-lg bg-white/15 px-2.5 py-1.5 text-label-sm"
+              >
+                <Icon name={docIcon(name)} className="text-[16px]" />
+                <span className="max-w-44 truncate">{name}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex size-8 flex-shrink-0 items-center justify-center rounded-full bg-surface-variant text-on-surface">
         <Icon name="person" className="text-[18px]" />
@@ -248,10 +319,69 @@ function EmptyState({
 }
 
 export function AssistantChat() {
-  const { messages, isStreaming, sendMessage } = useAssistantChat()
+  const { messages, isStreaming, sendMessage, sessionId } = useAssistantChat()
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<StagedDoc[]>([])
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * Adjuntar (estilo Gemini/GPT): cada archivo se sube de inmediato en
+   * segundo plano y queda como chip "listo" en el composer. NO se envía nada
+   * al asistente hasta que el usuario oprima Enter/enviar — puede acumular
+   * varios documentos y escribir un mensaje sobre ellos.
+   */
+  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (!files.length) return
+    setUploadError(null)
+
+    for (const file of files) {
+      if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        setUploadError(`"${file.name}" supera ${MAX_UPLOAD_MB} MB.`)
+        continue
+      }
+      const key = `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 8)}`
+      setAttachments((prev) => [
+        ...prev,
+        { key, name: file.name, status: 'uploading' },
+      ])
+      const form = new FormData()
+      form.append('file', file)
+      fetch(`/api/assistant/upload?session_id=${encodeURIComponent(sessionId)}`, {
+        method: 'POST',
+        headers: { ...authHeaders() },
+        body: form,
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const data = (await res.json()) as {
+            file_id: string
+            tipo_detectado?: string
+          }
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.key === key
+                ? { ...a, status: 'ready', fileId: data.file_id, tipo: data.tipo_detectado }
+                : a,
+            ),
+          )
+        })
+        .catch(() => {
+          setAttachments((prev) =>
+            prev.map((a) => (a.key === key ? { ...a, status: 'error' } : a)),
+          )
+        })
+    }
+  }
+
+  const removeAttachment = (key: string) => {
+    setAttachments((prev) => prev.filter((a) => a.key !== key))
+  }
 
   useEffect(() => {
     const el = scrollRef.current
@@ -269,9 +399,20 @@ export function AssistantChat() {
 
   const submit = (text?: string) => {
     const value = (text ?? input).trim()
-    if (!value || isStreaming) return
-    void sendMessage(value)
+    const ready = attachments.filter((a) => a.status === 'ready')
+    const stillUploading = attachments.some((a) => a.status === 'uploading')
+    // Enviar requiere texto o al menos un adjunto listo (y ninguno subiendo).
+    if ((!value && ready.length === 0) || isStreaming || stillUploading) return
+    let message = value
+    if (ready.length > 0) {
+      message =
+        (value || 'Te adjunté estos documentos, revísalos por favor.') +
+        buildAttachBlock(ready)
+    }
+    void sendMessage(message)
     setInput('')
+    setAttachments([])
+    setUploadError(null)
     resetTextareaHeight()
   }
 
@@ -289,7 +430,10 @@ export function AssistantChat() {
     }
   }
 
-  const canSend = input.trim().length > 0 && !isStreaming
+  const readyCount = attachments.filter((a) => a.status === 'ready').length
+  const anyUploading = attachments.some((a) => a.status === 'uploading')
+  const canSend =
+    (input.trim().length > 0 || readyCount > 0) && !isStreaming && !anyUploading
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -311,7 +455,22 @@ export function AssistantChat() {
             {isStreaming ? 'Escribiendo…' : 'En línea · IA de seguros'}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          aria-label="Ver historial de conversaciones"
+          title="Historial de conversaciones"
+          className="ml-auto flex size-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-variant hover:text-primary"
+        >
+          <Icon name="history" className="text-[22px]" />
+        </button>
       </header>
+
+      <ChatHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentSessionId={sessionId}
+      />
 
       {/* Mensajes */}
       <div
@@ -340,7 +499,68 @@ export function AssistantChat() {
 
       {/* Input */}
       <div className="border-t border-outline-variant bg-surface-container-lowest px-4 py-3 md:px-6">
+        {/* Adjuntos en preparación (chips, estilo Gemini/GPT) */}
+        {attachments.length > 0 && (
+          <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
+            {attachments.map((a) => (
+              <span
+                key={a.key}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-label-sm shadow-sm ${
+                  a.status === 'error'
+                    ? 'border-error/50 bg-error-container/40 text-on-error-container'
+                    : 'border-outline-variant bg-white text-on-surface'
+                }`}
+              >
+                <Icon
+                  name={
+                    a.status === 'uploading' ? 'progress_activity' : docIcon(a.name)
+                  }
+                  className={`text-[16px] ${
+                    a.status === 'uploading'
+                      ? 'animate-spin text-outline'
+                      : a.status === 'error'
+                        ? 'text-error'
+                        : 'text-primary'
+                  }`}
+                />
+                <span className="max-w-44 truncate">{a.name}</span>
+                {a.status === 'ready' && a.tipo && a.tipo !== 'desconocido' && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] uppercase text-primary">
+                    {a.tipo.replaceAll('_', ' ')}
+                  </span>
+                )}
+                {a.status === 'error' && <span>falló</span>}
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(a.key)}
+                  aria-label={`Quitar ${a.name}`}
+                  className="text-outline transition-colors hover:text-error"
+                >
+                  <Icon name="close" className="text-[16px]" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept={UPLOAD_ACCEPT}
+            className="hidden"
+            onChange={handleFiles}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={isStreaming}
+            aria-label="Adjuntar documentos"
+            title="Adjuntar documentos (PDF, Word, Excel, imagen... puedes elegir varios)"
+            className="flex size-11 flex-shrink-0 items-center justify-center rounded-full border border-outline-variant bg-white text-on-surface-variant shadow-sm transition-all hover:border-primary hover:text-primary active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Icon name="attach_file" className="text-[20px]" />
+          </button>
           <div className="flex flex-1 items-end rounded-2xl border border-outline-variant bg-white px-3 py-2 shadow-sm transition-colors focus-within:border-primary">
             <textarea
               ref={textareaRef}
@@ -363,7 +583,18 @@ export function AssistantChat() {
           </button>
         </div>
         <p className="mx-auto mt-1.5 max-w-3xl text-center text-label-sm text-outline">
-          Enter envía · Shift+Enter salto de línea
+          {uploadError ? (
+            <span className="text-error">{uploadError}</span>
+          ) : anyUploading ? (
+            'Subiendo documentos…'
+          ) : readyCount > 0 ? (
+            `${readyCount} documento${readyCount > 1 ? 's' : ''} listo${readyCount > 1 ? 's' : ''} — escribe algo sobre ellos o presiona Enter para enviarlos`
+          ) : (
+            <>
+              Enter envía · Shift+Enter salto de línea · 📎 adjunta uno o varios
+              documentos (PDF, Word, Excel, imagen) y escribe sobre ellos
+            </>
+          )}
         </p>
       </div>
     </div>

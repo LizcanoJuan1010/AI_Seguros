@@ -189,6 +189,7 @@ def extract_text(path: str) -> str:
     """Extrae texto de un documento. Nunca lanza; ante error devuelve ``""``.
 
     - PDF  -> pdfplumber (todas las páginas).
+    - DOCX/XLSX/XLS/PPTX -> extractores office (portados de Paloma).
     - .txt/.csv/.md/... -> lectura directa (utf-8 tolerante).
     - imágenes -> OCR si pytesseract está instalado, si no una nota.
     """
@@ -199,6 +200,23 @@ def extract_text(path: str) -> str:
 
         if ext == ".pdf":
             return _extract_pdf(path)
+
+        # Office (Word/Excel/PowerPoint) — extractores portados de Paloma.
+        if ext in (".docx", ".doc"):
+            from .office_extractors import extract_docx
+            return extract_docx(path)
+        if ext in (".xlsx", ".xlsm"):
+            from .office_extractors import extract_xlsx
+            return extract_xlsx(path)
+        if ext == ".xls":
+            from .office_extractors import extract_xls
+            return extract_xls(path)
+        if ext == ".pptx":
+            from .office_extractors import extract_pptx
+            return extract_pptx(path)
+        if ext == ".ppt":
+            return (f"[Presentación legacy: {Path(path).name} — formato .ppt no "
+                    "soportado; pídele al cliente convertirla a .pptx]")
 
         if ext in _IMAGE_EXTS:
             return _extract_image(path)

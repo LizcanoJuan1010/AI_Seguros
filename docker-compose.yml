@@ -46,6 +46,8 @@ services:
       - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
       - JWT_ACCESS_MINUTES=${JWT_ACCESS_MINUTES:-480}
       - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
+      # Secreto de eventos de Wompi (test_events_...): firma del webhook de pagos
+      - WOMPI_EVENTS_SECRET=${WOMPI_EVENTS_SECRET:-}
     ports:
       - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
     restart: unless-stopped
@@ -69,6 +71,10 @@ services:
       - MANAGER_PHONES=${MANAGER_PHONES:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      # Pasarela Wompi (SANDBOX). Sin llave privada el pago corre en modo demo.
+      - WOMPI_BASE_URL=${WOMPI_BASE_URL:-https://sandbox.wompi.co/v1}
+      - WOMPI_PRIVATE_KEY=${WOMPI_PRIVATE_KEY:-}
+      - WOMPI_REDIRECT_URL=${WOMPI_REDIRECT_URL:-}
       - SEGURIA_DATA_DIR=/data/market
       - CORS_ORIGINS=${CORS_ORIGINS:-}
     volumes:
@@ -118,14 +124,14 @@ services:
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
       - HERMES_MODE=${HERMES_MODE:-idle}
     volumes:
-      - ./services/hermes-agent:/workspace:ro
+      - ./apps/services/hermes-agent:/workspace:ro
       - hermes-sessions:/root/.hermes/sessions
       - hermes-platforms:/root/.hermes/platforms
       - hermes-memories:/root/.hermes/memories
     restart: unless-stopped
 
   baileys-bridge:
-    build: ./services/baileys-bridge
+    build: ./apps/services/baileys-bridge
     image: seguria/baileys:latest
     profiles: ["baileys"]
     ports:

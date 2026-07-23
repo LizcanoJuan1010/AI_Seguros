@@ -68,6 +68,8 @@
   /* Fonts */
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-label: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-hand: "Edu VIC WA NT Hand", "Segoe Print", cursive;
 
   /* Spacing tokens */
   --spacing-margin-mobile: 16px;
@@ -120,24 +122,40 @@
   font-family: var(--font-label);
 }
 
+@utility font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+}
+
+@utility font-hand {
+  font-family: var(--font-hand);
+}
+
 @utility text-display-lg {
-  font-size: 48px;
-  line-height: 56px;
-  letter-spacing: -0.02em;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-size: 52px;
+  line-height: 60px;
+  letter-spacing: -0.015em;
+  font-weight: 600;
 }
 
 @utility text-display-lg-mobile {
-  font-size: 32px;
-  line-height: 40px;
-  letter-spacing: -0.02em;
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-size: 34px;
+  line-height: 42px;
+  letter-spacing: -0.01em;
+  font-weight: 600;
 }
 
 @utility text-headline-lg {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
   font-size: 32px;
   line-height: 40px;
-  font-weight: 700;
+  letter-spacing: -0.005em;
+  font-weight: 600;
 }
 
 @utility text-headline-md {

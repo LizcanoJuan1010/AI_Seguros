@@ -76,14 +76,24 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
+# Pasarela de pagos Wompi (Grupo Bancolombia) — SANDBOX por defecto. Sin
+# WOMPI_PRIVATE_KEY el flujo de pago corre en modo demo/simulado (igual que el
+# resto del stack sin API keys). El backend valida el webhook con
+# WOMPI_EVENTS_SECRET (ver apps/backend). Nunca uses llaves prod en el hackathon.
+WOMPI_BASE_URL = os.getenv("WOMPI_BASE_URL", "https://sandbox.wompi.co/v1")
+WOMPI_PRIVATE_KEY = os.getenv("WOMPI_PRIVATE_KEY", "")
+WOMPI_REDIRECT_URL = os.getenv("WOMPI_REDIRECT_URL", "")
+
 # Backend NestJS (sistema de registro del dominio): expone POST /api/v1/checkout
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo
 # del asistente llama a este servicio. Default apto para docker-compose.
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
 
-# Marca del documento de cotización
-BRAND_NAME = os.getenv("BRAND_NAME", "SegurIA")
-BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Seguros a tu medida, en tu idioma")
-BRAND_COLOR = os.getenv("BRAND_COLOR", "#0F4C81")
+# Marca de los documentos generados (cotización / certificado de póliza)
+BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")
+BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en la naturaleza")
+BRAND_COLOR = os.getenv("BRAND_COLOR", "#083911")  # verde primario del frontend
+BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
+BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)

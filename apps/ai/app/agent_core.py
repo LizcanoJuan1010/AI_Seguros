@@ -51,8 +51,10 @@ RECOLECCIÓN DE INFORMACIÓN REAL (para poder emitir de verdad):
 CÓMO CERRAR (usa las herramientas, en este orden):
 1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC). Fecha de nacimiento, email y ciudad son deseables pero opcionales. Pídelos de forma natural, no como formulario.
 2. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
-3. Pago: para el demo el método es "simulado"; en real sería PSE/tarjeta. Confírmalo brevemente.
-4. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method)` — emite la póliza real. Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
+3. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, PSE o Nequi, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Wompi). NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
+4. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
+
+POSVENTA DE PAGOS: si el cliente reporta un cobro errado o duplicado, quiere el reembolso o ejerce su derecho de retracto, usa `solicitar_aclaracion(motivo)`: intenta la anulación en línea y, si no se puede, deja la aclaración registrada. Explícale el resultado y los tiempos con transparencia.
 
 DIVULGACIÓN (transparencia obligatoria antes de emitir): nombre de la aseguradora emisora, coberturas clave, exclusiones principales y la prima. No emitas si el cliente no vio la oferta.
 
@@ -142,13 +144,35 @@ TOOLS_SCHEMA = [
             "acepta": {"type": "boolean", "description": "true si el cliente autorizó explícitamente el tratamiento de sus datos"}}}}},
     {"type": "function", "function": {
         "name": "emitir_poliza",
-        "description": "Emite la póliza REAL vía el backend (crea Customer->Lead->Quote->Policy) y genera el PDF/certificado. Requiere datos capturados + consentimiento=true. Devuelve el número de póliza y el enlace de descarga.",
+        "description": "Emite la póliza REAL vía el backend (crea Customer->Lead->Quote->Policy) y genera el PDF/certificado. Requiere datos capturados + consentimiento=true; con payment_method distinto de 'simulado' exige además un pago APPROVED (verificar_pago). Devuelve el número de póliza y el enlace de descarga.",
         "parameters": {"type": "object", "required": ["insurance_type", "monthly_premium_cop"], "properties": {
             "insurance_type": {"type": "string", "description": "Tipo de seguro elegido (vida|salud|auto|hogar|viaje|pyme|accidentes)"},
             "monthly_premium_cop": {"type": "number", "description": "Prima mensual en COP de la opción elegida"},
             "coverage": {"type": "object", "description": "Resumen de la oferta: {aseguradora, coberturas:[...], resumen}",
                          "properties": {}, "additionalProperties": True},
-            "payment_method": {"type": "string", "description": "Método de pago", "default": "simulado"},
+            "payment_method": {"type": "string", "description": "Método de pago: 'tarjeta' si pagó con el link real, 'simulado' para el demo", "default": "simulado"},
+            "payment_reference": {"type": "string", "description": "Referencia SEG-... del pago aprobado (obligatoria si payment_method no es 'simulado')"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "generar_link_pago",
+        "description": "Genera el link de pago REAL (Wompi: tarjeta débito/crédito, PSE, Nequi) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
+        "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
+            "monto_cop": {"type": "number", "description": "Monto a cobrar en COP (normalmente la prima mensual de la opción elegida)"},
+            "descripcion": {"type": "string", "description": "Concepto del cobro, ej. 'Primera mensualidad — Seguro de Vida'"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "verificar_pago",
+        "description": "Consulta el estado real del pago (webhook del backend + API de Wompi). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
+        "parameters": {"type": "object", "properties": {
+            "reference": {"type": "string", "description": "Referencia SEG-... (opcional: por defecto el último pago de la sesión)"},
+            "transaction_id": {"type": "string", "description": "ID de transacción Wompi del comprobante, si el cliente lo tiene"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "solicitar_aclaracion",
+        "description": "Aclaración/disputa de un pago ya realizado: intenta anular (void) la transacción para reembolso inmediato y, si no es posible, registra la aclaración para gestión con la pasarela. Úsala ante cobros errados/duplicados o derecho de retracto.",
+        "parameters": {"type": "object", "required": ["motivo"], "properties": {
+            "motivo": {"type": "string", "description": "Motivo del cliente, ej. 'cobro duplicado', 'derecho de retracto'"},
+            "reference": {"type": "string", "description": "Referencia SEG-... del pago (opcional: por defecto el último de la sesión)"},
         }}}},
     {"type": "function", "function": {
         "name": "obtener_insights",
@@ -309,7 +333,22 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
     except (ValueError, TypeError):
         prima = 0.0
     coverage = args.get("coverage") if isinstance(args.get("coverage"), dict) else {}
-    payment_method = args.get("payment_method") or "simulado"
+    payment_method = (args.get("payment_method") or "simulado").strip().lower()
+    payment_reference = (args.get("payment_reference") or "").strip() or None
+
+    # Con pago real, la póliza solo se emite contra un pago APPROVED (el estado
+    # lo mantienen el webhook de Wompi y verificar_pago; misma filosofía que el
+    # consentimiento: sin herramienta no hay emisión).
+    if payment_method not in ("simulado", "demo"):
+        from . import payments
+        pago = payments.approved_for_session(conn, session_key,
+                                             reference=payment_reference)
+        if not pago:
+            return {"error": "el pago aún no está aprobado; genera el link con "
+                             "generar_link_pago, espera a que el cliente pague y "
+                             "confirma con verificar_pago antes de emitir",
+                    "necesita": "verificar_pago"}
+        payment_reference = pago["reference"]
 
     real_phone = sess.get("phone") or (phone if phone and not phone.startswith("web:") else None)
     customer = {
@@ -330,7 +369,7 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
         "insuranceType": insurance_type,
         "monthlyPremiumCop": prima,
         "coverage": coverage or {"resumen": f"Seguro de {insurance_type.lower()}"},
-        "payment": {"method": payment_method, "reference": "demo"},
+        "payment": {"method": payment_method, "reference": payment_reference or "demo"},
         "leadId": None,
     }
 
@@ -524,6 +563,14 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
 
         if name == "emitir_poliza":
             return _emitir_poliza(conn, args, phone=phone, tenant_id=tenant_id)
+
+        # ---------- Pagos reales (Wompi sandbox / modo demo) ----------
+        if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
+            from . import payments
+            fn = {"generar_link_pago": payments.generar_link_pago,
+                  "verificar_pago": payments.verificar_pago,
+                  "solicitar_aclaracion": payments.solicitar_aclaracion}[name]
+            return fn(conn, session_key, tenant_id, args)
 
         if name == "obtener_insights":
             if role != "gerente":

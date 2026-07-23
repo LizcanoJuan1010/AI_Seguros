@@ -32,6 +32,9 @@ export function ProductCards() {
       <div className="mx-auto max-w-container-max">
         <Reveal className="mb-16 flex flex-col items-end justify-between gap-6 md:flex-row">
           <div className="max-w-xl">
+            <p className="mb-2 font-hand text-xl font-semibold text-secondary">
+              Nuestros ramos
+            </p>
             <h2 className="mb-4 text-headline-lg text-primary">
               Protección que fluye contigo
             </h2>
