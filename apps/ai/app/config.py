@@ -4,11 +4,14 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent.parent.parent
+BACKEND_ENV = PROJECT_ROOT / "apps" / "backend" / ".env"
 
-# Carga .env de la raíz del repo si existe (no pisa variables ya exportadas)
+# Carga .env de la raíz y del backend (no pisa variables ya exportadas).
+# El backend guarda DATABASE_URL/DIRECT_URL; la raíz guarda claves de IA/JWT.
 try:
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(BACKEND_ENV, override=False)
 except ImportError:
     pass
 DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", PROJECT_ROOT / "data" / "market"))
@@ -20,6 +23,22 @@ DOCS_DIR = Path(os.getenv("SEGURIA_DOCS_DIR", BASE_DIR.parent / "generated_docs"
 # quedaron OBSOLETOS y se eliminaron. El esquema es configurable vía
 # `SEGURIA_DB_SCHEMA` (default `seguria`; la suite usa `seguria_test`).
 DB_SCHEMA = os.getenv("SEGURIA_DB_SCHEMA", "seguria")
+
+
+def _normalize_dsn(url: str) -> str:
+    """Quita opciones solo de Prisma/pgbouncer que confunden a psycopg/asyncpg."""
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(url.strip().strip("'\""))
+    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+             if k.lower() != "pgbouncer"]
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def resolve_database_url() -> str:
+    """Prefiere DIRECT_URL (sesión) para DDL; si no, DATABASE_URL."""
+    raw = os.getenv("DIRECT_URL") or os.getenv("DATABASE_URL") or ""
+    return _normalize_dsn(raw) if raw else ""
 
 # Rol gerente: números de WhatsApp autorizados (separados por coma) y API key del panel
 MANAGER_PHONES = {p.strip() for p in os.getenv("MANAGER_PHONES", "").split(",") if p.strip()}
@@ -39,7 +58,8 @@ METABASE_API_KEY = os.getenv("METABASE_API_KEY", "")
 
 # Memoria multi-tenant (patrón Paloma): Postgres si está disponible, si no cae a
 # un dict en proceso. Formato: postgresql://seguria:seguria@postgres:5432/seguria
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+# En local reutiliza apps/backend/.env (DIRECT_URL > DATABASE_URL).
+DATABASE_URL = resolve_database_url()
 
 # Multitenancy de dos ejes (patrón Paloma). El tenant se propaga por el header HTTP
 # `X-Tenant-Id`; si falta se asume el tenant demo sembrado (Team.id demo del backend).

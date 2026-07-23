@@ -11,6 +11,10 @@ export function configureApp(app: INestApplication): void {
       forbidNonWhitelisted: true,
     }),
   );
+  app.enableCors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+  });
   app.useGlobalFilters(new PrismaExceptionFilter());
   app.useGlobalInterceptors(new DecimalSerializerInterceptor());
 }

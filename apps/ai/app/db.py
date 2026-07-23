@@ -16,7 +16,7 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-from .config import DATA_DIR
+from .config import DATA_DIR, resolve_database_url
 
 # DDL portado de SQLite a PostgreSQL. Se crea SIN cualificar (va al search_path,
 # que get_conn fija al esquema `seguria`). Cambios de dialecto respecto a SQLite:
@@ -116,8 +116,8 @@ COUNTRY_NAMES = {
 
 
 def _dsn() -> str:
-    """DSN de Postgres. En Docker el host es `postgres`; en local, `localhost`."""
-    return os.getenv("DATABASE_URL") or "postgresql://seguria:seguria@localhost:5432/seguria"
+    """DSN de Postgres. Reusa DIRECT_URL/DATABASE_URL del backend; fallback local Docker."""
+    return resolve_database_url() or "postgresql://seguria:seguria@localhost:5432/seguria"
 
 
 def db_schema() -> str:

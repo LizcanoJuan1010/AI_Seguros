@@ -59,8 +59,8 @@ const AuthContext = createContext<AuthContextValue>({
 // Endpoints y claves de almacenamiento
 // ---------------------------------------------------------------------------
 
-const LOGIN_ENDPOINT = '/api/v1/auth/login'
-const REFRESH_ENDPOINT = '/api/v1/auth/refresh'
+const LOGIN_ENDPOINT = 'http://localhost:3000/api/v1/auth/login'
+const REFRESH_ENDPOINT = 'http://localhost:3000/api/v1/auth/refresh'
 
 const LS_ACCESS = 'teq_access_token'
 const LS_REFRESH = 'teq_refresh_token'
