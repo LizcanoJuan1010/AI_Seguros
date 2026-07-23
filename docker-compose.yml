@@ -46,8 +46,8 @@ services:
       - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
       - JWT_ACCESS_MINUTES=${JWT_ACCESS_MINUTES:-480}
       - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
-      # Secreto de eventos de Wompi (test_events_...): firma del webhook de pagos
-      - WOMPI_EVENTS_SECRET=${WOMPI_EVENTS_SECRET:-}
+      # Secreto del webhook de Polar (Standard Webhooks): firma del webhook de pagos
+      - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET:-}
     ports:
       - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
     restart: unless-stopped
@@ -71,10 +71,18 @@ services:
       - MANAGER_PHONES=${MANAGER_PHONES:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
-      # Pasarela Wompi (SANDBOX). Sin llave privada el pago corre en modo demo.
-      - WOMPI_BASE_URL=${WOMPI_BASE_URL:-https://sandbox.wompi.co/v1}
-      - WOMPI_PRIVATE_KEY=${WOMPI_PRIVATE_KEY:-}
-      - WOMPI_REDIRECT_URL=${WOMPI_REDIRECT_URL:-}
+      # Pasarela Polar (SANDBOX). Sin access token el pago corre en modo demo.
+      - POLAR_BASE_URL=${POLAR_BASE_URL:-https://sandbox-api.polar.sh/v1}
+      - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN:-}
+      - POLAR_SUCCESS_URL=${POLAR_SUCCESS_URL:-}
+      # Informes por correo (patrón Paloma: SMTP primario, Resend fallback)
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SEGURIA_DATA_DIR=/data/market
       - CORS_ORIGINS=${CORS_ORIGINS:-}
     volumes:

@@ -87,6 +87,11 @@
     scroll-behavior: smooth;
   }
 
+  /* Que el header sticky no tape el inicio de las secciones ancladas */
+  [id] {
+    scroll-margin-top: 96px;
+  }
+
   body {
     margin: 0;
     min-height: 100svh;
@@ -259,6 +264,26 @@
 }
 *::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-outline) 60%, transparent);
+}
+
+/* Panel del menú móvil del TopNav: entra con fade + leve deslizamiento */
+.nav-sheet {
+  animation: nav-sheet-in 0.25s ease-out;
+}
+@keyframes nav-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-sheet {
+    animation: none;
+  }
 }
 
 /* Aparición al hacer scroll (componente Reveal) */

@@ -28,9 +28,14 @@ from .quoting import quote_product, recommend
 async def lifespan(app: FastAPI):
     init_db()
     await memory.init_pool()  # Postgres si está disponible; si no, memoria en dict
+    # Informes periódicos por correo (patrón Paloma): loop en segundo plano.
+    from . import reports as reports_mod
+    import asyncio as _asyncio
+    reports_task = _asyncio.create_task(reports_mod.scheduler_loop())
     try:
         yield
     finally:
+        reports_task.cancel()
         await memory.close_pool()
 
 
@@ -92,6 +97,49 @@ async def assistant_upload(file: UploadFile = File(...), session_id: str = "", p
             "tipo_detectado": parsed.get("tipo_detectado"),
             "campos_extraidos": parsed.get("campos_extraidos", {}),
             "resumen": parsed.get("resumen")}
+
+
+# ---------- Informes periódicos por correo (patrón Paloma / Resend) ----------
+
+class ReportSubscription(BaseModel):
+    email: str = Field(..., description="Correo del destinatario")
+    tipo: str = Field("cliente", description="cliente|gerente")
+    frecuencia: str = Field("mensual", description="demo|diaria|semanal|mensual")
+    phone: str | None = Field(None, description="Teléfono del lead (clientes)")
+
+
+@app.post("/api/reports/subscriptions")
+def create_report_subscription(req: ReportSubscription) -> dict:
+    """Opt-in a informes periódicos (cliente: estado de su seguro; gerente: KPIs)."""
+    from . import reports as reports_mod
+    out = reports_mod.subscribe(req.email, tipo=req.tipo,
+                                frecuencia=req.frecuencia, phone=req.phone)
+    if "error" in out:
+        raise HTTPException(400, out["error"])
+    return out
+
+
+@app.get("/api/reports/subscriptions")
+def get_report_subscriptions() -> list[dict]:
+    from . import reports as reports_mod
+    return reports_mod.list_subscriptions()
+
+
+@app.delete("/api/reports/subscriptions/{sub_id}", status_code=204)
+def delete_report_subscription(sub_id: int) -> None:
+    from . import reports as reports_mod
+    if not reports_mod.unsubscribe(sub_id):
+        raise HTTPException(404, "suscripción no encontrada")
+
+
+@app.post("/api/reports/subscriptions/{sub_id}/send-now")
+async def send_report_now(sub_id: int) -> dict:
+    """Dispara el informe de inmediato (útil para la demo)."""
+    from . import reports as reports_mod
+    sub = next((s for s in reports_mod.list_subscriptions() if s["id"] == sub_id), None)
+    if not sub:
+        raise HTTPException(404, "suscripción no encontrada")
+    return await reports_mod.send_subscription_now(sub)
 
 
 # ---------- Historial de conversaciones (patrón Paloma) ----------

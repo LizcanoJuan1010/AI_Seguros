@@ -1,9 +1,9 @@
--- Pagos reales (Wompi sandbox) del cierre autónomo del asistente.
+-- Pagos reales (Polar sandbox) del cierre autónomo del asistente.
 -- La tabla es el sistema de registro de cada cobro: la crea el servicio IA al
--- generar el link de pago y la actualizan el webhook de Wompi y verificar_pago.
+-- generar el checkout y la actualizan los webhooks de Polar y verificar_pago.
 -- Idempotente (IF NOT EXISTS / DO $$ ... $$) como el resto de migraciones.
 
--- 1) Enum de estados (los de Wompi + refund_requested para aclaraciones) -----
+-- 1) Enum de estados canónicos (+ refund_requested para aclaraciones) --------
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'payment_status') THEN
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS payments (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id        UUID,
     reference      TEXT NOT NULL,
-    provider       TEXT NOT NULL DEFAULT 'wompi',
+    provider       TEXT NOT NULL DEFAULT 'polar',
     link_id        TEXT,
     transaction_id TEXT,
     checkout_url   TEXT,

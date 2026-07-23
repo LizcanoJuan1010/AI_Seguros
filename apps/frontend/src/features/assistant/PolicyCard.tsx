@@ -6,6 +6,7 @@ import type {
   AssistantPolicy,
   CheckoutStep,
 } from './useAssistantChat'
+import { downloadFile } from '../../lib/download'
 
 /**
  * Piezas del CIERRE de la venta (reto Colsubsidio): el mini-stepper de progreso
@@ -139,7 +140,7 @@ const PAYMENT_BADGE: Record<
 
 /**
  * Tarjeta del pago real (evento SSE `payment_link`): monto, estado y CTA al
- * checkout seguro de Wompi. La tarjeta débito/crédito se digita SOLO en la
+ * checkout seguro de Polar. La tarjeta débito/crédito se digita SOLO en la
  * página de la pasarela — el chat nunca pide datos de tarjeta.
  */
 export function PaymentCard({ payment }: { payment: AssistantPayment }) {
@@ -151,7 +152,7 @@ export function PaymentCard({ payment }: { payment: AssistantPayment }) {
       <div className="flex items-center justify-between gap-2 px-4 pt-3">
         <p className="flex items-center gap-1.5 text-label-sm font-semibold uppercase tracking-wide text-on-surface-variant">
           <Icon name="credit_card" className="text-[15px] text-primary" />
-          Pago seguro{payment.demo ? ' · demo' : ' · Wompi'}
+          Pago seguro{payment.demo ? ' · demo' : ' · Polar'}
         </p>
         <span
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-label-sm font-semibold ${badge.className}`}
@@ -188,7 +189,7 @@ export function PaymentCard({ payment }: { payment: AssistantPayment }) {
             }
           >
             <Icon name="lock" filled className="text-[18px]" />
-            Pagar con tarjeta, PSE o Nequi
+            Pagar con tarjeta débito o crédito
           </Button>
         ) : null}
 
@@ -249,9 +250,7 @@ export function PolicyCard({ policy }: { policy: AssistantPolicy }) {
       <Button
         variant="cta"
         className="relative mt-4 w-full rounded-full"
-        onClick={() =>
-          window.open(policy.download_url, '_blank', 'noopener')
-        }
+        onClick={() => downloadFile(policy.download_url)}
       >
         <Icon name="download" filled className="text-[18px]" />
         Descargar póliza (PDF)
