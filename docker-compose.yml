@@ -85,6 +85,10 @@ services:
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SEGURIA_DATA_DIR=/data/market
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Seguro embebido (quote & bind para aliados) y TTS del chat web
+      - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
+      - TTS_URL=${TTS_URL:-http://seguria-tts:8880}
+      - TTS_VOICE=${TTS_VOICE:-ef_dora}
     volumes:
       - ./data/market:/data/market:ro
       - seguria-state:/app/state

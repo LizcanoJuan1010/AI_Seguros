@@ -111,6 +111,84 @@ export class DashboardService {
     };
   }
 
+  async aiImpact(tenantId: string) {
+    // La velocidad de cotización/cierre sale del funnel conversacional (esquema
+    // `seguria` del servicio IA, mismo Postgres); las pólizas y reclamos del
+    // dominio (public) van scoped por tenant. Cada bloque degrada a null si su
+    // esquema/tabla aún no existe.
+    let avgQuoteMinutes: number | null = null;
+    let avgCloseDays: number | null = null;
+    let conversionPct: number | null = null;
+    try {
+      const [funnel] = await this.prisma.$queryRaw<
+        {
+          quote_mins: number | null;
+          close_days: number | null;
+          conversion_pct: number | null;
+        }[]
+      >`
+        SELECT
+          (SELECT (AVG(EXTRACT(EPOCH FROM (fq.first_q - l.created_at))) / 60.0)::float8
+             FROM seguria.leads l
+             JOIN (SELECT lead_id, MIN(created_at) AS first_q
+                     FROM seguria.quotes GROUP BY lead_id) fq ON fq.lead_id = l.id
+            WHERE fq.first_q >= l.created_at) AS quote_mins,
+          (SELECT (AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) / 86400.0)::float8
+             FROM seguria.leads WHERE stage = 'cerrado') AS close_days,
+          (SELECT CASE WHEN COUNT(*) = 0 THEN NULL
+                       ELSE (100.0 * COUNT(*) FILTER (WHERE stage = 'cerrado')
+                             / COUNT(*))::float8 END
+             FROM seguria.leads) AS conversion_pct
+      `;
+      avgQuoteMinutes = funnel?.quote_mins ?? null;
+      avgCloseDays = funnel?.close_days ?? null;
+      conversionPct = funnel?.conversion_pct ?? null;
+    } catch {
+      // esquema seguria no disponible
+    }
+
+    const [pol] = await this.prisma.$queryRaw<
+      { total: bigint; auto: bigint }[]
+    >(Prisma.sql`
+      SELECT COUNT(*)::bigint AS total,
+             COUNT(*) FILTER (WHERE agent_id IS NULL)::bigint AS auto
+      FROM policies
+      WHERE team_id = ${tenantId}::uuid
+    `);
+    const policiesTotal = Number(pol?.total ?? 0);
+    const autoEmissionPct =
+      policiesTotal > 0 ? (100 * Number(pol?.auto ?? 0)) / policiesTotal : null;
+
+    let claimsCycleDays: number | null = null;
+    let claimsOpen = 0;
+    try {
+      const [claims] = await this.prisma.$queryRaw<
+        { cycle_days: number | null; open: bigint }[]
+      >(Prisma.sql`
+        SELECT (AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) / 86400.0)
+                 FILTER (WHERE status IN ('aprobado', 'pagado'))::float8 AS cycle_days,
+               COUNT(*) FILTER (WHERE status IN ('reportado', 'en_revision',
+                                                 'docs_pendientes'))::bigint AS open
+        FROM claims
+        WHERE team_id = ${tenantId}::uuid
+      `);
+      claimsCycleDays = claims?.cycle_days ?? null;
+      claimsOpen = Number(claims?.open ?? 0);
+    } catch {
+      // tabla claims aún no migrada
+    }
+
+    return {
+      avgQuoteMinutes,
+      avgCloseDays,
+      conversionPct,
+      policiesTotal,
+      autoEmissionPct,
+      claimsCycleDays,
+      claimsOpen,
+    };
+  }
+
   async hotLeadsUncontacted(tenantId: string, query: HotLeadsQueryDto) {
     const { skip, take } = paginationArgs(query.page, query.limit);
     // v_hot_leads_uncontacted expone team_id; se aísla por tenant y, opcional,

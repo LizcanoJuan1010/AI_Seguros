@@ -99,6 +99,17 @@ enum PaymentStatus {
   @@map("payment_status")
 }
 
+enum ClaimStatus {
+  REPORTADO @map("reportado")
+  EN_REVISION @map("en_revision")
+  DOCS_PENDIENTES @map("docs_pendientes")
+  APROBADO @map("aprobado")
+  RECHAZADO @map("rechazado")
+  PAGADO @map("pagado")
+
+  @@map("claim_status")
+}
+
 enum EventType {
   LLAMADA_SALIENTE @map("llamada_saliente")
   WHATSAPP @map("whatsapp")
@@ -125,6 +136,7 @@ model Team {
   quotes    Quote[]
   policies  Policy[]
   payments  Payment[]
+  claims    Claim[]
 
   @@map("teams")
 }
@@ -173,6 +185,7 @@ model Customer {
   aiCalls  AiCall[]
   leads    Lead[]
   policies Policy[]
+  claims   Claim[]
 
   @@unique([documentType, documentId])
   @@index([teamId], map: "idx_customers_team")
@@ -320,10 +333,41 @@ model Policy {
   quote    Quote    @relation(fields: [quoteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_quote_id_fkey")
   customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_customer_id_fkey")
   agent    User?    @relation(fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_agent_id_fkey")
+  claims   Claim[]
 
   @@index([agentId], map: "idx_policies_agent")
   @@index([teamId], map: "idx_policies_team")
   @@map("policies")
+}
+
+// Reclamo / siniestro (FNOL). Lo reporta el asistente por chat/WhatsApp; el
+// triage (severidad, banderas de fraude, resumen) lo calcula el servicio IA
+// de forma determinista y queda registrado aquí para el panel gerencial.
+model Claim {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?        @map("team_id") @db.Uuid
+  policyId          String?        @map("policy_id") @db.Uuid
+  customerId        String?        @map("customer_id") @db.Uuid
+  claimNumber       String         @unique @map("claim_number")
+  insuranceType     InsuranceType? @map("insurance_type")
+  status            ClaimStatus    @default(REPORTADO)
+  description       String?
+  incidentDate      DateTime?      @map("incident_date") @db.Date
+  amountEstimateCop Decimal?       @map("amount_estimate_cop") @db.Decimal(14, 2)
+  fraudScore        Decimal?       @map("fraud_score") @db.Decimal(3, 2)
+  fraudFlags        Json?          @default("[]") @map("fraud_flags") @db.JsonB
+  documents         Json?          @default("[]") @db.JsonB
+  aiSummary         String?        @map("ai_summary")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team     Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_team_id_fkey")
+  policy   Policy?   @relation(fields: [policyId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_policy_id_fkey")
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_customer_id_fkey")
+
+  @@index([teamId], map: "idx_claims_team")
+  @@index([policyId], map: "idx_claims_policy")
+  @@map("claims")
 }
 
 // Pago de una póliza vía pasarela (Polar sandbox) o simulado (provider "demo").

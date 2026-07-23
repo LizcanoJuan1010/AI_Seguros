@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../../components/ui/Icon'
 import { Button } from '../../components/ui/Button'
 import { MessageMarkdown } from './MessageMarkdown'
-import { CheckoutStepper, PaymentCard, PolicyCard } from './PolicyCard'
+import {
+  CheckoutStepper,
+  ClaimCard,
+  PaymentCard,
+  PolicyCard,
+  UnderwritingCard,
+} from './PolicyCard'
 import { useAssistantChat } from './useAssistantChat'
 import { ChatHistoryPanel } from './ChatHistoryPanel'
 import { authHeaders } from '../../lib/authFetch'
@@ -37,6 +43,39 @@ function docIcon(name: string): string {
 
 /** Bloque de adjuntos que viaja al final del mensaje (el agente lee los file_id). */
 const ATTACH_BLOCK_RE = /\n*\[Documentos adjuntos: ([\s\S]*?)\]\s*$/
+
+/**
+ * Dictado por voz con la Web Speech API del navegador (Chrome/Edge). El TTS de
+ * la respuesta va por `/api/assistant/tts` (Kokoro local, perfil `voz`); si el
+ * perfil está apagado el toggle simplemente no suena — nunca rompe el chat.
+ */
+type SpeechRecognitionLike = {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  start(): void
+  stop(): void
+  onresult:
+    | ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void)
+    | null
+  onend: (() => void) | null
+  onerror: (() => void) | null
+}
+
+const SpeechRecognitionCtor =
+  typeof window !== 'undefined'
+    ? (
+        window as unknown as {
+          SpeechRecognition?: new () => SpeechRecognitionLike
+          webkitSpeechRecognition?: new () => SpeechRecognitionLike
+        }
+      ).SpeechRecognition ??
+      (
+        window as unknown as {
+          webkitSpeechRecognition?: new () => SpeechRecognitionLike
+        }
+      ).webkitSpeechRecognition
+    : undefined
 
 function buildAttachBlock(docs: StagedDoc[]): string {
   const list = docs
@@ -223,7 +262,13 @@ function AssistantBubble({
             <CheckoutStepper current={message.checkout.step} />
           ) : null}
 
+          {message.underwriting ? (
+            <UnderwritingCard underwriting={message.underwriting} />
+          ) : null}
+
           {message.payment ? <PaymentCard payment={message.payment} /> : null}
+
+          {message.claim ? <ClaimCard claim={message.claim} /> : null}
         </div>
       </div>
 
@@ -325,9 +370,61 @@ export function AssistantChat() {
   const [attachments, setAttachments] = useState<StagedDoc[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [listening, setListening] = useState(false)
+  const [voiceOn, setVoiceOn] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const recogRef = useRef<SpeechRecognitionLike | null>(null)
+  const spokenRef = useRef<Set<string>>(new Set())
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  /** Dictado: un toque escucha, otro detiene. El texto cae al input editable. */
+  const toggleMic = () => {
+    if (listening) {
+      recogRef.current?.stop()
+      return
+    }
+    if (!SpeechRecognitionCtor) return
+    const rec = new SpeechRecognitionCtor()
+    rec.lang = 'es-CO'
+    rec.continuous = false
+    rec.interimResults = true
+    rec.onresult = (e) => {
+      const transcript = Array.from(
+        { length: e.results.length },
+        (_, i) => e.results[i][0]?.transcript ?? '',
+      ).join(' ')
+      setInput(transcript)
+    }
+    rec.onend = () => setListening(false)
+    rec.onerror = () => setListening(false)
+    recogRef.current = rec
+    setListening(true)
+    rec.start()
+  }
+
+  // Respuesta hablada: al terminar un mensaje del asistente, se sintetiza una
+  // sola vez (Set de ids ya hablados). Si el TTS no está disponible, silencio.
+  useEffect(() => {
+    if (!voiceOn) return
+    const last = [...messages]
+      .reverse()
+      .find((m) => m.role === 'assistant' && m.done && m.content && !m.error)
+    if (!last || spokenRef.current.has(last.id)) return
+    spokenRef.current.add(last.id)
+    fetch(`/api/assistant/tts?text=${encodeURIComponent(last.content.slice(0, 500))}`)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error('tts'))))
+      .then((blob) => {
+        audioRef.current?.pause()
+        const audio = new Audio(URL.createObjectURL(blob))
+        audioRef.current = audio
+        void audio.play()
+      })
+      .catch(() => {
+        /* perfil voz apagado: el chat sigue en texto */
+      })
+  }, [messages, voiceOn])
 
   /**
    * Adjuntar (estilo Gemini/GPT): cada archivo se sube de inmediato en
@@ -458,10 +555,25 @@ export function AssistantChat() {
         </div>
         <button
           type="button"
+          onClick={() => setVoiceOn((v) => !v)}
+          aria-label={voiceOn ? 'Silenciar respuestas' : 'Escuchar respuestas'}
+          title={
+            voiceOn
+              ? 'Respuestas con voz activadas'
+              : 'Escuchar las respuestas en voz alta'
+          }
+          className={`ml-auto flex size-10 items-center justify-center rounded-full transition-colors hover:bg-surface-variant ${
+            voiceOn ? 'text-primary' : 'text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <Icon name={voiceOn ? 'volume_up' : 'volume_off'} className="text-[22px]" />
+        </button>
+        <button
+          type="button"
           onClick={() => setHistoryOpen(true)}
           aria-label="Ver historial de conversaciones"
           title="Historial de conversaciones"
-          className="ml-auto flex size-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-variant hover:text-primary"
+          className="flex size-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-variant hover:text-primary"
         >
           <Icon name="history" className="text-[22px]" />
         </button>
@@ -562,6 +674,22 @@ export function AssistantChat() {
           >
             <Icon name="attach_file" className="text-[20px]" />
           </button>
+          {SpeechRecognitionCtor ? (
+            <button
+              type="button"
+              onClick={toggleMic}
+              disabled={isStreaming}
+              aria-label={listening ? 'Detener dictado' : 'Dictar por voz'}
+              title={listening ? 'Escuchando… toca para detener' : 'Dictar por voz'}
+              className={`flex size-11 flex-shrink-0 items-center justify-center rounded-full border shadow-sm transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 ${
+                listening
+                  ? 'animate-pulse border-error bg-error text-on-error'
+                  : 'border-outline-variant bg-white text-on-surface-variant hover:border-primary hover:text-primary'
+              }`}
+            >
+              <Icon name={listening ? 'stop' : 'mic'} filled={listening} className="text-[20px]" />
+            </button>
+          ) : null}
           <div className="flex flex-1 items-end rounded-2xl border border-outline-variant bg-white px-3 py-2 shadow-sm transition-colors focus-within:border-primary">
             <textarea
               ref={textareaRef}
