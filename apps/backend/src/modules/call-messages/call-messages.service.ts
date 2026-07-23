@@ -12,12 +12,16 @@ import {
 export class CallMessagesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateCallMessageDto) {
+  async create(tenantId: string, dto: CreateCallMessageDto) {
+    await this.prisma.aiCall.findFirstOrThrow({
+      where: { id: dto.callId, teamId: tenantId },
+    });
     return this.prisma.callMessage.create({ data: this.toData(dto) });
   }
 
-  async findAll(query: QueryCallMessagesDto) {
+  async findAll(tenantId: string, query: QueryCallMessagesDto) {
     const where = {
+      call: { teamId: tenantId },
       ...(query.callId && { callId: query.callId }),
       ...(query.speaker && { speaker: query.speaker }),
     };
@@ -32,18 +36,22 @@ export class CallMessagesService {
     return paginated(data, total, query.page, query.limit);
   }
 
-  findOne(id: string) {
-    return this.prisma.callMessage.findUniqueOrThrow({ where: { id } });
+  findOne(tenantId: string, id: string) {
+    return this.prisma.callMessage.findFirstOrThrow({
+      where: { id, call: { teamId: tenantId } },
+    });
   }
 
-  async update(id: string, dto: UpdateCallMessageDto) {
+  async update(tenantId: string, id: string, dto: UpdateCallMessageDto) {
+    await this.findOne(tenantId, id);
     return this.prisma.callMessage.update({
       where: { id },
       data: this.toData(dto),
     });
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(tenantId: string, id: string): Promise<void> {
+    await this.findOne(tenantId, id);
     await this.prisma.callMessage.delete({ where: { id } });
   }
 

@@ -26,12 +26,17 @@ DB_SCHEMA = os.getenv("SEGURIA_DB_SCHEMA", "seguria")
 
 
 def _normalize_dsn(url: str) -> str:
-    """Quita opciones solo de Prisma/pgbouncer que confunden a psycopg/asyncpg."""
+    """Quita opciones solo de Prisma/pgbouncer que confunden a psycopg/asyncpg.
+
+    `schema` (Prisma) y `pgbouncer` no son parámetros libpq válidos: dejarlos
+    en la query string hace que psycopg.connect() falle con
+    "invalid URI query parameter" (p.ej. al reusar DIRECT_URL de
+    apps/backend/.env, que trae `?schema=public` para Prisma)."""
     from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
     parsed = urlparse(url.strip().strip("'\""))
     query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
-             if k.lower() != "pgbouncer"]
+             if k.lower() not in ("pgbouncer", "schema")]
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 

@@ -1,0 +1,6 @@
+# Fuerza LF en scripts que corren dentro de contenedores Linux (Docker).
+# Sin esto, un checkout en Windows con core.autocrlf=true convierte estos
+# archivos a CRLF y rompe el shebang/ejecución (`set -e\r` -> "illegal option").
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf

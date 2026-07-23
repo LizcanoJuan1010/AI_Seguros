@@ -19,7 +19,7 @@ from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import config, memory
+from . import backend_client, config, memory
 from .auth import resolve_identity
 from .agent_core import (MAX_TOOL_ROUNDS, SUGERENCIAS_RE, SYSTEM_PROMPT_CLIENTE,
                          SYSTEM_PROMPT_GERENTE, TOOLS_SCHEMA, _append_history,
@@ -582,6 +582,10 @@ async def _run_stream(req: StreamChatRequest, tenant_id: str, role: str) -> Asyn
     try:
         yield _frame("thinking", {"text": "Analizando tu mensaje..."})
         await asyncio.to_thread(log_conversation, user_id, role, message, "web")
+        # Fire-and-forget: nunca se espera (create_task, no await) para no
+        # frenar el streaming SSE si el backend tarda o está caído.
+        asyncio.create_task(asyncio.to_thread(
+            backend_client.log_turn, tenant_id, user_id, "WEB_CHAT", role, message))
         mem_ctx = await memory.get_memory_context(user_id, tenant_id=tenant_id)
 
         runner = _run_llm if config.DEEPSEEK_API_KEY else _run_demo
@@ -590,6 +594,8 @@ async def _run_stream(req: StreamChatRequest, tenant_id: str, role: str) -> Asyn
 
         if out.get("reply"):
             await asyncio.to_thread(log_conversation, user_id, "asistente", out["reply"], "web")
+            asyncio.create_task(asyncio.to_thread(
+                backend_client.log_turn, tenant_id, user_id, "WEB_CHAT", "asistente", out["reply"]))
         await _remember(user_id, message, tenant_id)
     except Exception as exc:  # cualquier fallo → frame de error, pero cerramos limpio
         log.exception("fallo en el stream del asistente")

@@ -42,12 +42,16 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://seguria:seguria@postgres:5432/seguria?schema=public
+      # Sin pooler (Postgres propio del compose): DIRECT_URL = DATABASE_URL.
+      # prisma.config.ts lo exige para `migrate deploy` en el entrypoint.
+      - DIRECT_URL=postgresql://seguria:seguria@postgres:5432/seguria?schema=public
       - PORT=3000
       - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
       - JWT_ACCESS_MINUTES=${JWT_ACCESS_MINUTES:-480}
       - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
       # Secreto de eventos de Wompi (test_events_...): firma del webhook de pagos
       - WOMPI_EVENTS_SECRET=${WOMPI_EVENTS_SECRET:-}
+      - ELEVENLABS_WEBHOOK_SECRET=${ELEVENLABS_WEBHOOK_SECRET:-demo-elevenlabs-secret-2026}
     ports:
       - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
     restart: unless-stopped

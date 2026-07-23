@@ -11,12 +11,16 @@ import {
   Matches,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
-import { CallStatus, LeadIntent } from '../../generated/prisma/enums';
+import { CallStatus, Channel, LeadIntent } from '../../generated/prisma/enums';
 
 export class CreateAiCallDto {
   @IsOptional()
   @IsUUID('4')
   customerId?: string;
+
+  @IsOptional()
+  @IsEnum(Channel)
+  channel?: Channel;
 
   @IsOptional()
   @IsEnum(CallStatus)
@@ -58,10 +62,22 @@ export class CreateAiCallDto {
 
 export class UpdateAiCallDto extends PartialType(CreateAiCallDto) {}
 
+export class OpenSessionDto {
+  @IsString()
+  phone!: string;
+
+  @IsEnum(Channel)
+  channel!: Channel;
+}
+
 export class QueryAiCallsDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID('4')
   customerId?: string;
+
+  @IsOptional()
+  @IsEnum(Channel)
+  channel?: Channel;
 
   @IsOptional()
   @IsEnum(CallStatus)

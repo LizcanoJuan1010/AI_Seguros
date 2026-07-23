@@ -111,6 +111,18 @@ enum EventType {
   @@map("event_type")
 }
 
+// Canal de origen de una sesión de IA (ai_calls). VOICE_CALL es telefonía real
+// (ElevenLabs Conversational AI); WHATSAPP/WEB_CHAT los alimenta el servicio IA
+// (Python) vía la API del backend; EMAIL queda listo para el canal futuro.
+enum Channel {
+  WHATSAPP @map("whatsapp")
+  EMAIL @map("email")
+  WEB_CHAT @map("web_chat")
+  VOICE_CALL @map("voice_call")
+
+  @@map("channel")
+}
+
 model Team {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
@@ -125,6 +137,7 @@ model Team {
   quotes    Quote[]
   policies  Policy[]
   payments  Payment[]
+  aiCalls   AiCall[]
 
   @@map("teams")
 }
@@ -197,7 +210,9 @@ model Product {
 
 model AiCall {
   id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId       String?     @map("team_id") @db.Uuid
   customerId   String?     @map("customer_id") @db.Uuid
+  channel      Channel     @default(WHATSAPP)
   status       CallStatus  @default(EN_CURSO)
   startedAt    DateTime    @default(now()) @map("started_at") @db.Timestamptz(6)
   endedAt      DateTime?   @map("ended_at") @db.Timestamptz(6)
@@ -210,11 +225,13 @@ model AiCall {
   metadata     Json?       @default("{}") @db.JsonB
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  team     Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "ai_calls_team_id_fkey")
   customer Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "ai_calls_customer_id_fkey")
   messages CallMessage[]
   lead     Lead?
 
   @@index([customerId], map: "idx_ai_calls_customer")
+  @@index([teamId], map: "idx_ai_calls_team")
   @@index([startedAt(sort: Desc)], map: "idx_ai_calls_started_at")
   @@map("ai_calls")
 }

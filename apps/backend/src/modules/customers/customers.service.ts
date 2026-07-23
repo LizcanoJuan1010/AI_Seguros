@@ -52,6 +52,21 @@ export class CustomersService {
     });
   }
 
+  /**
+   * Resuelve un Customer por teléfono dentro del tenant, creándolo si no
+   * existe. Lo usan integraciones que solo conocen el teléfono del cliente
+   * (webhook de ElevenLabs, canal WhatsApp/web vía el servicio IA) y no un id.
+   */
+  async findOrCreateByPhone(tenantId: string, phone: string) {
+    const existing = await this.prisma.customer.findFirst({
+      where: { teamId: tenantId, phone },
+    });
+    if (existing) return existing;
+    return this.prisma.customer.create({
+      data: { teamId: tenantId, phone },
+    });
+  }
+
   async update(tenantId: string, id: string, dto: UpdateCustomerDto) {
     await this.findOne(tenantId, id);
     return this.prisma.customer.update({

@@ -20,3 +20,6 @@ generated_docs/
 
 backend/src/generated/prisma/
 apps/backend/src/generated/prisma/
+
+# Override local de docker-compose (remapeo de puertos por máquina, no portable)
+docker-compose.override.yml

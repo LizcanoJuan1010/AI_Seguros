@@ -9,6 +9,7 @@ import { CallMessagesModule } from './modules/call-messages/call-messages.module
 import { CheckoutModule } from './modules/checkout/checkout.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ElevenLabsModule } from './modules/elevenlabs/elevenlabs.module';
 import { LeadEventsModule } from './modules/lead-events/lead-events.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -41,6 +42,7 @@ import { PrismaModule } from './prisma/prisma.module';
     DashboardModule,
     CheckoutModule,
     PaymentsModule,
+    ElevenLabsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

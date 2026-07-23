@@ -13,9 +13,10 @@ COPY prisma.config.ts tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY prisma ./prisma
 COPY src ./src
 
-# prisma.config.ts reads DATABASE_URL at load time; generate does not connect,
-# so a dummy URL is enough here. The real URL is injected at runtime.
+# prisma.config.ts reads DATABASE_URL/DIRECT_URL at load time; generate does not
+# connect, so dummy URLs are enough here. The real URLs are injected at runtime.
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
+ENV DIRECT_URL="postgresql://build:build@localhost:5432/build?schema=public"
 RUN npx prisma generate
 RUN npm run build
 

@@ -1,16 +1,26 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { CallStatus } from '../../generated/prisma/enums';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CustomersService } from '../customers/customers.service';
 import {
   CreateAiCallDto,
+  OpenSessionDto,
   QueryAiCallsDto,
   UpdateAiCallDto,
 } from './ai-calls.dto';
 
+// Ventana de inactividad para considerar que un canal "sin llamada" (WhatsApp,
+// web chat) sigue siendo la MISMA sesión. Pasado este tiempo sin mensajes,
+// openSession() cierra la sesión vieja y abre una nueva.
+const SESSION_IDLE_MINUTES = 30;
+
 const aiCallSelect = {
   id: true,
+  teamId: true,
   customerId: true,
+  channel: true,
   status: true,
   startedAt: true,
   endedAt: true,
@@ -26,9 +36,59 @@ const aiCallSelect = {
 
 @Injectable()
 export class AiCallsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly customers: CustomersService,
+  ) {}
 
-  create(dto: CreateAiCallDto) {
+  /**
+   * Punto de entrada para canales sin límite de llamada explícito (WhatsApp,
+   * web chat): resuelve/crea el Customer por teléfono y reutiliza la AiCall
+   * EN_CURSO más reciente de ese (customer, channel) si tuvo actividad hace
+   * menos de `SESSION_IDLE_MINUTES`; si no, la cierra y abre una nueva. Así
+   * el servicio IA (Python) no decide la regla de sesión, solo la consume.
+   */
+  async openSession(tenantId: string, dto: OpenSessionDto) {
+    const customer = await this.customers.findOrCreateByPhone(
+      tenantId,
+      dto.phone,
+    );
+    const cutoff = new Date(Date.now() - SESSION_IDLE_MINUTES * 60_000);
+
+    const openCall = await this.prisma.aiCall.findFirst({
+      where: {
+        teamId: tenantId,
+        customerId: customer.id,
+        channel: dto.channel,
+        status: CallStatus.EN_CURSO,
+      },
+      orderBy: { startedAt: 'desc' },
+      include: { messages: { orderBy: { spokenAt: 'desc' }, take: 1 } },
+    });
+
+    if (openCall) {
+      const lastActivity = openCall.messages[0]?.spokenAt ?? openCall.startedAt;
+      if (lastActivity >= cutoff) {
+        return { id: openCall.id, customerId: customer.id };
+      }
+      await this.prisma.aiCall.update({
+        where: { id: openCall.id },
+        data: { status: CallStatus.COMPLETADA, endedAt: new Date() },
+      });
+    }
+
+    const created = await this.prisma.aiCall.create({
+      data: {
+        teamId: tenantId,
+        customerId: customer.id,
+        channel: dto.channel,
+        status: CallStatus.EN_CURSO,
+      },
+    });
+    return { id: created.id, customerId: customer.id };
+  }
+
+  create(tenantId: string, dto: CreateAiCallDto) {
     if (dto.endedAt) {
       this.assertDateRange(
         new Date(dto.startedAt ?? Date.now()),
@@ -36,14 +96,16 @@ export class AiCallsService {
       );
     }
     return this.prisma.aiCall.create({
-      data: this.toData(dto),
+      data: { ...this.toData(dto), teamId: tenantId },
       select: aiCallSelect,
     });
   }
 
-  async findAll(query: QueryAiCallsDto) {
+  async findAll(tenantId: string, query: QueryAiCallsDto) {
     const where = {
+      teamId: tenantId,
       ...(query.customerId && { customerId: query.customerId }),
+      ...(query.channel && { channel: query.channel }),
       ...(query.status && { status: query.status }),
       ...(query.intent && { intent: query.intent }),
       ...((query.from || query.to) && {
@@ -65,16 +127,16 @@ export class AiCallsService {
     return paginated(data, total, query.page, query.limit);
   }
 
-  findOne(id: string) {
-    return this.prisma.aiCall.findUniqueOrThrow({
-      where: { id },
+  findOne(tenantId: string, id: string) {
+    return this.prisma.aiCall.findFirstOrThrow({
+      where: { id, teamId: tenantId },
       select: aiCallSelect,
     });
   }
 
-  async update(id: string, dto: UpdateAiCallDto) {
-    const current = await this.prisma.aiCall.findUnique({ where: { id } });
-    if (current && (dto.startedAt || dto.endedAt)) {
+  async update(tenantId: string, id: string, dto: UpdateAiCallDto) {
+    const current = await this.findOne(tenantId, id);
+    if (dto.startedAt || dto.endedAt) {
       const startedAt = dto.startedAt
         ? new Date(dto.startedAt)
         : current.startedAt;
@@ -88,7 +150,8 @@ export class AiCallsService {
     });
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(tenantId: string, id: string): Promise<void> {
+    await this.findOne(tenantId, id);
     await this.prisma.aiCall.delete({ where: { id } });
   }
 

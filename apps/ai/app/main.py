@@ -7,18 +7,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import (BackgroundTasks, Depends, FastAPI, File, Header,
+                     HTTPException, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import insights as insights_mod
+from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
 from .auth import resolve_identity
-from .config import (CORS_ORIGINS, MANAGER_API_KEY, MANAGER_PHONES,
-                     SERVICE_API_KEY)
+from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
+                     MANAGER_PHONES, SERVICE_API_KEY)
 from .db import COUNTRY_NAMES, get_conn, init_db, log_conversation
+
+# Canal legado (Hermes/ConversationLog, minúsculas) -> Channel de Prisma.
+# "voz" es una nota de voz DENTRO de WhatsApp (Kokoro/Voicebox local), no el
+# canal de telefonía de ElevenLabs (VOICE_CALL) — para el CRM sigue siendo WhatsApp.
+_LEGACY_CHANNEL_MAP = {"whatsapp": "WHATSAPP", "web": "WEB_CHAT", "voz": "WHATSAPP"}
 from .documents import build_quote_pdf
 from .metabase_client import MetabaseClient
 from .quoting import quote_product, recommend
@@ -49,7 +55,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest,
+def chat(req: ChatRequest, background_tasks: BackgroundTasks,
          authorization: str = Header(default=""),
          x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> dict:
     """Turno conversacional del agente (function calling multi-ronda con DeepSeek).
@@ -60,12 +66,16 @@ def chat(req: ChatRequest,
     particiona por `(tenant_id, user_id)`."""
     from .agent_core import run_agent
     tenant_id, role = resolve_identity(authorization, x_tenant_id, req.manager_key)
-    log_conversation(req.phone or f"web:{req.session_id}", role, req.message, channel="web")
+    phone = req.phone or f"web:{req.session_id}"
+    log_conversation(phone, role, req.message, channel="web")
+    background_tasks.add_task(backend_client.log_turn, tenant_id, phone,
+                              "WEB_CHAT", role, req.message)
     result = run_agent(req.session_id, req.message, phone=req.phone or "", role=role,
                        tenant_id=tenant_id)
     if result.get("reply"):
-        log_conversation(req.phone or f"web:{req.session_id}", "asistente",
-                         result["reply"], channel="web")
+        log_conversation(phone, "asistente", result["reply"], channel="web")
+        background_tasks.add_task(backend_client.log_turn, tenant_id, phone,
+                                  "WEB_CHAT", "asistente", result["reply"])
     return result
 
 
@@ -337,8 +347,13 @@ def update_lead(req: LeadUpdate) -> dict:
 
 
 @app.post("/api/conversations", dependencies=[Depends(require_service)])
-def log_message(req: ConversationLog) -> dict:
+def log_message(req: ConversationLog, background_tasks: BackgroundTasks) -> dict:
     log_conversation(req.phone, req.role, req.message, req.channel)
+    # Hermes (WhatsApp) no maneja tenant todavía -> tenant demo. Cuando el
+    # canal web-chat propio (Next.js) llegue, deberá enviar su propio tenant.
+    channel = _LEGACY_CHANNEL_MAP.get(req.channel, "WHATSAPP")
+    background_tasks.add_task(backend_client.log_turn, DEMO_TENANT_ID, req.phone,
+                              channel, req.role, req.message)
     return {"ok": True}
 
 
