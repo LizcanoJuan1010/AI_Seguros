@@ -10,6 +10,7 @@ import { LiveAiCallPage } from './pages/LiveAiCallPage'
 import { AgentLeadsPage } from './pages/AgentLeadsPage'
 import { ManagerDashboardPage } from './pages/ManagerDashboardPage'
 import { AssistantPage } from './pages/AssistantPage'
+import { EmbedQuotePage } from './pages/EmbedQuotePage'
 
 export default function App() {
   return (
@@ -22,6 +23,8 @@ export default function App() {
               <Route path="/" element={<LandingPage />} />
             </Route>
             <Route path="/login" element={<LoginPage />} />
+            {/* Widget embebible (iframe de aliados): sin nav, sin auth */}
+            <Route path="/embed" element={<EmbedQuotePage />} />
 
             {/* Rutas protegidas: requieren sesión (redirigen a /login si no) */}
             <Route element={<RequireAuth />}>

@@ -82,9 +82,14 @@ class _MarkerBuffer:
 
 
 # Herramientas del cierre autónomo: su salida se mapea a eventos checkout_step/
-# policy/payment_link (no al evento `document`, que es para la cotización).
+# policy/payment_link/underwriting (no al evento `document`, que es para la cotización).
 _CHECKOUT_TOOLS = {"capturar_datos_cliente", "registrar_consentimiento", "emitir_poliza",
-                   "generar_link_pago", "verificar_pago", "solicitar_aclaracion"}
+                   "generar_link_pago", "verificar_pago", "solicitar_aclaracion",
+                   "evaluar_riesgo"}
+
+_UW_LABEL = {"AUTO_APPROVE": "Aprobación automática",
+             "REFER": "Escalado a un asesor",
+             "DECLINE": "No asegurable por este canal"}
 
 
 def _summarize_tool(name: str, result) -> tuple[str, dict]:
@@ -111,6 +116,20 @@ def _summarize_tool(name: str, result) -> tuple[str, dict]:
                 {"faltan": faltan})
     if name == "registrar_consentimiento" and isinstance(result, dict):
         return "Consentimiento registrado", {}
+    if name == "evaluar_riesgo" and isinstance(result, dict) and result.get("decision"):
+        return (_UW_LABEL.get(result["decision"], result["decision"]),
+                {"decision": result["decision"]})
+    if name == "proponer_renovacion" and isinstance(result, dict) and result.get("poliza"):
+        dias = result["poliza"].get("vence_en_dias")
+        return (f"Renovación lista (vence en {dias} días)", {"vence_en_dias": dias})
+    if name == "reportar_siniestro" and isinstance(result, dict) and result.get("claim_number"):
+        return (f"Reclamo registrado {result['claim_number']}",
+                {"claim_number": result["claim_number"], "status": result.get("status")})
+    if name == "estado_siniestro" and isinstance(result, dict) and result.get("claim_number"):
+        return (f"Reclamo {result.get('status', '')}",
+                {"claim_number": result["claim_number"], "status": result.get("status")})
+    if name == "documentos_siniestro" and isinstance(result, dict):
+        return f"{len(result.get('documentos', []))} documentos requeridos", {}
     if name == "emitir_poliza" and isinstance(result, dict) and result.get("policyNumber"):
         return (f"Póliza emitida {result['policyNumber']}",
                 {"policyNumber": result["policyNumber"], "degraded": result.get("degraded", False)})
@@ -157,6 +176,21 @@ def _checkout_frames(name: str, result) -> list[str]:
                                                "fields": result.get("faltan", [])}))
     elif name == "registrar_consentimiento" and result.get("consentimiento"):
         frames.append(_frame("checkout_step", {"step": "consentimiento"}))
+    elif name == "evaluar_riesgo" and result.get("decision"):
+        frames.append(_frame("underwriting", {
+            "decision": result["decision"],
+            "label": _UW_LABEL.get(result["decision"], result["decision"]),
+            "reasons": result.get("reasons", []),
+            "segmento_riesgo": result.get("segmento_riesgo"),
+        }))
+    elif name == "emitir_poliza" and result.get("underwriting") and not result.get("policyNumber"):
+        uw = result["underwriting"]
+        frames.append(_frame("underwriting", {
+            "decision": uw.get("decision"),
+            "label": _UW_LABEL.get(uw.get("decision"), uw.get("decision")),
+            "reasons": uw.get("reasons", []),
+            "segmento_riesgo": uw.get("segmento_riesgo"),
+        }))
     elif name == "emitir_poliza" and result.get("policyNumber"):
         frames.append(_frame("checkout_step", {"step": "pago"}))
         frames.append(_frame("checkout_step", {"step": "emision"}))
@@ -164,6 +198,17 @@ def _checkout_frames(name: str, result) -> list[str]:
             frames.append(_frame("policy", {"policyNumber": result["policyNumber"],
                                             "download_url": result["download_url"],
                                             "title": "Póliza vigente"}))
+    elif name in ("reportar_siniestro", "estado_siniestro") and result.get("claim_number"):
+        # Las banderas de fraude son internas: NUNCA viajan al navegador.
+        frames.append(_frame("claim", {
+            "claimNumber": result["claim_number"],
+            "status": (result.get("status") or "REPORTADO").upper(),
+            "tipo": result.get("tipo"),
+            "poliza": result.get("poliza"),
+            "documentos_requeridos": result.get("documentos_requeridos", []),
+            "title": ("Reclamo registrado" if name == "reportar_siniestro"
+                      else "Estado de tu reclamo"),
+        }))
     elif name == "generar_formulario" and result.get("formulario"):
         frames.append(_frame("form", result["formulario"]))
     elif name == "perfilar_cliente" and result.get("resumen_perfil"):

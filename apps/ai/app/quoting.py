@@ -11,6 +11,10 @@ import psycopg
 
 from .db import COUNTRY_CURRENCY, COUNTRY_NAMES, latest_fx
 
+# Ajuste por perfil de riesgo (pricing personalizado): el segmento sale de
+# profiling._segmento_riesgo (determinista), nunca del LLM. Acotado a ±15%.
+RISK_SEGMENT_FACTOR = {"bajo": 0.90, "medio": 1.00, "alto": 1.15}
+
 
 def _age_factor(age_table: dict[str, float], age: int) -> tuple[float, str]:
     bands = []
@@ -29,7 +33,7 @@ def _age_factor(age_table: dict[str, float], age: int) -> tuple[float, str]:
 
 def quote_product(conn: psycopg.Connection, product: dict, *,
                   country: str, age: int | None, sum_assured_usd: float | None,
-                  extras: dict[str, Any]) -> dict[str, Any]:
+                  extras: dict[str, Any], perfil: dict[str, Any] | None = None) -> dict[str, Any]:
     factores = json.loads(product["factores"])
     coberturas = json.loads(product["coberturas"])
     suma_base = product["suma_base_usd"]
@@ -67,6 +71,18 @@ def quote_product(conn: psycopg.Connection, product: dict, *,
         premium += extra_premium
         breakdown["componente_valor_bien_usd"] = round(extra_premium, 2)
 
+    # Pricing personalizado: la prima refleja el perfil real del cliente, no el
+    # promedio. Siempre explicado en el breakdown (chat y PDF).
+    if perfil:
+        seg = perfil.get("segmento_riesgo")
+        f = RISK_SEGMENT_FACTOR.get(seg or "", 1.0)
+        if f != 1.0:
+            premium *= f
+            breakdown["ajuste_perfil_riesgo"] = {
+                "segmento": seg, "factor": f,
+                "motivos": (perfil.get("segmento_riesgo_motivos") or [])[:4],
+            }
+
     # Viaje: prima por día × días (default de viaje típico si no se informa,
     # nunca cobrar un solo día por omisión)
     if product["prima_por_dia"]:
@@ -99,6 +115,7 @@ def quote_product(conn: psycopg.Connection, product: dict, *,
 def recommend(conn: psycopg.Connection, *, country: str, tipo: str | None,
               age: int | None, sum_assured_usd: float | None,
               budget_monthly_usd: float | None, extras: dict[str, Any],
+              perfil: dict[str, Any] | None = None,
               max_options: int = 3) -> list[dict[str, Any]]:
     """Cotiza todos los productos elegibles y devuelve las mejores opciones."""
     rows = conn.execute("SELECT * FROM products").fetchall()
@@ -109,7 +126,8 @@ def recommend(conn: psycopg.Connection, *, country: str, tipo: str | None,
         if tipo and p["tipo"] != tipo:
             continue
         options.append(quote_product(conn, p, country=country, age=age,
-                                     sum_assured_usd=sum_assured_usd, extras=extras))
+                                     sum_assured_usd=sum_assured_usd, extras=extras,
+                                     perfil=perfil))
     if budget_monthly_usd:
         in_budget = [o for o in options if o["prima_mensual_usd"] <= budget_monthly_usd]
         options = in_budget or sorted(options, key=lambda o: o["prima_mensual_usd"])

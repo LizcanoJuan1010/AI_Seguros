@@ -3,12 +3,22 @@ interacciones nacen de una sugerencia del asistente, no del usuario).
 
 Reglas deterministas sobre el estado del funnel — el LLM solo redacta encima.
 Consumido por: skill `seguimiento-proactivo` de Hermes (cron) y panel gerencial.
+
+Incluye nudges sobre PÓLIZAS EMITIDAS (renovación próxima y cross-sell), leyendo
+las tablas del dominio Prisma en `public.*` (mismo Postgres, otro esquema).
 """
+from datetime import date
 from typing import Any
 
 import psycopg
 
 from .db import COUNTRY_NAMES
+
+# Cross-sell: si tiene el tipo de la izquierda y no el de la derecha, sugerirlo.
+# (InsuranceType del dominio: vida | auto | salud, en minúscula en la BD.)
+_CROSS_SELL = [("auto", "vida"), ("vida", "salud"), ("salud", "vida")]
+
+_PRIO = {"alta": 0, "media": 1, "baja": 2}
 
 
 def client_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
@@ -66,9 +76,80 @@ def client_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[di
                 "sugerencia": f"Retomar con {r['name'] or 'el cliente'} con UNA pregunta concreta "
                               "sobre su necesidad (no un genérico '¿sigues ahí?').",
             })
-    prio = {"alta": 0, "media": 1, "baja": 2}
-    nudges.sort(key=lambda n: prio[n["prioridad"]])
+    nudges.sort(key=lambda n: _PRIO[n["prioridad"]])
     return nudges
+
+
+def policy_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
+    """Nudges sobre pólizas emitidas: renovación próxima y cross-sell.
+
+    Lee `public.policies/customers/quotes/products` (dominio Prisma). Si esas
+    tablas no existen (tests con esquema aislado), devuelve [] sin romper la
+    conexión (rollback para no dejar la transacción en estado fallido)."""
+    nudges: list[dict] = []
+    where, params = ("AND c.phone = %s", [phone]) if phone else ("", [])
+
+    # Renovación: póliza vigente que vence en ≤30 días → renovar antes del corte.
+    try:
+        for r in conn.execute(f"""
+            SELECT p.policy_number, p.end_date, p.monthly_premium_cop::float prima,
+                   pr.insurance_type::text tipo, c.full_name, c.phone
+            FROM public.policies p
+            JOIN public.customers c ON c.id = p.customer_id
+            JOIN public.quotes q ON q.id = p.quote_id
+            JOIN public.products pr ON pr.id = q.product_id
+            WHERE p.status = 'vigente'
+              AND p.end_date <= CURRENT_DATE + INTERVAL '30 days' {where}
+            ORDER BY p.end_date""", params):
+            dias = (r["end_date"] - date.today()).days
+            nudges.append({
+                "phone": r["phone"], "tipo": "renovacion_proxima",
+                "prioridad": "alta" if dias <= 7 else "media",
+                "contexto": {"poliza": r["policy_number"], "tipo_seguro": r["tipo"],
+                             "vence_en_dias": max(dias, 0),
+                             "prima_actual_cop": r["prima"]},
+                "sugerencia": f"La póliza {r['policy_number']} de "
+                              f"{r['full_name'] or 'el cliente'} vence en {max(dias, 0)} días: "
+                              "ofrecer la renovación pre-cotizada (proponer_renovacion) "
+                              "antes de que quede sin cobertura.",
+            })
+    except Exception:
+        conn.rollback()
+        return nudges
+
+    # Cross-sell: tiene un tipo vigente y le falta el complementario recomendado.
+    try:
+        for r in conn.execute(f"""
+            SELECT c.full_name, c.phone,
+                   array_agg(DISTINCT pr.insurance_type::text) tipos
+            FROM public.policies p
+            JOIN public.customers c ON c.id = p.customer_id
+            JOIN public.quotes q ON q.id = p.quote_id
+            JOIN public.products pr ON pr.id = q.product_id
+            WHERE p.status = 'vigente' {where}
+            GROUP BY c.id, c.full_name, c.phone""", params):
+            tipos = set(r["tipos"] or [])
+            sugerido = next((dst for src, dst in _CROSS_SELL
+                             if src in tipos and dst not in tipos), None)
+            if sugerido:
+                nudges.append({
+                    "phone": r["phone"], "tipo": "cross_sell", "prioridad": "baja",
+                    "contexto": {"tiene": sorted(tipos), "sugerido": sugerido},
+                    "sugerencia": f"{r['full_name'] or 'El cliente'} ya tiene "
+                                  f"{', '.join(sorted(tipos))}: ofrecerle un seguro de "
+                                  f"{sugerido} como complemento natural de su protección.",
+                })
+    except Exception:
+        conn.rollback()
+    nudges.sort(key=lambda n: _PRIO[n["prioridad"]])
+    return nudges
+
+
+def all_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
+    """Funnel de venta + pólizas emitidas, ordenados por prioridad."""
+    merged = client_nudges(conn, phone) + policy_nudges(conn, phone)
+    merged.sort(key=lambda n: _PRIO[n["prioridad"]])
+    return merged
 
 
 def manager_alerts(conn: psycopg.Connection) -> list[dict[str, Any]]:
@@ -102,4 +183,18 @@ def manager_alerts(conn: psycopg.Connection) -> list[dict[str, Any]]:
         alerts.append({"tipo": "tendencia", "prioridad": "info",
                        "detalle": f"Producto más cotizado (7 días): {top['nombre']} ({top['n']} cotizaciones).",
                        "accion": "Considerar destacarlo en la bienvenida del asistente."})
+    # Renovaciones próximas (dominio public.*): va al final para que un fallo de
+    # esquema no invalide la transacción de las alertas anteriores.
+    try:
+        n = conn.execute(
+            """SELECT COUNT(*) n FROM public.policies
+               WHERE status='vigente'
+                 AND end_date <= CURRENT_DATE + INTERVAL '30 days'""").fetchone()["n"]
+        if n:
+            alerts.append({"tipo": "renovaciones_proximas", "prioridad": "alta",
+                           "detalle": f"{n} póliza(s) vigente(s) vencen en los próximos 30 días.",
+                           "accion": "Lanzar la campaña de renovación proactiva "
+                                     "(nudges renovacion_proxima en /api/proactive)."})
+    except Exception:
+        conn.rollback()
     return alerts

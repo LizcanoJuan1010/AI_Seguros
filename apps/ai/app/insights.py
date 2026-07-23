@@ -47,6 +47,32 @@ def summary(conn: psycopg.Connection) -> dict[str, Any]:
             """SELECT to_char(created_at,'YYYY-MM-DD') d, COUNT(*) n FROM quotes
                GROUP BY to_char(created_at,'YYYY-MM-DD') ORDER BY d""")
     ]
+    # Impacto de la IA (métricas del paper McKinsey): velocidad de cotización,
+    # velocidad de cierre y % de pólizas emitidas sin intervención humana.
+    quoting_speed = conn.execute(
+        """SELECT AVG(EXTRACT(EPOCH FROM (fq.first_q - l.created_at)))/60.0 mins
+           FROM leads l JOIN (SELECT lead_id, MIN(created_at) first_q
+                              FROM quotes GROUP BY lead_id) fq ON fq.lead_id = l.id
+           WHERE fq.first_q >= l.created_at""").fetchone()
+    close_speed = conn.execute(
+        """SELECT AVG(EXTRACT(EPOCH FROM (updated_at - created_at)))/86400.0 dias
+           FROM leads WHERE stage='cerrado'""").fetchone()
+    impacto_ia = {
+        "tiempo_medio_cotizacion_min": round(quoting_speed["mins"] or 0, 1),
+        "tiempo_medio_cierre_dias": round(close_speed["dias"] or 0, 1),
+        "polizas_emitidas": 0,
+        "pct_autoemision": 0.0,
+    }
+    # Pólizas del dominio Prisma (public.*); un fallo de esquema no tumba el resto.
+    try:
+        pol = conn.execute(
+            """SELECT COUNT(*) total, COUNT(*) FILTER (WHERE agent_id IS NULL) auto
+               FROM public.policies""").fetchone()
+        impacto_ia["polizas_emitidas"] = pol["total"]
+        impacto_ia["pct_autoemision"] = (round(100 * pol["auto"] / pol["total"], 1)
+                                         if pol["total"] else 0.0)
+    except Exception:
+        conn.rollback()
     return {
         "kpis": {
             "leads_totales": leads,
@@ -55,6 +81,7 @@ def summary(conn: psycopg.Connection) -> dict[str, Any]:
             "tasa_conversion_pct": round(100 * cerrados / leads, 1) if leads else 0.0,
             "prima_mensual_vendida_usd": totals["prima_mensual_usd"],
         },
+        "impacto_ia": impacto_ia,
         "funnel": [{"etapa": s, "leads": funnel_rows.get(s, 0)} for s in FUNNEL_ORDER],
         "por_pais": by_country,
         "por_producto": by_product,

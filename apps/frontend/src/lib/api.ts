@@ -77,6 +77,29 @@ export type DailyKpis = {
   revenueHoyCop: string
 }
 
+export type AiImpact = {
+  avgQuoteMinutes: number | null
+  avgCloseDays: number | null
+  conversionPct: number | null
+  policiesTotal: number
+  autoEmissionPct: number | null
+  claimsCycleDays: number | null
+  claimsOpen: number
+}
+
+export type ApiClaim = {
+  id: string
+  claimNumber: string
+  insuranceType: 'VIDA' | 'AUTO' | 'SALUD' | null
+  status: string
+  description: string | null
+  incidentDate: string | null
+  amountEstimateCop: string | null
+  fraudScore: string | null
+  fraudFlags: string[] | null
+  createdAt: string
+}
+
 async function get<T>(
   path: string,
   params?: Record<string, string | undefined>,
@@ -86,9 +109,10 @@ async function get<T>(
     if (v) qs.set(k, v)
   }
   const suffix = qs.size ? `?${qs}` : ''
-  const res = await fetch(`${BASE}${path}${suffix}`, {
-    headers: { Accept: 'application/json' },
-  })
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const tenant = getStoredTenantId()
+  if (tenant) headers['X-Tenant-Id'] = tenant
+  const res = await fetch(`${BASE}${path}${suffix}`, { headers })
   if (!res.ok) throw new Error(`API ${path} → HTTP ${res.status}`)
   return res.json() as Promise<T>
 }
@@ -107,6 +131,9 @@ export const api = {
       limit: '50',
     }),
   dailyKpis: () => get<DailyKpis>('/dashboard/daily-kpis'),
+  aiImpact: () => get<AiImpact>('/dashboard/ai-impact'),
+  claims: (teamId?: string) =>
+    get<Paginated<ApiClaim>>('/claims', { teamId, limit: '20' }),
 }
 
 /** Tenant seleccionado, compartido con módulos fuera de React (ej. chat SSE). */

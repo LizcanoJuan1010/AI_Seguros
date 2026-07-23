@@ -4,6 +4,8 @@ type CountUpProps = {
   end: number
   /** Duración de la animación en ms. */
   duration?: number
+  /** Decimales a mostrar (default 0, comportamiento entero original). */
+  decimals?: number
   prefix?: string
   suffix?: string
   className?: string
@@ -17,10 +19,12 @@ type CountUpProps = {
 export function CountUp({
   end,
   duration = 1600,
+  decimals = 0,
   prefix = '',
   suffix = '',
   className = '',
 }: CountUpProps) {
+  const factor = 10 ** decimals
   const ref = useRef<HTMLSpanElement>(null)
   const [value, setValue] = useState(0)
 
@@ -43,7 +47,7 @@ export function CountUp({
         const tick = (now: number) => {
           const progress = Math.min((now - start) / duration, 1)
           const eased = 1 - Math.pow(1 - progress, 3)
-          setValue(Math.round(end * eased))
+          setValue(Math.round(end * eased * factor) / factor)
           if (progress < 1) raf = requestAnimationFrame(tick)
         }
         raf = requestAnimationFrame(tick)
@@ -55,12 +59,12 @@ export function CountUp({
       observer.disconnect()
       cancelAnimationFrame(raf)
     }
-  }, [end, duration])
+  }, [end, duration, factor])
 
   return (
     <span ref={ref} className={className}>
       {prefix}
-      {value.toLocaleString('es-CO')}
+      {value.toLocaleString('es-CO', { maximumFractionDigits: decimals })}
       {suffix}
     </span>
   )

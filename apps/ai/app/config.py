@@ -90,6 +90,17 @@ POLAR_SUCCESS_URL = os.getenv("POLAR_SUCCESS_URL", "")
 # del asistente llama a este servicio. Default apto para docker-compose.
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
 
+# Seguro embebido (quote & bind para aliados B2B2C): API keys de partners
+# separadas por coma. Cada aliado integra /api/embedded/* en su checkout.
+PARTNER_API_KEYS = {k.strip() for k in
+                    os.getenv("PARTNER_API_KEYS", "demo-partner-2026").split(",")
+                    if k.strip()}
+
+# TTS local (Kokoro-FastAPI del perfil `voz` del compose): el endpoint
+# /api/assistant/tts lo proxya para no exponer el contenedor al navegador.
+TTS_URL = os.getenv("TTS_URL", "http://seguria-tts:8880")
+TTS_VOICE = os.getenv("TTS_VOICE", "ef_dora")
+
 # Marca de los documentos generados (cotización / certificado de póliza)
 BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")
 BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en la naturaleza")

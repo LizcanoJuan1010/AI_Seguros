@@ -51,6 +51,18 @@ Eventos (cada uno `data:` es JSON en una línea):
 | `done` | `{"session_id": "..."}` | fin de stream |
 | `error` | `{"message": "..."}` | burbuja de error |
 
+Eventos añadidos por el cierre autónomo y el roadmap McKinsey (jul 2026):
+| event | data | UI |
+|---|---|---|
+| `checkout_step` | `{"step":"datos\|consentimiento\|pago\|emision","fields"?:[...]}` | stepper del cierre (`CheckoutStepper`) |
+| `payment_link` | `{"reference","checkout_url","amount_cop","status","demo"}` | tarjeta de pago Polar (`PaymentCard`) |
+| `policy` | `{"policyNumber","download_url","title"}` | tarjeta verde "ya quedaste asegurada" (`PolicyCard`) |
+| `underwriting` | `{"decision":"AUTO_APPROVE\|REFER\|DECLINE","label","reasons":[...]}` | tarjeta de evaluación de riesgo (`UnderwritingCard`) |
+| `claim` | `{"claimNumber","status","tipo","poliza","documentos_requeridos":[...],"title"}` | tarjeta del reclamo FNOL (`ClaimCard`) — las banderas de fraude NUNCA viajan al navegador |
+| `form` | spec de `generar_formulario` | formulario de intake en el chat |
+| `profile` | salida de `perfilar_cliente` | tarjeta de perfil |
+| `intake_progress` | `{"tipo","porcentaje","siguientes":[...]}` | barra de completitud del intake |
+
 Notas:
 - `session_id` estable por conversación (localStorage en el front) = clave de partición de memoria.
 - Si no hay `DEEPSEEK_API_KEY`, el servicio IA igual **debe** streamear una respuesta
