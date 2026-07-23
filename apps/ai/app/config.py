@@ -89,6 +89,17 @@ WOMPI_BASE_URL = os.getenv("WOMPI_BASE_URL", "https://sandbox.wompi.co/v1")
 WOMPI_PRIVATE_KEY = os.getenv("WOMPI_PRIVATE_KEY", "")
 WOMPI_REDIRECT_URL = os.getenv("WOMPI_REDIRECT_URL", "")
 
+# Motor de llamadas telefónicas — ElevenLabs Conversational AI (Agents Platform).
+# Sin ELEVENLABS_API_KEY el motor corre en modo demo (igual que Wompi/DeepSeek):
+# no llama a nadie, solo simula la respuesta. `ELEVENLABS_AGENT_PHONE_NUMBER_ID`
+# es el número saliente configurado en el dashboard de ElevenLabs (Twilio o
+# SIP trunk nativo); el mismo agente puede recibir el post-call webhook en
+# apps/backend (ver ELEVENLABS_WEBHOOK_SECRET).
+ELEVENLABS_BASE_URL = os.getenv("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
+ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID", "")
+
 # Backend NestJS (sistema de registro del dominio): expone POST /api/v1/checkout
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo
 # del asistente llama a este servicio. Default apto para docker-compose.

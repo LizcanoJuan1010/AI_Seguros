@@ -212,6 +212,14 @@ class ConversationLog(BaseModel):
     message: str
 
 
+class OutboundCallRequest(BaseModel):
+    phone: str = Field(..., description="Número E.164 al que se llama, ej. +573001234567")
+    tenant_id: str | None = Field(None, description="Si falta, se usa el tenant demo")
+    first_message: str | None = Field(None, description="Saludo inicial custom del agente")
+    dynamic_variables: dict[str, Any] = Field(default_factory=dict,
+                                              description="Contexto extra para el agente (nombre, motivo...)")
+
+
 # ---------- Catálogo ----------
 
 @app.get("/api/health")
@@ -400,6 +408,24 @@ def proactive_for_phone(phone: str) -> dict:
     data = {"nudges": client_nudges(conn, phone)}
     conn.close()
     return data
+
+
+# ---------- Llamadas telefónicas (motor ElevenLabs) ----------
+
+@app.post("/api/calls/outbound", dependencies=[Depends(require_service)])
+def outbound_call(req: OutboundCallRequest,
+                  x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> dict:
+    """Dispara una llamada saliente real con el agente de voz (ElevenLabs).
+
+    La usan un gerente (botón "llamar" en el CRM) o la skill de seguimiento
+    proactivo (cron) — nunca el chat del cliente de forma autónoma. Sin
+    credenciales de ElevenLabs configuradas corre en modo demo (no llama a
+    nadie, no falla). El resultado real de la llamada (transcript, duración,
+    estado) lo registra el webhook post-call del backend, no este endpoint."""
+    from . import calls
+    tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
+    return calls.iniciar_llamada(req.phone, tenant_id, first_message=req.first_message,
+                                 dynamic_variables=req.dynamic_variables)
 
 
 @app.get("/api/insights/leads", dependencies=[Depends(require_manager)])
