@@ -51,10 +51,17 @@ RECOLECCIÓN DE INFORMACIÓN REAL (para poder emitir de verdad):
 CÓMO CERRAR (usa las herramientas, en este orden):
 1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC). Fecha de nacimiento, email y ciudad son deseables pero opcionales. Pídelos de forma natural, no como formulario.
 2. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
-3. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, PSE o Nequi, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Wompi). NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
-4. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
+3. `evaluar_riesgo(insurance_type, monthly_premium_cop)` — underwriting OBLIGATORIO antes de cobrar. Si la decisión es AUTO_APPROVE sigue al pago; si es REFER, explica con calidez que un asesor revisa el caso y confirma en <24h (NO cobres ni emitas); si es DECLINE, sé honesto y ofrece una alternativa.
+4. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
+5. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
 
 POSVENTA DE PAGOS: si el cliente reporta un cobro errado o duplicado, quiere el reembolso o ejerce su derecho de retracto, usa `solicitar_aclaracion(motivo)`: intenta la anulación en línea y, si no se puede, deja la aclaración registrada. Explícale el resultado y los tiempos con transparencia.
+
+RENOVACIONES Y COMPLEMENTOS: si el cliente ya tiene una póliza (o te da su número POL-...), usa `proponer_renovacion(policy_number)` para ofrecerle la renovación con opciones frescas antes del vencimiento; la renovación se cierra con el mismo flujo (consentimiento → pago → emitir_poliza). Si `perfilar_cliente` muestra un vacío de protección evidente (ej. tiene auto y no vida), sugiérelo con tacto UNA sola vez, sin insistir.
+
+SINIESTROS (el cliente reporta que le pasó algo): primero empatía — pregunta si está bien. Luego: (1) pide el número de póliza (POL-...) y qué pasó; (2) usa `reportar_siniestro(policy_number, descripcion, fecha_incidente, monto_estimado_cop, file_ids)` — si mandó fotos/documentos, pásalos en file_ids; (3) confírmale el número de reclamo CLM-..., explícale qué documentos faltan (`documentos_siniestro` si necesitas la lista) y que puede enviarlos por este mismo chat; (4) para seguimiento usa `estado_siniestro(claim_number)`. Las banderas de fraude del triage son INTERNAS del equipo: NUNCA las menciones al cliente.
+
+INFORMES PERIÓDICOS: tras emitir la póliza (o si el cliente muestra interés continuo), ofrécele UNA vez recibir un informe por correo del estado de su seguro: "¿Te gustaría que te envíe un informe de tu seguro al correo? Puede ser semanal o mensual". Si acepta y te da el email, llama `suscribir_informes(email, frecuencia)`. Nunca lo suscribas sin su sí explícito.
 
 DIVULGACIÓN (transparencia obligatoria antes de emitir): nombre de la aseguradora emisora, coberturas clave, exclusiones principales y la prima. No emitas si el cliente no vio la oferta.
 
@@ -143,6 +150,13 @@ TOOLS_SCHEMA = [
         "parameters": {"type": "object", "required": ["acepta"], "properties": {
             "acepta": {"type": "boolean", "description": "true si el cliente autorizó explícitamente el tratamiento de sus datos"}}}}},
     {"type": "function", "function": {
+        "name": "evaluar_riesgo",
+        "description": "Underwriting semiautónomo: evalúa si la póliza elegida puede emitirse automáticamente. OBLIGATORIO después del consentimiento y ANTES de cobrar/emitir. AUTO_APPROVE = continúa con pago y emisión; REFER = un gerente debe aprobar (NO cobres ni emitas: explica que un asesor confirma en <24h); DECLINE = no asegurable por este canal, ofrece alternativas.",
+        "parameters": {"type": "object", "required": ["insurance_type", "monthly_premium_cop"], "properties": {
+            "insurance_type": {"type": "string", "description": "Tipo de seguro elegido (vida|salud|auto|hogar|viaje|pyme|accidentes)"},
+            "monthly_premium_cop": {"type": "number", "description": "Prima mensual en COP de la opción elegida"},
+        }}}},
+    {"type": "function", "function": {
         "name": "emitir_poliza",
         "description": "Emite la póliza REAL vía el backend (crea Customer->Lead->Quote->Policy) y genera el PDF/certificado. Requiere datos capturados + consentimiento=true; con payment_method distinto de 'simulado' exige además un pago APPROVED (verificar_pago). Devuelve el número de póliza y el enlace de descarga.",
         "parameters": {"type": "object", "required": ["insurance_type", "monthly_premium_cop"], "properties": {
@@ -155,21 +169,21 @@ TOOLS_SCHEMA = [
         }}}},
     {"type": "function", "function": {
         "name": "generar_link_pago",
-        "description": "Genera el link de pago REAL (Wompi: tarjeta débito/crédito, PSE, Nequi) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
+        "description": "Genera el link de pago REAL (Polar: tarjeta débito/crédito, cobro en COP) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
         "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
             "monto_cop": {"type": "number", "description": "Monto a cobrar en COP (normalmente la prima mensual de la opción elegida)"},
             "descripcion": {"type": "string", "description": "Concepto del cobro, ej. 'Primera mensualidad — Seguro de Vida'"},
         }}}},
     {"type": "function", "function": {
         "name": "verificar_pago",
-        "description": "Consulta el estado real del pago (webhook del backend + API de Wompi). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
+        "description": "Consulta el estado real del pago (webhook del backend + API de Polar). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
         "parameters": {"type": "object", "properties": {
             "reference": {"type": "string", "description": "Referencia SEG-... (opcional: por defecto el último pago de la sesión)"},
-            "transaction_id": {"type": "string", "description": "ID de transacción Wompi del comprobante, si el cliente lo tiene"},
+            "transaction_id": {"type": "string", "description": "ID de la orden de Polar del comprobante, si el cliente lo tiene"},
         }}}},
     {"type": "function", "function": {
         "name": "solicitar_aclaracion",
-        "description": "Aclaración/disputa de un pago ya realizado: intenta anular (void) la transacción para reembolso inmediato y, si no es posible, registra la aclaración para gestión con la pasarela. Úsala ante cobros errados/duplicados o derecho de retracto.",
+        "description": "Aclaración/disputa de un pago ya realizado: intenta el reembolso total de la orden en línea y, si no es posible, registra la aclaración para gestión con la pasarela. Úsala ante cobros errados/duplicados o derecho de retracto.",
         "parameters": {"type": "object", "required": ["motivo"], "properties": {
             "motivo": {"type": "string", "description": "Motivo del cliente, ej. 'cobro duplicado', 'derecho de retracto'"},
             "reference": {"type": "string", "description": "Referencia SEG-... del pago (opcional: por defecto el último de la sesión)"},
@@ -208,6 +222,39 @@ TOOLS_SCHEMA = [
         "name": "perfilar_cliente",
         "description": "Hiper-perfilamiento: analiza los datos recolectados y devuelve etapa de vida, segmento de riesgo, capacidad de pago, necesidades detectadas, productos recomendados, propensión y banderas. Úsalo para personalizar la recomendación.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "reportar_siniestro",
+        "description": "FNOL: registra el primer aviso de siniestro de una póliza VIGENTE. Valida la póliza, hace el triage y devuelve el número de reclamo (CLM-...) y los documentos requeridos. Si el cliente adjuntó fotos/documentos, pasa sus file_ids.",
+        "parameters": {"type": "object", "required": ["policy_number", "descripcion"], "properties": {
+            "policy_number": {"type": "string", "description": "Número de póliza, ej. POL-2026-000123"},
+            "descripcion": {"type": "string", "description": "Qué pasó, en palabras del cliente"},
+            "fecha_incidente": {"type": "string", "description": "Fecha del incidente AAAA-MM-DD (si la dio)"},
+            "monto_estimado_cop": {"type": "number", "description": "Pérdida estimada en COP (si la dio)"},
+            "file_ids": {"type": "array", "items": {"type": "string"},
+                         "description": "file_ids de documentos/fotos que el cliente subió al chat"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "estado_siniestro",
+        "description": "Consulta el estado actual de un reclamo por su número CLM-... (reportado|en_revision|docs_pendientes|aprobado|rechazado|pagado).",
+        "parameters": {"type": "object", "required": ["claim_number"], "properties": {
+            "claim_number": {"type": "string", "description": "Número de reclamo, ej. CLM-2026-000001"}}}}},
+    {"type": "function", "function": {
+        "name": "documentos_siniestro",
+        "description": "Lista los documentos de soporte que exige un tipo de siniestro (auto|vida|salud|hogar|viaje|accidentes|pyme), para decirle al cliente qué debe enviar.",
+        "parameters": {"type": "object", "required": ["tipo"], "properties": {
+            "tipo": {"type": "string", "description": "Tipo de seguro del siniestro"}}}}},
+    {"type": "function", "function": {
+        "name": "proponer_renovacion",
+        "description": "Renovación de una póliza emitida: consulta la póliza por su número, calcula cuánto falta para el vencimiento y cotiza opciones frescas del mismo tipo (con el perfil del cliente). Úsala cuando el cliente quiera renovar o cuando su póliza esté por vencer.",
+        "parameters": {"type": "object", "required": ["policy_number"], "properties": {
+            "policy_number": {"type": "string", "description": "Número de póliza, ej. POL-2026-000123"}}}}},
+    {"type": "function", "function": {
+        "name": "suscribir_informes",
+        "description": "Suscribe al cliente a informes periódicos por correo sobre el estado de su seguro (cotizaciones, póliza, recomendaciones). Úsala SOLO cuando el cliente acepte explícitamente recibirlos y haya dado su email. Frecuencias: semanal | mensual (también diaria si la pide).",
+        "parameters": {"type": "object", "required": ["email", "frecuencia"], "properties": {
+            "email": {"type": "string", "description": "Correo del cliente"},
+            "frecuencia": {"type": "string", "enum": ["diaria", "semanal", "mensual"]},
+        }}}},
 ]
 
 
@@ -310,6 +357,42 @@ def _checkout_missing(sess: dict) -> list[str]:
     return [labels[f] for f in CHECKOUT_REQUIRED if not (sess.get(f) or "").strip()]
 
 
+def _session_profile(conn: psycopg.Connection, session_key: str) -> dict | None:
+    """Perfil determinista del cliente a partir del intake + checkout de la sesión."""
+    try:
+        from . import profiling
+        datos = {**_get_intake(conn, session_key), **_get_checkout(conn, session_key)}
+        return profiling.build_profile(datos) if datos else None
+    except Exception:
+        log.debug("perfil de sesión no disponible", exc_info=True)
+        return None
+
+
+_UUID4_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
+
+
+def _notify_referral(tenant_id: str, uw: dict, sess: dict) -> None:
+    """Crea la alerta de suscripción humana en el panel gerencial (best-effort).
+
+    El gerente ve el caso en AlertsPanel y lo aprueba/emite manualmente; un
+    fallo del backend nunca rompe el turno del agente."""
+    try:
+        import requests
+        nombre = sess.get("full_name") or "Cliente del chat"
+        msg = (f"Underwriting: {nombre} — seguro de {uw.get('tipo', '').lower()} por "
+               f"{uw.get('prima_cop', 0):,.0f} COP/mes requiere aprobación humana. "
+               f"Motivos: {'; '.join(uw.get('reasons', []))}")
+        payload = {"message": msg[:900], "severity": "alta"}
+        # El DTO exige UUID v4; el tenant demo no lo es → alerta global.
+        if _UUID4_RE.match(tenant_id or ""):
+            payload["teamId"] = tenant_id
+        requests.post(f"{BACKEND_URL}/api/v1/alerts", json=payload, timeout=5,
+                      headers={"X-Tenant-Id": tenant_id})
+    except Exception:
+        log.debug("no se pudo crear la alerta de referral", exc_info=True)
+
+
 def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
                    tenant_id: str) -> dict:
     """Cierra la venta: valida sesión + consentimiento, llama al backend NestJS
@@ -337,7 +420,7 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
     payment_reference = (args.get("payment_reference") or "").strip() or None
 
     # Con pago real, la póliza solo se emite contra un pago APPROVED (el estado
-    # lo mantienen el webhook de Wompi y verificar_pago; misma filosofía que el
+    # lo mantienen el webhook de Polar y verificar_pago; misma filosofía que el
     # consentimiento: sin herramienta no hay emisión).
     if payment_method not in ("simulado", "demo"):
         from . import payments
@@ -349,6 +432,31 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
                              "confirma con verificar_pago antes de emitir",
                     "necesita": "verificar_pago"}
         payment_reference = pago["reference"]
+
+    # Underwriting (red de seguridad): sin AUTO_APPROVE no hay emisión autónoma.
+    # El flujo normal ya pasó por `evaluar_riesgo`; esto cubre al modelo si lo salta.
+    from . import underwriting
+    uw = underwriting.evaluate(_session_profile(conn, session_key),
+                               insurance_type=insurance_type,
+                               monthly_premium_cop=prima)
+    if uw["decision"] == underwriting.REFER:
+        _notify_referral(tenant_id, uw, sess)
+        return {"underwriting": uw, "referred": True,
+                "error": "la solicitud requiere aprobación de un gerente antes de emitir",
+                "mensaje": ("Explica al cliente con calidez que su caso pasó a revisión de un "
+                            "asesor y que le confirman en menos de 24 horas. Si ya pagó, "
+                            "aclárale que el pago queda registrado y se aplica (o reembolsa) "
+                            "con la decisión.")}
+    if uw["decision"] == underwriting.DECLINE:
+        return {"underwriting": uw, "referred": False,
+                "error": "no es posible emitir esta póliza por este canal",
+                "mensaje": "Sé honesto con el motivo y ofrece alternativas de protección."}
+    # Decisión auditable: viaja en Quote.coverage.underwriting vía el checkout.
+    coverage = {**(coverage or {}),
+                "underwriting": {k: uw[k] for k in
+                                 ("decision", "reasons", "segmento_riesgo",
+                                  "umbral_autoemision_cop")}}
+    coverage.setdefault("resumen", f"Seguro de {insurance_type.lower()}")
 
     real_phone = sess.get("phone") or (phone if phone and not phone.startswith("web:") else None)
     customer = {
@@ -467,10 +575,27 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             country = str(args["country"]).upper()
             if country not in COUNTRY_NAMES:
                 return {"error": f"país no soportado: {country}", "soportados": list(COUNTRY_NAMES)}
+            # Pricing personalizado: el perfil (intake + checkout de la sesión)
+            # ajusta la prima de forma acotada y explicable en el breakdown.
+            perfil = None
+            try:
+                from . import profiling
+                datos = {**_get_intake(conn, session_key), **_get_checkout(conn, session_key)}
+                if args.get("age") is not None:
+                    datos.setdefault("edad", args["age"])
+                for k, v in (args.get("extras") or {}).items():
+                    datos.setdefault(k, v)
+                if datos:
+                    perfil = profiling.build_profile(datos)
+            except Exception:
+                log.debug("perfil no disponible para cotizar", exc_info=True)
             options = recommend(conn, country=country, tipo=args.get("tipo"),
                                 age=args.get("age"), sum_assured_usd=args.get("sum_assured_usd"),
                                 budget_monthly_usd=args.get("budget_monthly_usd"),
-                                extras=args.get("extras") or {})
+                                extras=args.get("extras") or {}, perfil=perfil)
+            ajuste_perfil = next((o["breakdown"].get("ajuste_perfil_riesgo")
+                                  for o in options
+                                  if o.get("breakdown", {}).get("ajuste_perfil_riesgo")), None)
             from .main import _upsert_lead  # reusa el upsert canónico
             lead_id = _upsert_lead(conn, phone, args.get("name"), country, args.get("age"),
                                    stage="cotizado" if options else "descubrimiento")
@@ -484,7 +609,15 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                      json.dumps(o["breakdown"], ensure_ascii=False))).fetchone()["id"]
                 o.pop("breakdown", None)
             conn.commit()
-            return {"opciones": options}
+            out_cotizar: dict[str, Any] = {"opciones": options}
+            if ajuste_perfil:
+                out_cotizar["precio_personalizado"] = {
+                    **ajuste_perfil,
+                    "explicacion": ("La prima está ajustada al perfil de riesgo del cliente "
+                                    f"(segmento {ajuste_perfil['segmento']}). Explícaselo con "
+                                    "transparencia: su precio refleja su riesgo real, no un promedio."),
+                }
+            return out_cotizar
 
         if name == "generar_documento":
             if not args.get("quote_id"):
@@ -561,10 +694,86 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             return {"ok": True, "consentimiento": True,
                     "mensaje": "Consentimiento de habeas data registrado."}
 
+        if name == "evaluar_riesgo":
+            from . import underwriting
+            uw = underwriting.evaluate(
+                _session_profile(conn, session_key),
+                insurance_type=str(args.get("insurance_type") or ""),
+                monthly_premium_cop=args.get("monthly_premium_cop") or 0)
+            if uw["decision"] == underwriting.REFER:
+                _notify_referral(tenant_id, uw, _get_checkout(conn, session_key))
+                uw["mensaje"] = ("Caso escalado a un gerente (ya tiene la alerta en su panel). "
+                                 "Explícale al cliente con calidez que un asesor revisa su "
+                                 "solicitud y le confirma en menos de 24 horas. NO generes "
+                                 "link de pago ni emitas.")
+            elif uw["decision"] == underwriting.DECLINE:
+                uw["mensaje"] = ("No se puede emitir por este canal. Sé honesto con el motivo "
+                                 "y ofrece una alternativa de protección.")
+            else:
+                uw["mensaje"] = "Aprobación automática. Continúa con el pago y la emisión."
+            return uw
+
         if name == "emitir_poliza":
             return _emitir_poliza(conn, args, phone=phone, tenant_id=tenant_id)
 
-        # ---------- Pagos reales (Wompi sandbox / modo demo) ----------
+        # ---------- Reclamos (FNOL) ----------
+        if name == "reportar_siniestro":
+            from . import claims_ai
+            return claims_ai.reportar_siniestro(conn, tenant_id, args)
+
+        if name == "estado_siniestro":
+            from . import claims_ai
+            return claims_ai.estado_siniestro(conn, args)
+
+        if name == "documentos_siniestro":
+            from . import claims_ai
+            tipo = str(args.get("tipo") or "").lower()
+            return {"tipo": tipo, "documentos": claims_ai.documentos_para(tipo)}
+
+        if name == "proponer_renovacion":
+            pn = str(args.get("policy_number") or "").strip()
+            if not pn:
+                return {"error": "falta policy_number; pídele al cliente su número de póliza"}
+            try:
+                row = conn.execute(
+                    """SELECT p.policy_number, p.end_date, p.status::text status,
+                              p.monthly_premium_cop::float prima_actual_cop,
+                              pr.insurance_type::text tipo, c.full_name
+                       FROM public.policies p
+                       JOIN public.customers c ON c.id = p.customer_id
+                       JOIN public.quotes q ON q.id = p.quote_id
+                       JOIN public.products pr ON pr.id = q.product_id
+                       WHERE p.policy_number ILIKE %s""", (pn,)).fetchone()
+            except Exception:
+                conn.rollback()
+                row = None
+            if not row:
+                return {"error": f"no encontré la póliza {pn}; verifica el número con el cliente"}
+            from datetime import date as _date
+            dias = (row["end_date"] - _date.today()).days
+            perfil = None
+            try:
+                from . import profiling
+                datos = {**_get_intake(conn, session_key), **_get_checkout(conn, session_key)}
+                if datos:
+                    perfil = profiling.build_profile(datos)
+            except Exception:
+                log.debug("perfil no disponible para renovar", exc_info=True)
+            opciones = recommend(conn, country="CO", tipo=row["tipo"], age=None,
+                                 sum_assured_usd=None, budget_monthly_usd=None,
+                                 extras={}, perfil=perfil)
+            for o in opciones:
+                o.pop("breakdown", None)
+            return {"poliza": {"numero": row["policy_number"], "tipo": row["tipo"],
+                               "estado": row["status"], "titular": row["full_name"],
+                               "prima_actual_cop": row["prima_actual_cop"],
+                               "vence_en_dias": dias},
+                    "opciones_renovacion": opciones,
+                    "mensaje": ("Presenta la mejor opción de renovación comparándola con la "
+                                "prima actual y ofrece cerrar la renovación aquí mismo "
+                                "(mismo flujo: consentimiento → pago → emitir_poliza).")}
+
+        # ---------- Pagos reales (Polar sandbox / modo demo) ----------
         if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
             from . import payments
             fn = {"generar_link_pago": payments.generar_link_pago,
@@ -635,6 +844,21 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             datos = _get_intake(conn, skey)
             merged = {**datos, **_get_checkout(conn, skey)}
             return profiling.build_profile(merged)
+
+        if name == "suscribir_informes":
+            try:
+                from . import reports as reports_mod
+            except Exception as exc:
+                return {"error": f"informes no disponibles: {exc}"}
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            out = reports_mod.subscribe(
+                str(args.get("email") or ""), tipo="cliente",
+                frecuencia=str(args.get("frecuencia") or "mensual"),
+                phone=real_phone)
+            if "error" in out:
+                return out
+            return {**out, "mensaje": ("Suscripción registrada. Confírmale al cliente "
+                                       "que recibirá su informe y con qué frecuencia.")}
 
         return {"error": f"herramienta desconocida: {name}"}
     finally:

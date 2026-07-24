@@ -7,8 +7,9 @@
   }
 
   .glass-header {
-    background: rgba(241, 253, 240, 0.8);
-    backdrop-filter: blur(12px);
+    background: rgba(241, 253, 240, 0.82);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
   }
 
   .ai-glow {

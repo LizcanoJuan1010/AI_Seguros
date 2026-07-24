@@ -81,13 +81,14 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# Pasarela de pagos Wompi (Grupo Bancolombia) — SANDBOX por defecto. Sin
-# WOMPI_PRIVATE_KEY el flujo de pago corre en modo demo/simulado (igual que el
+# Pasarela de pagos Polar (polar.sh) — SANDBOX por defecto (sandbox-api.polar.sh).
+# Token de organización (polar_oat_...) creado en el dashboard sandbox. Sin
+# POLAR_ACCESS_TOKEN el flujo de pago corre en modo demo/simulado (igual que el
 # resto del stack sin API keys). El backend valida el webhook con
-# WOMPI_EVENTS_SECRET (ver apps/backend). Nunca uses llaves prod en el hackathon.
-WOMPI_BASE_URL = os.getenv("WOMPI_BASE_URL", "https://sandbox.wompi.co/v1")
-WOMPI_PRIVATE_KEY = os.getenv("WOMPI_PRIVATE_KEY", "")
-WOMPI_REDIRECT_URL = os.getenv("WOMPI_REDIRECT_URL", "")
+# POLAR_WEBHOOK_SECRET (ver apps/backend). Nunca uses tokens prod en el hackathon.
+POLAR_BASE_URL = os.getenv("POLAR_BASE_URL", "https://sandbox-api.polar.sh/v1")
+POLAR_ACCESS_TOKEN = os.getenv("POLAR_ACCESS_TOKEN", "")
+POLAR_SUCCESS_URL = os.getenv("POLAR_SUCCESS_URL", "")
 
 # Motor de llamadas telefónicas — ElevenLabs Conversational AI (Agents Platform).
 # Sin ELEVENLABS_API_KEY el motor corre en modo demo (igual que Wompi/DeepSeek):
@@ -104,6 +105,17 @@ ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID",
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo
 # del asistente llama a este servicio. Default apto para docker-compose.
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:3000")
+
+# Seguro embebido (quote & bind para aliados B2B2C): API keys de partners
+# separadas por coma. Cada aliado integra /api/embedded/* en su checkout.
+PARTNER_API_KEYS = {k.strip() for k in
+                    os.getenv("PARTNER_API_KEYS", "demo-partner-2026").split(",")
+                    if k.strip()}
+
+# TTS local (Kokoro-FastAPI del perfil `voz` del compose): el endpoint
+# /api/assistant/tts lo proxya para no exponer el contenedor al navegador.
+TTS_URL = os.getenv("TTS_URL", "http://seguria-tts:8880")
+TTS_VOICE = os.getenv("TTS_VOICE", "ef_dora")
 
 # Marca de los documentos generados (cotización / certificado de póliza)
 BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")

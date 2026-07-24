@@ -184,6 +184,10 @@ def _section(pdf: FPDF, title: str) -> None:
 
 def _kv_table(pdf: FPDF, rows: list[tuple[str, str]]) -> None:
     row_h = 8
+    # La tabla se dibuja como bloque (borde calculado desde y0): si no cabe
+    # completa en la página, mejor arrancarla en la siguiente.
+    if pdf.get_y() + len(rows) * row_h > 297 - 28:
+        pdf.add_page()
     y0 = pdf.get_y()
     for i, (label, value) in enumerate(rows):
         y = pdf.get_y()
@@ -215,6 +219,13 @@ def _check_bullet(pdf: FPDF, x: float, y: float) -> None:
 
 def _coverage_list(pdf: FPDF, items: list) -> None:
     for item in items:
+        # Cada cobertura se mantiene indivisible: si no cabe, pasa completa
+        # a la siguiente página (evita vistos huérfanos y líneas partidas).
+        pdf.set_font("Helvetica", "", 10)
+        lines = pdf.multi_cell(CONTENT_W - 8.5, 6.2, _latin(item),
+                               dry_run=True, output="LINES")
+        if pdf.get_y() + len(lines) * 6.2 > 297 - 28:
+            pdf.add_page()
         y = pdf.get_y()
         _check_bullet(pdf, MARGIN + 1, y + 0.8)
         pdf.set_xy(MARGIN + 8.5, y)
@@ -245,6 +256,8 @@ def _highlight_card(pdf: FPDF, left_kicker: str, left_big: str, left_small: str,
                     right_kicker: str, right_big: str, right_small: str) -> None:
     """Tarjeta destacada de dos columnas con barra de acento ámbar."""
     h = 25
+    if pdf.get_y() + h > 297 - 28:
+        pdf.add_page()
     y = pdf.get_y()
     pdf.set_fill_color(*CARD)
     pdf.rect(MARGIN, y, CONTENT_W, h, style="F", round_corners=True, corner_radius=4)

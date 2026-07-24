@@ -1,6 +1,7 @@
 import { Icon } from '../../components/ui/Icon'
 import { Button } from '../../components/ui/Button'
 import { Reveal } from '../../components/ui/Reveal'
+import { CountUp } from '../../components/ui/CountUp'
 
 export function InsightSection() {
   return (
@@ -38,7 +39,7 @@ export function InsightSection() {
             <Reveal delay={240}>
               <div className="h-full rounded-lg border border-outline-variant/30 bg-white p-6 shadow-sm">
                 <p className="mb-1 text-display-lg-mobile font-bold text-secondary">
-                  99%
+                  <CountUp end={99} suffix="%" />
                 </p>
                 <p className="text-label-md text-on-surface-variant">
                   Satisfacción al cliente

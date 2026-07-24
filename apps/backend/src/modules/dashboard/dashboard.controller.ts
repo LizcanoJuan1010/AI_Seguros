@@ -22,6 +22,11 @@ export class DashboardController {
     return this.dashboardService.dailyKpis(tenantId);
   }
 
+  @Get('ai-impact')
+  aiImpact(@TenantId() tenantId: string) {
+    return this.dashboardService.aiImpact(tenantId);
+  }
+
   @Get('hot-leads-uncontacted')
   hotLeadsUncontacted(
     @TenantId() tenantId: string,

@@ -12,7 +12,8 @@ import { useTenant } from '../../tenant/TenantContext'
  *   Respuesta: text/event-stream con frames `event:` / `data:` (JSON por línea).
  *
  * Eventos soportados: thinking | token | tool_start | tool_result |
- * quick_replies | document | checkout_step | policy | done | error.
+ * quick_replies | document | checkout_step | policy | claim | underwriting |
+ * done | error.
  *
  * El render de tokens se batchea con requestAnimationFrame para evitar un
  * re-render por token. Degrada sin romper si el backend no responde.
@@ -49,7 +50,25 @@ export type AssistantPolicy = {
   title: string
 }
 
-/** Estado del pago real (evento `payment_link`, pasarela Wompi o modo demo). */
+/** Reclamo / siniestro (evento `claim`, FNOL o consulta de estado). */
+export type AssistantClaim = {
+  claimNumber: string
+  status: string
+  tipo?: string | null
+  poliza?: string | null
+  documentos_requeridos?: string[]
+  title: string
+}
+
+/** Decisión de underwriting (evento `underwriting`). */
+export type AssistantUnderwriting = {
+  decision: 'AUTO_APPROVE' | 'REFER' | 'DECLINE'
+  label: string
+  reasons: string[]
+  segmento_riesgo?: string | null
+}
+
+/** Estado del pago real (evento `payment_link`, pasarela Polar o modo demo). */
 export type PaymentStatus =
   | 'PENDING'
   | 'APPROVED'
@@ -60,7 +79,7 @@ export type PaymentStatus =
 
 export type AssistantPayment = {
   reference: string
-  /** URL del checkout seguro de Wompi (null en modo demo). */
+  /** URL del checkout seguro de Polar (null en modo demo). */
   checkout_url?: string | null
   amount_cop?: number
   concept?: string
@@ -86,6 +105,10 @@ export type ChatMessage = {
   payment?: AssistantPayment
   /** Póliza emitida asociada a este mensaje (evento `policy`). */
   policy?: AssistantPolicy
+  /** Reclamo reportado/consultado en este mensaje (evento `claim`). */
+  claim?: AssistantClaim
+  /** Decisión de underwriting de este turno (evento `underwriting`). */
+  underwriting?: AssistantUnderwriting
   error?: string
   /** true cuando el stream de este mensaje terminó (done / error / corte). */
   done: boolean
@@ -107,6 +130,8 @@ type SseEvent =
       event: 'policy'
       data: { policyNumber: string; download_url: string; title?: string }
     }
+  | { event: 'claim'; data: Partial<AssistantClaim> }
+  | { event: 'underwriting'; data: Partial<AssistantUnderwriting> }
   | { event: 'done'; data: { session_id?: string } }
   | { event: 'error'; data: { message?: string } }
   | { event: string; data: unknown }
@@ -363,6 +388,38 @@ export function useAssistantChat() {
               policyNumber: d.policyNumber as string,
               download_url: d.download_url as string,
               title: d.title ?? 'Póliza vigente',
+            },
+          }))
+          break
+        }
+        case 'claim': {
+          const d = frame.data as Partial<AssistantClaim>
+          if (!d?.claimNumber) break
+          patchMessage(id, (m) => ({
+            ...m,
+            thinking: undefined,
+            claim: {
+              claimNumber: d.claimNumber as string,
+              status: d.status ?? 'REPORTADO',
+              tipo: d.tipo,
+              poliza: d.poliza,
+              documentos_requeridos: d.documentos_requeridos ?? [],
+              title: d.title ?? 'Reclamo registrado',
+            },
+          }))
+          break
+        }
+        case 'underwriting': {
+          const d = frame.data as Partial<AssistantUnderwriting>
+          if (!d?.decision) break
+          patchMessage(id, (m) => ({
+            ...m,
+            thinking: undefined,
+            underwriting: {
+              decision: d.decision as AssistantUnderwriting['decision'],
+              label: d.label ?? d.decision ?? '',
+              reasons: d.reasons ?? [],
+              segmento_riesgo: d.segmento_riesgo,
             },
           }))
           break

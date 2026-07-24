@@ -3,10 +3,13 @@ import { KpiCards } from '../features/manager/KpiCards'
 import { AgentsTable } from '../features/manager/AgentsTable'
 import { AlertsPanel } from '../features/manager/AlertsPanel'
 import { Leaderboard } from '../features/manager/Leaderboard'
+import { ReportsCard } from '../features/manager/ReportsCard'
 import { AiPrediction } from '../features/manager/AiPrediction'
+import { AiImpactCard } from '../features/manager/AiImpactCard'
+import { ClaimsPanel } from '../features/manager/ClaimsPanel'
 import { agents as mockAgents, alerts as mockAlerts, kpis as mockKpis, leaders } from '../data/mock/manager'
 import type { AgentRow, Alert, Kpi } from '../data/mock/types'
-import { api, formatCop, type AgentPerformance, type ApiAlert, type DailyKpis } from '../lib/api'
+import { api, formatCop, type AgentPerformance, type AiImpact, type ApiAlert, type ApiClaim, type DailyKpis } from '../lib/api'
 import { useTenant } from '../tenant/TenantContext'
 
 const SPARK_UP = '0,35 20,30 40,32 60,15 80,18 100,5'
@@ -93,6 +96,8 @@ export function ManagerDashboardPage() {
   const [kpis, setKpis] = useState<Kpi[]>(mockKpis)
   const [agents, setAgents] = useState<AgentRow[]>(mockAgents)
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts)
+  const [impact, setImpact] = useState<AiImpact | null>(null)
+  const [claims, setClaims] = useState<ApiClaim[]>([])
   const [live, setLive] = useState(false)
 
   useEffect(() => {
@@ -116,6 +121,15 @@ export function ManagerDashboardPage() {
         // Backend caído a mitad de sesión: conserva los datos demo.
         if (alive) setLive(false)
       })
+    // Métricas de impacto IA y reclamos: opcionales, cada una degrada sola.
+    api
+      .aiImpact()
+      .then((d) => alive && setImpact(d))
+      .catch(() => alive && setImpact(null))
+    api
+      .claims(teamId || undefined)
+      .then((c) => alive && setClaims(c.data))
+      .catch(() => alive && setClaims([]))
     return () => {
       alive = false
     }
@@ -150,6 +164,8 @@ export function ManagerDashboardPage() {
 
       <KpiCards items={kpis} />
 
+      {impact && <AiImpactCard data={impact} />}
+
       <div className="flex flex-col gap-6 lg:flex-row">
         {agents.length ? (
           <AgentsTable agents={agents} />
@@ -160,7 +176,9 @@ export function ManagerDashboardPage() {
         )}
         <aside className="flex w-full flex-col gap-6 lg:w-80">
           {alerts.length > 0 && <AlertsPanel items={alerts} />}
+          {claims.length > 0 && <ClaimsPanel items={claims} />}
           <Leaderboard entries={leaders} />
+          <ReportsCard />
         </aside>
       </div>
 

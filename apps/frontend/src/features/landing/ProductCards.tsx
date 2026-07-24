@@ -28,7 +28,10 @@ const products = [
 
 export function ProductCards() {
   return (
-    <section className="bg-mist-white px-margin-mobile py-24 md:px-margin-desktop">
+    <section
+      id="planes"
+      className="bg-mist-white px-margin-mobile py-24 md:px-margin-desktop"
+    >
       <div className="mx-auto max-w-container-max">
         <Reveal className="mb-16 flex flex-col items-end justify-between gap-6 md:flex-row">
           <div className="max-w-xl">

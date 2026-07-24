@@ -7,6 +7,7 @@ import { AlertsModule } from './modules/alerts/alerts.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CallMessagesModule } from './modules/call-messages/call-messages.module';
 import { CheckoutModule } from './modules/checkout/checkout.module';
+import { ClaimsModule } from './modules/claims/claims.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ElevenLabsModule } from './modules/elevenlabs/elevenlabs.module';
@@ -38,6 +39,7 @@ import { PrismaModule } from './prisma/prisma.module';
     LeadEventsModule,
     QuotesModule,
     PoliciesModule,
+    ClaimsModule,
     AlertsModule,
     DashboardModule,
     CheckoutModule,

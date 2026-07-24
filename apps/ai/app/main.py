@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import (BackgroundTasks, Depends, FastAPI, File, Header,
-                     HTTPException, UploadFile)
+                     HTTPException, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
+from .embedded import router as embedded_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY)
@@ -34,9 +35,14 @@ from .quoting import quote_product, recommend
 async def lifespan(app: FastAPI):
     init_db()
     await memory.init_pool()  # Postgres si está disponible; si no, memoria en dict
+    # Informes periódicos por correo (patrón Paloma): loop en segundo plano.
+    from . import reports as reports_mod
+    import asyncio as _asyncio
+    reports_task = _asyncio.create_task(reports_mod.scheduler_loop())
     try:
         yield
     finally:
+        reports_task.cancel()
         await memory.close_pool()
 
 
@@ -45,6 +51,7 @@ app = FastAPI(title="SegurIA API", version="0.1.0", lifespan=lifespan,
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
+app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
 
 
 class ChatRequest(BaseModel):
@@ -102,6 +109,71 @@ async def assistant_upload(file: UploadFile = File(...), session_id: str = "", p
             "tipo_detectado": parsed.get("tipo_detectado"),
             "campos_extraidos": parsed.get("campos_extraidos", {}),
             "resumen": parsed.get("resumen")}
+
+
+# ---------- Voz: TTS de la respuesta (proxy al Kokoro del perfil `voz`) ----------
+
+@app.get("/api/assistant/tts")
+def assistant_tts(text: str) -> Response:
+    """Convierte texto de respuesta en audio (mp3). Proxy al contenedor Kokoro
+    para no exponerlo al navegador; sin el perfil `voz` responde 503 limpio."""
+    clean = (text or "").strip()
+    if not clean:
+        raise HTTPException(400, "texto vacío")
+    from .config import TTS_URL, TTS_VOICE
+    try:
+        import requests
+        r = requests.post(f"{TTS_URL}/v1/audio/speech",
+                          json={"model": "kokoro", "voice": TTS_VOICE,
+                                "input": clean[:600], "response_format": "mp3"},
+                          timeout=30)
+        r.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(503, f"TTS no disponible (perfil voz apagado): {exc}")
+    return Response(content=r.content, media_type="audio/mpeg")
+
+
+# ---------- Informes periódicos por correo (patrón Paloma / Resend) ----------
+
+class ReportSubscription(BaseModel):
+    email: str = Field(..., description="Correo del destinatario")
+    tipo: str = Field("cliente", description="cliente|gerente")
+    frecuencia: str = Field("mensual", description="demo|diaria|semanal|mensual")
+    phone: str | None = Field(None, description="Teléfono del lead (clientes)")
+
+
+@app.post("/api/reports/subscriptions")
+def create_report_subscription(req: ReportSubscription) -> dict:
+    """Opt-in a informes periódicos (cliente: estado de su seguro; gerente: KPIs)."""
+    from . import reports as reports_mod
+    out = reports_mod.subscribe(req.email, tipo=req.tipo,
+                                frecuencia=req.frecuencia, phone=req.phone)
+    if "error" in out:
+        raise HTTPException(400, out["error"])
+    return out
+
+
+@app.get("/api/reports/subscriptions")
+def get_report_subscriptions() -> list[dict]:
+    from . import reports as reports_mod
+    return reports_mod.list_subscriptions()
+
+
+@app.delete("/api/reports/subscriptions/{sub_id}", status_code=204)
+def delete_report_subscription(sub_id: int) -> None:
+    from . import reports as reports_mod
+    if not reports_mod.unsubscribe(sub_id):
+        raise HTTPException(404, "suscripción no encontrada")
+
+
+@app.post("/api/reports/subscriptions/{sub_id}/send-now")
+async def send_report_now(sub_id: int) -> dict:
+    """Dispara el informe de inmediato (útil para la demo)."""
+    from . import reports as reports_mod
+    sub = next((s for s in reports_mod.list_subscriptions() if s["id"] == sub_id), None)
+    if not sub:
+        raise HTTPException(404, "suscripción no encontrada")
+    return await reports_mod.send_subscription_now(sub)
 
 
 # ---------- Historial de conversaciones (patrón Paloma) ----------
@@ -392,10 +464,10 @@ def insights_summary() -> dict:
 
 @app.get("/api/proactive", dependencies=[Depends(require_manager)])
 def proactive_all() -> dict:
-    """Sugerencias de seguimiento (todos los clientes) + alertas de negocio."""
-    from .proactive import client_nudges, manager_alerts
+    """Sugerencias de seguimiento (funnel + renovaciones/cross-sell) + alertas."""
+    from .proactive import all_nudges, manager_alerts
     conn = get_conn()
-    data = {"nudges_clientes": client_nudges(conn), "alertas_gerente": manager_alerts(conn)}
+    data = {"nudges_clientes": all_nudges(conn), "alertas_gerente": manager_alerts(conn)}
     conn.close()
     return data
 
@@ -403,9 +475,9 @@ def proactive_all() -> dict:
 @app.get("/api/proactive/{phone}", dependencies=[Depends(require_service)])
 def proactive_for_phone(phone: str) -> dict:
     """Sugerencias de seguimiento para un cliente puntual (lo usa la skill cron)."""
-    from .proactive import client_nudges
+    from .proactive import all_nudges
     conn = get_conn()
-    data = {"nudges": client_nudges(conn, phone)}
+    data = {"nudges": all_nudges(conn, phone)}
     conn.close()
     return data
 
