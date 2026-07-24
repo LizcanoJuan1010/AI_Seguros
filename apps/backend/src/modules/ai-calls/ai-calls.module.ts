@@ -8,5 +8,6 @@ import { AiCallsService } from './ai-calls.service';
   imports: [CustomersModule, LeadsModule],
   controllers: [AiCallsController],
   providers: [AiCallsService],
+  exports: [AiCallsService],
 })
 export class AiCallsModule {}

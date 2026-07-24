@@ -7,5 +7,6 @@ import { CallMessagesService } from './call-messages.service';
   imports: [LeadsModule],
   controllers: [CallMessagesController],
   providers: [CallMessagesService],
+  exports: [CallMessagesService],
 })
 export class CallMessagesModule {}
