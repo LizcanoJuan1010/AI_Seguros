@@ -1,0 +1,71 @@
+schema: spec-driven
+
+context: |
+  Monorepo: apps/frontend (React 19 + Vite + Tailwind v4, TS, oxlint)
+  apps/backend (NestJS 11 + Prisma 7 + PostgreSQL, Jest+supertest)
+  apps/ai (Python FastAPI + DeepSeek/OpenAI SDK, pytest+httpx)
+  apps/services (baileys-bridge Node, hermes-agent skills-based)
+  Docker Compose: postgres, redis, seguria-ai, backend, frontend, kokoro TTS
+  No unified root test/lint/build task (Taskfile.yml only covers dev/setup/migrations)
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages across the 3 services (frontend/backend/ai)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows (especially cross-service/websocket flows)
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions per app (NestJS module structure, FastAPI router structure, React feature folders)
+    tdd: true
+    test_command: "apps/backend: npm run test | apps/ai: pytest | apps/frontend: no test runner configured"
+  verify:
+    test_command: "apps/backend: npm run test:cov | apps/ai: pytest"
+    build_command: "apps/backend: npm run build | apps/frontend: npm run build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+
+testing:
+  strict_tdd_mode: enabled
+  detected: 2026-07-24
+  test_runner:
+    backend: "npm run test (Jest, testRegex *.spec.ts)"
+    ai: "pytest (apps/ai/tests/)"
+    frontend: "NOT FOUND — no vitest/jest, only tsc -b (type-check) and oxlint"
+  test_layers:
+    unit:
+      backend: available
+      ai: available
+      frontend: not available
+    integration:
+      backend: "available (supertest + test:e2e / jest-e2e.json)"
+      ai: "available (httpx, used for API testing)"
+      frontend: not available
+    e2e_browser: "not detected (no playwright/cypress/selenium anywhere in the repo)"
+  coverage:
+    backend: "available (npm run test:cov)"
+    ai: "not available (no pytest-cov/coverage in requirements.txt)"
+    frontend: not available
+  quality_tools:
+    linter:
+      backend: "eslint (npm run lint)"
+      frontend: "oxlint (npm run lint)"
+      ai: "not detected"
+    type_checker:
+      backend: "tsc (via nest build)"
+      frontend: "tsc -b (part of npm run build)"
+      ai: "not detected"
+    formatter:
+      backend: "prettier (npm run format)"
+      frontend: "not detected"
+      ai: "not detected"

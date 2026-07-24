@@ -1,0 +1,30 @@
+change: live-call-deepgram
+artifact_store: openspec
+execution_mode: interactive
+delivery_strategy: ask-on-risk
+created: 2026-07-24
+
+phases:
+  explore:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/exploration.md
+  proposal:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/proposal.md
+  specs:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/specs/live-voice-call/spec.md
+  design:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/design.md
+  tasks:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/tasks.md
+    chain_strategy: feature-branch-chain
+    tracker_branch: feat/live-call-deepgram
+  apply:
+    status: pending
+  verify:
+    status: pending
+  archive:
+    status: pending
