@@ -29,7 +29,11 @@ phases:
       status: done
       branch: live-call-deepgram/python-voice
       base: live-call-deepgram/foundation
-    remaining_units: [pr3_nest_gateway, pr4_frontend]
+    pr3_nest_gateway:
+      status: done
+      branch: live-call-deepgram/nest-gateway
+      base: live-call-deepgram/python-voice
+    remaining_units: [pr4_frontend]
   verify:
     status: pending
   archive:
