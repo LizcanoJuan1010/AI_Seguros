@@ -55,10 +55,10 @@ Tracker branch: `feat/live-call-deepgram` → `main` (draft, no-merge until all 
 
 ## Phase 4: Frontend (`apps/frontend`)
 
-- [ ] 4.1 Create `useLiveVoiceCall.ts`: WS client, auth handshake, event handlers mirroring `useAssistantChat.ts`
-- [ ] 4.2 Mic capture (AudioWorklet, PCM16/16kHz) + TTS playback (PCM16/24kHz)
-- [ ] 4.3 Wire `LiveAiCallPage.tsx` to the hook — replace `STEPS` mock with live transcript/orb state
-- [ ] 4.4 Map `tool_result` → `CallCard[]`; wire `CallControls`/`AiVisualizerStub` to real mute/state
+- [x] 4.1 Create `useLiveVoiceCall.ts`: WS client, auth handshake, event handlers mirroring `useAssistantChat.ts`
+- [x] 4.2 Mic capture (AudioWorklet, PCM16/16kHz) + TTS playback (PCM16/24kHz)
+- [x] 4.3 Wire `LiveAiCallPage.tsx` to the hook — replace `STEPS` mock with live transcript/orb state
+- [x] 4.4 Map `tool_result` → `CallCard[]`; wire `CallControls`/`AiVisualizerStub` to real mute/state
 
 ## Phase 5: Testing (per spec scenarios)
 
