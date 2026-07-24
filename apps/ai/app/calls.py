@@ -16,7 +16,7 @@ import logging
 import requests
 
 from .config import (ELEVENLABS_AGENT_ID, ELEVENLABS_AGENT_PHONE_NUMBER_ID,
-                     ELEVENLABS_API_KEY, ELEVENLABS_BASE_URL)
+                     ELEVENLABS_API_KEY, ELEVENLABS_BASE_URL, ELEVENLABS_VOICE_ID)
 
 log = logging.getLogger("seguria.calls")
 
@@ -46,9 +46,13 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
                 "mensaje": "Llamada simulada (faltan credenciales de ElevenLabs)."}
 
     client_data: dict = {"dynamic_variables": variables}
+    override: dict = {}
     if first_message:
-        client_data["conversation_config_override"] = {
-            "agent": {"first_message": first_message}}
+        override["agent"] = {"first_message": first_message}
+    if ELEVENLABS_VOICE_ID:
+        override["tts"] = {"voice_id": ELEVENLABS_VOICE_ID}
+    if override:
+        client_data["conversation_config_override"] = override
 
     payload = {
         "agent_id": ELEVENLABS_AGENT_ID,

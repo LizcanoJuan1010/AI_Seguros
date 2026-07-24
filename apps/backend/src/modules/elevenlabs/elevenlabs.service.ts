@@ -1,9 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { resolveTenantId } from '../../common/tenant.decorator';
 import { CallStatus, Channel, SpeakerType } from '../../generated/prisma/enums';
 import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CustomersService } from '../customers/customers.service';
+import { LeadScoringService } from '../leads/lead-scoring.service';
+import { LeadsService } from '../leads/leads.service';
 
 interface TranscriptTurn {
   role?: string;
@@ -57,7 +60,35 @@ export class ElevenLabsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
+    private readonly leads: LeadsService,
+    private readonly leadScoring: LeadScoringService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Perfilamiento post-llamada: le pasa el transcript completo al servicio
+   * IA (Python) para que extraiga datos del cliente por LLM y construya el
+   * perfil (mismo `profiling.build_profile` que usa el chat de WhatsApp/web,
+   * ver apps/ai/app/call_profiling.py). Primera llamada NestJS->Python del
+   * sistema — hasta ahora todo iba en la dirección contraria. Fire-and-forget
+   * con `fetch` nativo (Node 20+): no bloquea la respuesta al webhook de
+   * ElevenLabs ni falla el registro de la llamada si el servicio IA no responde.
+   */
+  private notifyCallProfiling(
+    tenantId: string,
+    phone: string,
+    transcript: TranscriptTurn[],
+  ): void {
+    const baseUrl = this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
+    const serviceKey = this.config.get<string>('SERVICE_API_KEY') ?? 'demo-service-2026';
+    fetch(`${baseUrl}/api/profiling/from-call`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Service-Key': serviceKey },
+      body: JSON.stringify({ phone, tenant_id: tenantId, transcript }),
+    }).catch((err: unknown) =>
+      this.logger.warn(`no se pudo disparar el perfilamiento post-llamada: ${String(err)}`),
+    );
+  }
 
   async handlePostCallWebhook(body: Record<string, unknown>) {
     const type = body.type;
@@ -87,6 +118,8 @@ export class ElevenLabsService {
       tenantId,
       phone.trim(),
     );
+    // Primer contacto real (o escalación a llamada de un lead ya existente).
+    await this.leads.findOrCreateOpenLead(tenantId, customer.id, Channel.VOICE_CALL);
 
     const startedAt = data.metadata?.start_time_unix_secs
       ? new Date(data.metadata.start_time_unix_secs * 1000)
@@ -131,6 +164,16 @@ export class ElevenLabsService {
           ),
         })),
       });
+    }
+
+    // Este flujo usa createMany directo (no CallMessagesService), así que el
+    // recálculo de scoring no se dispara solo — se llama explícito aquí.
+    this.leadScoring
+      .recomputeForCustomer(tenantId, customer.id)
+      .catch(() => undefined);
+
+    if (transcript.length) {
+      this.notifyCallProfiling(tenantId, phone.trim(), transcript);
     }
 
     return { received: true, processed: true, aiCallId: aiCall.id };

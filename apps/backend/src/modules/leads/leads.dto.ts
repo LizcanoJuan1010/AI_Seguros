@@ -82,3 +82,24 @@ export class QueryLeadsDto extends PaginationQueryDto {
   @IsEnum(LeadIntent)
   intent?: LeadIntent;
 }
+
+export class QueryLeadsQueueDto extends PaginationQueryDto {
+  // Sin agentId = vista de manager (todo el equipo); con agentId = cola de
+  // ese agente puntual.
+  @IsOptional()
+  @IsUUID('4')
+  agentId?: string;
+}
+
+export class UpsertLeadDto {
+  @IsString()
+  phone!: string;
+
+  @IsOptional()
+  @IsEnum(InsuranceType)
+  insuranceType?: InsuranceType;
+
+  @IsOptional()
+  @IsEnum(LeadStatus)
+  status?: LeadStatus;
+}

@@ -122,10 +122,14 @@ enum EventType {
   @@map("event_type")
 }
 
-// Canal de origen de una sesión de IA (ai_calls). VOICE_CALL es telefonía real
+// Canal de origen de una sesión de IA (ai_calls) y de progresión de contacto
+// de un Lead (first_channel/highest_channel). VOICE_CALL es telefonía real
 // (ElevenLabs Conversational AI); WHATSAPP/WEB_CHAT los alimenta el servicio IA
-// (Python) vía la API del backend; EMAIL queda listo para el canal futuro.
+// (Python) vía la API del backend; WEB_INTEREST es un click/interés PREVIO a
+// cualquier conversación real (aún sin disparador en el frontend, el motor de
+// leads ya lo soporta); EMAIL queda listo para el canal futuro.
 enum Channel {
+  WEB_INTEREST @map("web_interest")
   WHATSAPP @map("whatsapp")
   EMAIL @map("email")
   WEB_CHAT @map("web_chat")
@@ -279,6 +283,22 @@ model Lead {
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
 
+  // --- Motor de leads: progresión de canal + velocidad de respuesta ---
+  // firstChannel: inmutable, el primer contacto real (click/interés, WhatsApp
+  // o llamada) que originó el Lead. highestChannel: ratchet, el canal de
+  // mayor "rango" alcanzado hasta ahora (nunca retrocede). Ambos alimentan
+  // LeadScoringService (apps/backend/src/modules/leads/lead-scoring.service.ts).
+  firstChannel           Channel?    @map("first_channel")
+  highestChannel         Channel?    @map("highest_channel")
+  lastCustomerResponseAt DateTime?   @map("last_customer_response_at") @db.Timestamptz(6)
+  lastOutboundAt         DateTime?   @map("last_outbound_at") @db.Timestamptz(6)
+  priorityScore          Int         @default(0) @map("priority_score")
+  priorityScoreUpdatedAt DateTime?   @map("priority_score_updated_at") @db.Timestamptz(6)
+  // Override manual del agente sobre `intent` (PATCH /leads/:id). Expira a
+  // los 7 días (ver LEAD_SCORE_OVERRIDE_DAYS) y el motor retoma el control.
+  intentOverride         LeadIntent? @map("intent_override")
+  intentOverrideAt       DateTime?   @map("intent_override_at") @db.Timestamptz(6)
+
   team     Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_team_id_fkey")
   customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "leads_customer_id_fkey")
   aiCall   AiCall?     @relation(fields: [aiCallId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_ai_call_id_fkey")
@@ -290,6 +310,7 @@ model Lead {
   @@index([agentId, status], map: "idx_leads_agent_status")
   @@index([createdAt(sort: Desc)], map: "idx_leads_created_at")
   @@index([teamId], map: "idx_leads_team")
+  @@index([teamId, status, priorityScore(sort: Desc)], map: "idx_leads_queue")
   @@map("leads")
 }
 

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Channel, LeadIntent, LeadStatus } from '../../generated/prisma/enums';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -26,13 +27,12 @@ interface DailyKpisRow {
   revenue_hoy_cop: Prisma.Decimal;
 }
 
-interface HotLeadRow {
-  id: string;
-  agent_id: string | null;
-  agent_name: string | null;
-  created_at: Date;
-  tiempo_sin_contacto: string;
-}
+const OPEN_STATUSES: LeadStatus[] = [
+  LeadStatus.NUEVO,
+  LeadStatus.CONTACTADO,
+  LeadStatus.COTIZADO,
+  LeadStatus.NEGOCIACION,
+];
 
 @Injectable()
 export class DashboardService {
@@ -189,48 +189,204 @@ export class DashboardService {
     };
   }
 
+  /**
+   * Generaliza `v_hot_leads_uncontacted` (antes hardcodeada: intent=caliente,
+   * status=nuevo, >2h). Los filtros ahora son query params con esos mismos
+   * defaults, sobre `leads` directo (ya no la vista) — puede porque
+   * `firstContactAt`/`createdAt` ya alcanzan sin necesitar SQL crudo.
+   */
   async hotLeadsUncontacted(tenantId: string, query: HotLeadsQueryDto) {
-    const { skip, take } = paginationArgs(query.page, query.limit);
-    // v_hot_leads_uncontacted expone team_id; se aísla por tenant y, opcional,
-    // por agente.
-    const conditions: Prisma.Sql[] = [
-      Prisma.sql`team_id = ${tenantId}::uuid`,
-    ];
-    if (query.agentId) {
-      conditions.push(Prisma.sql`agent_id = ${query.agentId}::uuid`);
-    }
-    const where = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
-    const direction =
-      query.order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+    const staleHours = query.staleHours ?? 2;
+    const cutoff = new Date(Date.now() - staleHours * 3_600_000);
+    const where: Prisma.LeadWhereInput = {
+      teamId: tenantId,
+      intent: query.intent ?? LeadIntent.CALIENTE,
+      status: query.status ?? LeadStatus.NUEVO,
+      firstContactAt: null,
+      createdAt: { lt: cutoff },
+      ...(query.agentId && { agentId: query.agentId }),
+      ...(query.unassignedOnly && { agentId: null }),
+    };
 
-    const [rows, count] = await Promise.all([
-      this.prisma.$queryRaw<HotLeadRow[]>(Prisma.sql`
-        SELECT id, agent_id, agent_name, created_at,
-               tiempo_sin_contacto::text AS tiempo_sin_contacto
-        FROM v_hot_leads_uncontacted
-        ${where}
-        ORDER BY created_at ${direction}
-        LIMIT ${take} OFFSET ${skip}
-      `),
-      this.prisma.$queryRaw<CountRow[]>(Prisma.sql`
-        SELECT COUNT(*) AS total FROM v_hot_leads_uncontacted
-        ${where}
+    const [data, total] = await Promise.all([
+      this.prisma.lead.findMany({
+        where,
+        ...paginationArgs(query.page, query.limit),
+        orderBy: { createdAt: query.order },
+        include: { agent: { select: { fullName: true } } },
+      }),
+      this.prisma.lead.count({ where }),
+    ]);
+
+    const mapped = data.map((lead) => ({
+      id: lead.id,
+      agentId: lead.agentId,
+      agentName: lead.agent?.fullName ?? null,
+      createdAt: lead.createdAt,
+      horasSinContacto: Math.floor(
+        (Date.now() - lead.createdAt.getTime()) / 3_600_000,
+      ),
+    }));
+
+    return paginated(mapped, total, query.page, query.limit);
+  }
+
+  /** KPIs de velocidad de respuesta y clusterización (motor de leads). */
+  async leadsKpis(tenantId: string) {
+    const [firstResponseRow] = await this.prisma.$queryRaw<
+      { avg_hours: number | null }[]
+    >(Prisma.sql`
+      SELECT AVG(EXTRACT(EPOCH FROM (first_touch.ts - l.created_at)) / 3600) AS avg_hours
+      FROM public.leads l
+      JOIN LATERAL (
+        SELECT MIN(ts) AS ts FROM (
+          SELECT le.created_at AS ts FROM public.lead_events le
+          WHERE le.lead_id = l.id
+            AND le.event_type IN ('llamada_saliente','whatsapp','email','reunion')
+          UNION ALL
+          SELECT cm.spoken_at AS ts FROM public.call_messages cm
+          JOIN public.ai_calls ac ON ac.id = cm.call_id
+          WHERE ac.customer_id = l.customer_id AND cm.speaker = 'ia'
+        ) touches
+      ) first_touch ON true
+      WHERE l.team_id = ${tenantId}::uuid
+    `);
+
+    const [latencyRow] = await this.prisma.$queryRaw<
+      { avg_minutes: number | null }[]
+    >(Prisma.sql`
+      SELECT AVG(EXTRACT(EPOCH FROM (cliente_ts - prev_ts)) / 60) AS avg_minutes
+      FROM (
+        SELECT cm.spoken_at AS cliente_ts,
+               LAG(cm.spoken_at) OVER (PARTITION BY cm.call_id ORDER BY cm.spoken_at) AS prev_ts,
+               LAG(cm.speaker) OVER (PARTITION BY cm.call_id ORDER BY cm.spoken_at) AS prev_speaker
+        FROM public.call_messages cm
+        JOIN public.ai_calls ac ON ac.id = cm.call_id
+        WHERE ac.team_id = ${tenantId}::uuid AND cm.speaker = 'cliente'
+      ) turns
+      WHERE prev_speaker = 'ia'
+    `);
+
+    const [staleRow] = await this.prisma.$queryRaw<
+      { total: bigint; stale: bigint }[]
+    >(Prisma.sql`
+      SELECT COUNT(*) AS total,
+             COUNT(*) FILTER (
+               WHERE now() - COALESCE(last_customer_response_at, created_at) > interval '48 hours'
+             ) AS stale
+      FROM public.leads
+      WHERE team_id = ${tenantId}::uuid
+        AND status IN ('nuevo','contactado','cotizado','negociacion')
+    `);
+
+    const intentGroups = await this.prisma.lead.groupBy({
+      by: ['intent'],
+      where: { teamId: tenantId, status: { in: OPEN_STATUSES } },
+      _count: { _all: true },
+    });
+
+    const totalOpen = Number(staleRow?.total ?? 0);
+    return {
+      avgFirstResponseHours: firstResponseRow?.avg_hours ?? null,
+      avgCustomerResponseMinutes: latencyRow?.avg_minutes ?? null,
+      unresponsiveOver48h: {
+        total: totalOpen,
+        stale: Number(staleRow?.stale ?? 0),
+        pct: totalOpen ? Number(staleRow?.stale ?? 0) / totalOpen : 0,
+      },
+      intentDistribution: intentGroups.map((g) => ({
+        intent: g.intent,
+        count: g._count._all,
+      })),
+    };
+  }
+
+  /** Progresión de canal (click/interés -> WhatsApp -> llamada) y conversión por canal. */
+  async channelFunnel(tenantId: string) {
+    const [totalsByChannel, wonByChannel, escalationRow] = await Promise.all([
+      this.prisma.lead.groupBy({
+        by: ['firstChannel'],
+        where: { teamId: tenantId, firstChannel: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['firstChannel'],
+        where: {
+          teamId: tenantId,
+          firstChannel: { not: null },
+          status: LeadStatus.CERRADO_GANADO,
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.$queryRaw<
+        { total: bigint; escalated: bigint; reached_call: bigint }[]
+      >(Prisma.sql`
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE highest_channel IS DISTINCT FROM first_channel) AS escalated,
+               COUNT(*) FILTER (WHERE highest_channel = 'voice_call') AS reached_call
+        FROM public.leads
+        WHERE team_id = ${tenantId}::uuid AND first_channel IS NOT NULL
       `),
     ]);
 
-    const data = rows.map((row) => ({
-      id: row.id,
-      agentId: row.agent_id,
-      agentName: row.agent_name,
-      createdAt: row.created_at,
-      tiempoSinContacto: row.tiempo_sin_contacto,
-    }));
-
-    return paginated(
-      data,
-      Number(count[0]?.total ?? 0),
-      query.page,
-      query.limit,
+    const wonMap = new Map(
+      wonByChannel.map((r) => [r.firstChannel, r._count._all]),
     );
+    const total = Number(escalationRow[0]?.total ?? 0);
+
+    return {
+      conversionByFirstChannel: totalsByChannel.map((r) => {
+        const won = wonMap.get(r.firstChannel) ?? 0;
+        return {
+          channel: r.firstChannel as Channel | null,
+          total: r._count._all,
+          won,
+          conversionPct: r._count._all ? won / r._count._all : 0,
+        };
+      }),
+      channelEscalationRate: total
+        ? Number(escalationRow[0].escalated) / total
+        : 0,
+      reachedVoiceCallPct: total
+        ? Number(escalationRow[0].reached_call) / total
+        : 0,
+    };
+  }
+
+  /** Profundidad y salud de la cola priorizada por agente. */
+  async queueHealth(tenantId: string) {
+    const leads = await this.prisma.lead.findMany({
+      where: { teamId: tenantId, status: { in: OPEN_STATUSES } },
+      select: { agentId: true, priorityScore: true },
+    });
+
+    const byAgent = new Map<
+      string | null,
+      { count: number; scoreSum: number; urgent: number; normal: number; low: number }
+    >();
+    for (const lead of leads) {
+      const bucket = byAgent.get(lead.agentId) ?? {
+        count: 0,
+        scoreSum: 0,
+        urgent: 0,
+        normal: 0,
+        low: 0,
+      };
+      bucket.count += 1;
+      bucket.scoreSum += lead.priorityScore;
+      if (lead.priorityScore > 700) bucket.urgent += 1;
+      else if (lead.priorityScore >= 400) bucket.normal += 1;
+      else bucket.low += 1;
+      byAgent.set(lead.agentId, bucket);
+    }
+
+    return Array.from(byAgent.entries()).map(([agentId, b]) => ({
+      agentId,
+      total: b.count,
+      avgPriorityScore: b.count ? Math.round(b.scoreSum / b.count) : 0,
+      urgent: b.urgent,
+      normal: b.normal,
+      low: b.low,
+    }));
   }
 }

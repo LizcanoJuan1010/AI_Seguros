@@ -52,6 +52,10 @@ services:
       # Secreto del webhook de Polar (Standard Webhooks): firma del webhook de pagos
       - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET:-}
       - ELEVENLABS_WEBHOOK_SECRET=${ELEVENLABS_WEBHOOK_SECRET:-demo-elevenlabs-secret-2026}
+      # Perfilamiento post-llamada: el backend llama de vuelta al servicio IA
+      # (primera llamada NestJS->Python del sistema; hasta ahora todo iba al revés).
+      - AI_SERVICE_URL=${AI_SERVICE_URL:-http://seguria-ai:8085}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
     ports:
       - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
     restart: unless-stopped
@@ -91,6 +95,11 @@ services:
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
       - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
       - ELEVENLABS_AGENT_PHONE_NUMBER_ID=${ELEVENLABS_AGENT_PHONE_NUMBER_ID:-}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-}
+      # Canal WhatsApp (gateway Baileys multi-tenant reusado). Vacío = demo.
+      - WA_GATEWAY_URL=${WA_GATEWAY_URL:-}
+      - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}
+      - WA_GATEWAY_TENANT=${WA_GATEWAY_TENANT:-tequendama}
       - SEGURIA_DATA_DIR=/data/market
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Seguro embebido (quote & bind para aliados) y TTS del chat web

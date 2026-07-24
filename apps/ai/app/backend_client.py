@@ -51,6 +51,34 @@ def post_call_message(tenant_id: str, ai_call_id: str, speaker: str, content: st
         log.warning("no se pudo registrar call_message: %s", exc)
 
 
+def upsert_lead(tenant_id: str, phone: str, *, insurance_type: str | None = None,
+                status: str | None = None) -> str | None:
+    """Puente hacia el Lead canónico de Prisma (motor de leads del backend):
+    resuelve/crea el Customer por teléfono y el Lead abierto de ese
+    (tenant, phone) vía `LeadsService.upsertByPhone` (mismo find-or-create
+    que usan las sesiones de WhatsApp/web/llamada). Devuelve el `id` del Lead,
+    o `None` si el backend no respondió — nunca bloquea el flujo del cotizador
+    de Python, que sigue escribiendo en su tabla `leads` local igual que antes.
+    """
+    try:
+        payload: dict = {"phone": phone}
+        if insurance_type:
+            payload["insuranceType"] = insurance_type
+        if status:
+            payload["status"] = status
+        resp = requests.post(
+            f"{BACKEND_URL}/api/v1/leads/upsert",
+            json=payload,
+            timeout=_TIMEOUT,
+            headers={"X-Tenant-Id": tenant_id},
+        )
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except Exception as exc:
+        log.warning("no se pudo actualizar el lead en el backend: %s", exc)
+        return None
+
+
 def log_turn(tenant_id: str, phone: str, channel: str, role: str, message: str) -> None:
     """Abre/reutiliza la sesión y registra el mensaje en una sola llamada de
     conveniencia. `role` usa el vocabulario del chat (`cliente`/`asistente`/

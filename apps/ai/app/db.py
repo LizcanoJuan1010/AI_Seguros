@@ -55,6 +55,10 @@ CREATE TABLE IF NOT EXISTS leads (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+-- Puente hacia el Lead canónico de Prisma (motor de leads del backend): esta
+-- tabla local sigue siendo la del cotizador (quotes.lead_id la referencia),
+-- pero cada fila queda enlazada al Lead real que ve el CRM/scoring.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS prisma_lead_id UUID;
 CREATE TABLE IF NOT EXISTS quotes (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     lead_id BIGINT REFERENCES leads(id),
@@ -100,6 +104,15 @@ CREATE TABLE IF NOT EXISTS chat_history (
     seq INTEGER,
     message TEXT,
     PRIMARY KEY (session_id, seq)
+);
+-- Perfil (profiling.build_profile) más reciente por teléfono. 'llamada' lo
+-- llena call_profiling.py tras cada llamada de ElevenLabs; 'mock' son
+-- perfiles de prueba sembrados por mock_profiles.py (ver init_db).
+CREATE TABLE IF NOT EXISTS customer_profile (
+    phone TEXT PRIMARY KEY,
+    perfil JSONB NOT NULL,
+    fuente TEXT DEFAULT 'llamada',
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 """
 
@@ -149,6 +162,10 @@ def init_db(seed_demo: bool = True) -> None:
         _seed_fx(conn)
         if seed_demo and conn.execute("SELECT COUNT(*) c FROM leads").fetchone()["c"] == 0:
             _seed_demo(conn)
+        if seed_demo and conn.execute(
+                "SELECT COUNT(*) c FROM customer_profile").fetchone()["c"] == 0:
+            from .mock_profiles import seed_mock_profiles
+            seed_mock_profiles(conn)
         conn.commit()
     finally:
         conn.close()

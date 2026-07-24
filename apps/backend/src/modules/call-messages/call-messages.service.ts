@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LeadScoringService } from '../leads/lead-scoring.service';
 import {
   CreateCallMessageDto,
   QueryCallMessagesDto,
@@ -10,13 +11,28 @@ import {
 
 @Injectable()
 export class CallMessagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leadScoring: LeadScoringService,
+  ) {}
 
   async create(tenantId: string, dto: CreateCallMessageDto) {
-    await this.prisma.aiCall.findFirstOrThrow({
+    const call = await this.prisma.aiCall.findFirstOrThrow({
       where: { id: dto.callId, teamId: tenantId },
+      select: { customerId: true },
     });
-    return this.prisma.callMessage.create({ data: this.toData(dto) });
+    const message = await this.prisma.callMessage.create({
+      data: this.toData(dto),
+    });
+    // Path de más alta frecuencia del sistema (cada turno de WhatsApp/web
+    // chat) — recomputeForCustomer debe ser barato; no bloquea la respuesta
+    // al llamador si falla (best-effort, igual que los hooks de Python).
+    if (call.customerId) {
+      this.leadScoring
+        .recomputeForCustomer(tenantId, call.customerId)
+        .catch(() => undefined);
+    }
+    return message;
   }
 
   async findAll(tenantId: string, query: QueryCallMessagesDto) {

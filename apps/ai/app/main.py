@@ -19,7 +19,7 @@ from .assistant import router as assistant_router
 from .embedded import router as embedded_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
-                     MANAGER_PHONES, SERVICE_API_KEY)
+                     MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
 from .db import COUNTRY_NAMES, get_conn, init_db, log_conversation
 
 # Canal legado (Hermes/ConversationLog, minúsculas) -> Channel de Prisma.
@@ -255,6 +255,15 @@ def require_service(x_api_key: str = Header(default=""),
         raise HTTPException(403, "Se requiere API key de servicio (header X-Service-Key)")
 
 
+def require_wa_gateway(x_webhook_secret: str = Header(default="")) -> None:
+    """El gateway Baileys de WhatsApp (proceso externo, reusado de Diache con
+    Tequendama como tenant nuevo) — secreto propio, distinto de SERVICE_API_KEY
+    (mismo criterio que ELEVENLABS_WEBHOOK_SECRET: cada tercero externo, su
+    propio secreto)."""
+    if not WA_GATEWAY_WEBHOOK_SECRET or x_webhook_secret != WA_GATEWAY_WEBHOOK_SECRET:
+        raise HTTPException(403, "Se requiere el secreto del gateway (header X-Webhook-Secret)")
+
+
 # ---------- Modelos ----------
 
 class QuoteRequest(BaseModel):
@@ -284,12 +293,32 @@ class ConversationLog(BaseModel):
     message: str
 
 
+class WaGatewayMessage(BaseModel):
+    """Shape exacto que ya manda apps/services (Diache) wa-gateway/server.js:
+    {"messages":[{"from","text","id"}]} — no inventado, verificado contra el código."""
+    from_: str = Field(..., alias="from")
+    text: str = ""
+    id: str | None = None
+
+
+class WaGatewayInbound(BaseModel):
+    messages: list[WaGatewayMessage] = Field(default_factory=list)
+
+
 class OutboundCallRequest(BaseModel):
     phone: str = Field(..., description="Número E.164 al que se llama, ej. +573001234567")
     tenant_id: str | None = Field(None, description="Si falta, se usa el tenant demo")
     first_message: str | None = Field(None, description="Saludo inicial custom del agente")
     dynamic_variables: dict[str, Any] = Field(default_factory=dict,
                                               description="Contexto extra para el agente (nombre, motivo...)")
+
+
+class CallProfilingRequest(BaseModel):
+    phone: str = Field(..., description="Teléfono del cliente (mismo que dynamic_variables.phone)")
+    tenant_id: str | None = Field(None, description="Si falta, se usa el tenant demo")
+    transcript: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Transcript de ElevenLabs: [{role, message, time_in_call_secs}]")
 
 
 # ---------- Catálogo ----------
@@ -343,8 +372,41 @@ def _upsert_lead(conn, phone: str | None, name: str | None, country: str,
         (phone, name, country, age, stage)).fetchone()["id"]
 
 
+# Puente hacia el Lead canónico de Prisma (motor de leads del backend). El
+# stage local (nuevo|descubrimiento|cotizado|documento|cerrado|perdido) no
+# tiene equivalente exacto en LeadStatus — es el mapeo más cercano.
+_STAGE_TO_LEAD_STATUS = {
+    "nuevo": "NUEVO", "descubrimiento": "CONTACTADO", "cotizado": "COTIZADO",
+    "documento": "NEGOCIACION", "cerrado": "CERRADO_GANADO", "perdido": "CERRADO_PERDIDO",
+}
+# El catálogo LATAM de Python tiene más tipos (hogar, viaje, pyme...) que el
+# InsuranceType de Prisma (solo VIDA/AUTO/SALUD) — se omite si no mapea 1:1.
+_INSURANCE_TYPE_TO_PRISMA = {"vida": "VIDA", "auto": "AUTO", "salud": "SALUD"}
+
+
+def _sync_lead_to_backend(local_lead_id: int, tenant_id: str, phone: str,
+                          stage: str, tipo: str | None = None) -> None:
+    """Corre en background (BackgroundTasks, best-effort): empuja el estado
+    del lead local hacia el Lead canónico de Prisma (POST /leads/upsert) y
+    guarda el id devuelto en la fila local (prisma_lead_id) para trazabilidad."""
+    prisma_id = backend_client.upsert_lead(
+        tenant_id, phone,
+        insurance_type=_INSURANCE_TYPE_TO_PRISMA.get((tipo or "").lower()),
+        status=_STAGE_TO_LEAD_STATUS.get(stage),
+    )
+    if not prisma_id:
+        return
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE leads SET prisma_lead_id=%s WHERE id=%s",
+                     (prisma_id, local_lead_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @app.post("/api/quotes")
-def create_quotes(req: QuoteRequest) -> dict:
+def create_quotes(req: QuoteRequest, background_tasks: BackgroundTasks) -> dict:
     """Cotiza y devuelve hasta 3 opciones a la medida; registra lead y cotizaciones."""
     conn = get_conn()
     country = req.country.upper()
@@ -354,8 +416,11 @@ def create_quotes(req: QuoteRequest) -> dict:
     options = recommend(conn, country=country, tipo=req.tipo, age=req.age,
                         sum_assured_usd=req.sum_assured_usd,
                         budget_monthly_usd=req.budget_monthly_usd, extras=req.extras)
-    lead_id = _upsert_lead(conn, req.phone, req.name, country, req.age,
-                           stage="cotizado" if options else "descubrimiento")
+    stage = "cotizado" if options else "descubrimiento"
+    lead_id = _upsert_lead(conn, req.phone, req.name, country, req.age, stage=stage)
+    if req.phone and lead_id:
+        background_tasks.add_task(_sync_lead_to_backend, lead_id, DEMO_TENANT_ID,
+                                  req.phone, stage, req.tipo)
     quote_ids = []
     for o in options:
         qid = conn.execute(
@@ -417,12 +482,16 @@ def download_document(filename: str) -> FileResponse:
 
 
 @app.post("/api/leads", dependencies=[Depends(require_service)])
-def update_lead(req: LeadUpdate) -> dict:
+def update_lead(req: LeadUpdate, background_tasks: BackgroundTasks) -> dict:
     conn = get_conn()
+    stage = req.stage or "descubrimiento"
     lead_id = _upsert_lead(conn, req.phone, req.name, (req.country or "CO").upper(),
-                           req.age, req.stage or "descubrimiento")
+                           req.age, stage)
     conn.commit()
     conn.close()
+    if lead_id:
+        background_tasks.add_task(_sync_lead_to_backend, lead_id, DEMO_TENANT_ID,
+                                  req.phone, stage)
     return {"lead_id": lead_id, "ok": True}
 
 
@@ -443,6 +512,43 @@ def role_for_phone(phone: str) -> dict:
     normalized = phone.replace(" ", "")
     return {"phone": normalized,
             "role": "gerente" if normalized in MANAGER_PHONES else "cliente"}
+
+
+@app.post("/channels/whatsapp/inbound/tequendama",
+         dependencies=[Depends(require_wa_gateway)])
+def whatsapp_inbound(req: WaGatewayInbound,
+                     background_tasks: BackgroundTasks) -> dict:
+    """Receptor del canal WhatsApp — alimentado por el gateway Baileys
+    multi-tenant reusado (ver plan de esta sesión: NO es un gateway propio,
+    es el mismo proceso de Diache con "tequendama" como tenant nuevo). Mismo
+    orquestador (`run_agent`) que ya usa el chat web; se registra con
+    channel=WHATSAPP real (no el WEB_CHAT hardcodeado de /api/chat)."""
+    from .agent_core import run_agent
+
+    accepted = 0
+    for m in req.messages:
+        phone = m.from_ if m.from_.startswith("+") else f"+{m.from_}"
+        text = (m.text or "").strip()
+        if not text:
+            continue
+        accepted += 1
+        role = "gerente" if phone.replace(" ", "") in MANAGER_PHONES else "cliente"
+
+        log_conversation(phone, role, text, channel="whatsapp")
+        background_tasks.add_task(backend_client.log_turn, DEMO_TENANT_ID, phone,
+                                  "WHATSAPP", role, text)
+
+        result = run_agent(phone, text, phone=phone, role=role,
+                           tenant_id=DEMO_TENANT_ID)
+        reply = result.get("reply")
+        if reply:
+            log_conversation(phone, "asistente", reply, channel="whatsapp")
+            background_tasks.add_task(backend_client.log_turn, DEMO_TENANT_ID, phone,
+                                      "WHATSAPP", "asistente", reply)
+            from . import whatsapp_gateway
+            background_tasks.add_task(whatsapp_gateway.enviar_whatsapp, phone, reply)
+
+    return {"received": True, "accepted": accepted}
 
 
 # ---------- Insights (solo gerentes) ----------
@@ -498,6 +604,17 @@ def outbound_call(req: OutboundCallRequest,
     tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
     return calls.iniciar_llamada(req.phone, tenant_id, first_message=req.first_message,
                                  dynamic_variables=req.dynamic_variables)
+
+
+@app.post("/api/profiling/from-call", dependencies=[Depends(require_service)])
+def profiling_from_call(req: CallProfilingRequest,
+                        x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> dict:
+    """Extrae el perfil del cliente (profiling.build_profile) a partir del
+    transcript de una llamada de ElevenLabs. La llama el backend justo
+    después de procesar el webhook post-call — no el chat del cliente."""
+    from . import call_profiling
+    tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
+    return call_profiling.profile_from_call(tenant_id, req.phone, req.transcript)
 
 
 @app.get("/api/insights/leads", dependencies=[Depends(require_manager)])

@@ -34,4 +34,19 @@ export class DashboardController {
   ) {
     return this.dashboardService.hotLeadsUncontacted(tenantId, query);
   }
+
+  @Get('leads-kpis')
+  leadsKpis(@TenantId() tenantId: string) {
+    return this.dashboardService.leadsKpis(tenantId);
+  }
+
+  @Get('channel-funnel')
+  channelFunnel(@TenantId() tenantId: string) {
+    return this.dashboardService.channelFunnel(tenantId);
+  }
+
+  @Get('queue-health')
+  queueHealth(@TenantId() tenantId: string) {
+    return this.dashboardService.queueHealth(tenantId);
+  }
 }

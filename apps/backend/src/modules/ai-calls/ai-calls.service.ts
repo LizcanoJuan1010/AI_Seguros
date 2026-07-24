@@ -4,6 +4,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CustomersService } from '../customers/customers.service';
+import { LeadsService } from '../leads/leads.service';
 import {
   CreateAiCallDto,
   OpenSessionDto,
@@ -39,6 +40,7 @@ export class AiCallsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customers: CustomersService,
+    private readonly leads: LeadsService,
   ) {}
 
   /**
@@ -53,6 +55,9 @@ export class AiCallsService {
       tenantId,
       dto.phone,
     );
+    // Primer contacto real: crea (o hace avanzar el canal de) el Lead de
+    // este customer. No bloquea la apertura de sesión si algo falla aquí.
+    await this.leads.findOrCreateOpenLead(tenantId, customer.id, dto.channel);
     const cutoff = new Date(Date.now() - SESSION_IDLE_MINUTES * 60_000);
 
     const openCall = await this.prisma.aiCall.findFirst({

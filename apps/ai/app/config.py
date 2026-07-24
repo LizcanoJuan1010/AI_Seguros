@@ -100,6 +100,17 @@ ELEVENLABS_BASE_URL = os.getenv("ELEVENLABS_BASE_URL", "https://api.elevenlabs.i
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID", "")
 ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID", "")
+# Voz específica (voice_id del dashboard de ElevenLabs). Vacío = usa la voz
+# por defecto configurada en el agente; no hay una fija todavía.
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+
+# Canal WhatsApp vía el gateway Baileys multi-tenant de Diache (reusado, no
+# uno propio): un tenant nuevo ("tequendama") en ESE MISMO proceso ya
+# desplegado. WA_GATEWAY_WEBHOOK_SECRET debe coincidir con el WEBHOOK_SECRET
+# configurado allá — sin él, el receptor entrante rechaza todo con 401.
+WA_GATEWAY_URL = os.getenv("WA_GATEWAY_URL", "")
+WA_GATEWAY_WEBHOOK_SECRET = os.getenv("WA_GATEWAY_WEBHOOK_SECRET", "")
+WA_GATEWAY_TENANT = os.getenv("WA_GATEWAY_TENANT", "tequendama")
 
 # Backend NestJS (sistema de registro del dominio): expone POST /api/v1/checkout
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo

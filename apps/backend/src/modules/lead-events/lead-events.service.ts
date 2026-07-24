@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LeadScoringService } from '../leads/lead-scoring.service';
 import {
   CreateLeadEventDto,
   QueryLeadEventsDto,
@@ -10,10 +11,17 @@ import {
 
 @Injectable()
 export class LeadEventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly leadScoring: LeadScoringService,
+  ) {}
 
-  create(dto: CreateLeadEventDto) {
-    return this.prisma.leadEvent.create({ data: this.toData(dto) });
+  async create(dto: CreateLeadEventDto) {
+    const event = await this.prisma.leadEvent.create({
+      data: this.toData(dto),
+    });
+    this.leadScoring.recomputeOne(event.leadId).catch(() => undefined);
+    return event;
   }
 
   async findAll(query: QueryLeadEventsDto) {
