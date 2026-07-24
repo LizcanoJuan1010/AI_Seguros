@@ -88,8 +88,26 @@ export function useLiveVoiceCall() {
   const mutedRef = useRef(false)
   const authedRef = useRef(false)
   const aiTextBufferRef = useRef('')
+  const resumeListenerRef = useRef<(() => void) | null>(null)
+
+  /** Reintenta resume() en los AudioContext que sigan suspendidos. Se usa
+   * como fallback ante navegadores que no cuentan el montaje de la página
+   * (useEffect) como gesto de usuario válido para autoplay — el primer
+   * click/tap en cualquier parte de la pantalla los despierta. */
+  const resumeSuspendedContexts = useCallback(() => {
+    if (captureCtxRef.current?.state === 'suspended') {
+      void captureCtxRef.current.resume()
+    }
+    if (playbackCtxRef.current?.state === 'suspended') {
+      void playbackCtxRef.current.resume()
+    }
+  }, [])
 
   const cleanup = useCallback(() => {
+    if (resumeListenerRef.current) {
+      document.removeEventListener('pointerdown', resumeListenerRef.current)
+      resumeListenerRef.current = null
+    }
     authedRef.current = false
     wsRef.current?.close()
     wsRef.current = null
@@ -164,6 +182,7 @@ export function useLiveVoiceCall() {
 
   const startPlayback = useCallback(async (): Promise<void> => {
     const ctx = new AudioContext({ sampleRate: 24000 })
+    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
     await ctx.audioWorklet.addModule('/audio/pcm-player-processor.js')
     const player = new AudioWorkletNode(ctx, 'pcm-player-processor', {
       outputChannelCount: [1],
@@ -177,6 +196,7 @@ export function useLiveVoiceCall() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     streamRef.current = stream
     const ctx = new AudioContext({ sampleRate: 16000 })
+    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
     await ctx.audioWorklet.addModule('/audio/mic-processor.js')
     const source = ctx.createMediaStreamSource(stream)
     const mic = new AudioWorkletNode(ctx, 'mic-processor')
@@ -231,12 +251,17 @@ export function useLiveVoiceCall() {
       }
 
       await startCapture(ws)
+
+      resumeSuspendedContexts()
+      const onFirstPointerDown = () => resumeSuspendedContexts()
+      resumeListenerRef.current = onFirstPointerDown
+      document.addEventListener('pointerdown', onFirstPointerDown, { once: true })
     } catch (err) {
       setError((err as Error)?.message ?? 'No se pudo iniciar la llamada')
       setStatus('error')
       cleanup()
     }
-  }, [cleanup, handleJson, startCapture, startPlayback])
+  }, [cleanup, handleJson, resumeSuspendedContexts, startCapture, startPlayback])
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
