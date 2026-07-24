@@ -62,6 +62,6 @@ Tracker branch: `feat/live-call-deepgram` → `main` (draft, no-merge until all 
 
 ## Phase 5: Testing (per spec scenarios)
 
-- [ ] 5.1 pytest: `VoiceSession` transitions, barge-in trigger/no-interrupt-on-silence, mocked Deepgram WS
-- [ ] 5.2 Jest: gateway auth reject path, cascade-close status mapping (3 scenarios from spec)
-- [ ] 5.3 Integration test: Nest↔Python relay against a stub Deepgram WS server
+- [x] 5.1 pytest: `VoiceSession` transitions, barge-in trigger/no-interrupt-on-silence, mocked Deepgram WS
+- [x] 5.2 Jest: gateway auth reject path, cascade-close status mapping (3 scenarios from spec)
+- [x] 5.3 Integration test: Nest↔Python relay against a stub Deepgram WS server
