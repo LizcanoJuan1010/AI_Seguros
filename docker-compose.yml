@@ -106,6 +106,9 @@ services:
       - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
       - TTS_URL=${TTS_URL:-http://seguria-tts:8880}
       - TTS_VOICE=${TTS_VOICE:-ef_dora}
+      # STT/TTS en tiempo real para /ws/voice/live (LiveAiCallPage). Sin key,
+      # el endpoint no puede abrir las conexiones a Deepgram.
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
     volumes:
       - ./data/market:/data/market:ro
       - seguria-state:/app/state

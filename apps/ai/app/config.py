@@ -128,6 +128,12 @@ PARTNER_API_KEYS = {k.strip() for k in
 TTS_URL = os.getenv("TTS_URL", "http://seguria-tts:8880")
 TTS_VOICE = os.getenv("TTS_VOICE", "ef_dora")
 
+# Deepgram: STT/TTS en tiempo real para /ws/voice/live (LiveAiCallPage). Solo
+# genera/transcribe voz — el agente sigue siendo agent_core.py (DeepSeek), no
+# el Voice Agent de Deepgram. Sin DEEPGRAM_API_KEY el endpoint no puede abrir
+# las conexiones a Deepgram (sin modo demo todavía, ver riesgos del diseño).
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+
 # Marca de los documentos generados (cotización / certificado de póliza)
 BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")
 BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en la naturaleza")
