@@ -12,6 +12,9 @@ export const CHANNEL_RANK: Record<Channel, number> = {
   [Channel.EMAIL]: 1,
   [Channel.WEB_CHAT]: 1,
   [Channel.VOICE_CALL]: 2,
+  // Misma jerarquía que VOICE_CALL: es una conversación de voz real con la
+  // IA, solo que por el widget del navegador en vez de telefonía.
+  [Channel.WEB_VOICE_CALL]: 2,
 };
 
 /** Mayor de dos canales por rango (o `b` si `a` es null/undefined). */
