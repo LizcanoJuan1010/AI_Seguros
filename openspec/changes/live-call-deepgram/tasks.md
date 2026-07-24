@@ -37,12 +37,12 @@ Tracker branch: `feat/live-call-deepgram` → `main` (draft, no-merge until all 
 
 ## Phase 2: Python Voice Endpoint (`apps/ai`)
 
-- [ ] 2.1 Create `apps/ai/app/voice_live.py`: `VoiceSession` state machine (connect→auth→open Deepgram STT→loop→cleanup)
-- [ ] 2.2 Deepgram STT client (`/v1/listen`): forward PCM16 frames, parse partial/final transcripts
-- [ ] 2.3 Deepgram TTS client (`/v1/speak`): stream reply text, relay PCM16/24kHz chunks back
-- [ ] 2.4 On `is_final` transcript, invoke `_run_llm`/`_run_demo` from `assistant.py` unmodified; parse SSE-string output into `(event,data)` frames
-- [ ] 2.5 Barge-in: cancel in-flight TTS + emit `barge_in` when a new final transcript arrives during `assistant_speaking`
-- [ ] 2.6 Register `/ws/voice/live` route in `apps/ai/app/main.py`
+- [x] 2.1 Create `apps/ai/app/voice_live.py`: `VoiceSession` state machine (connect→auth→open Deepgram STT→loop→cleanup)
+- [x] 2.2 Deepgram STT client (`/v1/listen`): forward PCM16 frames, parse partial/final transcripts
+- [x] 2.3 Deepgram TTS client (`/v1/speak`): stream reply text, relay PCM16/24kHz chunks back
+- [x] 2.4 On `is_final` transcript, invoke `_run_llm`/`_run_demo` from `assistant.py` unmodified; parse SSE-string output into `(event,data)` frames
+- [x] 2.5 Barge-in: cancel in-flight TTS + emit `barge_in` when a new final transcript arrives during `assistant_speaking`
+- [x] 2.6 Register `/ws/voice/live` route in `apps/ai/app/main.py`
 
 ## Phase 3: NestJS Gateway (`apps/backend`)
 
