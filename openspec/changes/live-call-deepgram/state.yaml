@@ -33,7 +33,12 @@ phases:
       status: done
       branch: live-call-deepgram/nest-gateway
       base: live-call-deepgram/python-voice
-    remaining_units: [pr4_frontend]
+    pr4_frontend:
+      status: done
+      branch: live-call-deepgram/frontend-wiring
+      base: live-call-deepgram/nest-gateway
+    remaining_units: []
+    note: "Fases 1-4 implementadas (19/23 tareas). Falta Fase 5 (Testing: 5.1-5.3) y pushear/abrir las PRs — ninguna rama se pusheó todavía."
   verify:
     status: pending
   archive:
