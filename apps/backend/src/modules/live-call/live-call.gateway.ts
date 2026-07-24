@@ -101,7 +101,7 @@ export class LiveCallGateway
  * cierre en cascada con el mapeo de estado (mirror de `mapCallStatus` en
  * elevenlabs.service.ts, adaptado a señales de WebSocket en vez de webhook).
  */
-class LiveCallRelay {
+export class LiveCallRelay {
   private pythonSocket: WebSocket | null = null;
   private aiCallId: string | null = null;
   private tenantId: string | null = null;
