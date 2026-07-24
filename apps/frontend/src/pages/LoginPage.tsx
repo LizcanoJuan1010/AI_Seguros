@@ -9,18 +9,13 @@
  *  - Muestra las credenciales demo como ayuda.
  */
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Icon } from '../components/ui/Icon'
 import { MistBackground } from '../features/landing/MistBackground'
-
-/** Ruta destino según el rol del usuario autenticado. */
-function homeForRole(role: string): string {
-  const r = role.toUpperCase()
-  return r === 'GERENTE' || r === 'ADMIN' ? '/gerente' : '/asistente'
-}
+import { homeForRole } from '../lib/roles'
 
 export function LoginPage() {
   const { status, user, signIn } = useAuth()
@@ -139,6 +134,14 @@ export function LoginPage() {
             <span className="font-mono">demo123</span>
           </p>
         </div>
+
+        <Link
+          to="/"
+          className="mt-6 flex items-center justify-center gap-1.5 text-label-md font-semibold text-on-surface-variant transition-colors hover:text-primary"
+        >
+          <Icon name="arrow_back" className="text-[18px]" />
+          Volver al inicio
+        </Link>
       </Card>
     </div>
   )

@@ -107,7 +107,7 @@ const components: Components = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="font-semibold text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
+        className="font-semibold break-words text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
       >
         {children}
       </a>
@@ -174,7 +174,7 @@ const components: Components = {
 
 export function MessageMarkdown({ content }: { content: string }) {
   return (
-    <div className="assistant-markdown">
+    <div className="assistant-markdown break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}

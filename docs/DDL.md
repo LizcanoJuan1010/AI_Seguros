@@ -1,9 +1,9 @@
-# DDL — toda la data del sistema SegurIA × Tequendama
+# DDL — toda la data del sistema Tequendama Insurance AI
 
 > **UNA sola base: PostgreSQL** (unificado — ya no hay SQLite). Dos esquemas:
 > - **`public`** — dominio del negocio (NestJS/Prisma): 12 tablas, 3 vistas, 10 enums.
 > - **`seguria`** — runtime del servicio IA (catálogo LATAM, cotizador, memoria,
->   conversaciones, sesiones de intake/checkout): 9 tablas.
+>   conversaciones, sesiones de intake/checkout, KYC/identidad): 11 tablas.
 >
 > DDL completo real: [`schema_postgres.sql`](schema_postgres.sql).
 
@@ -75,6 +75,8 @@ estado conversacional. Aislado del `public` de Prisma para no chocar.
 | **chat_history** | Historial del chat por sesión | session_id, seq, message · PK(session_id,seq) · clave = `{tenant_id}:{session}` |
 | **checkout_session** | Datos de cierre por sesión | session_key (`{tenant}:{user}`), full_name, document_id, birth_date, email, consent, consent_at |
 | **intake_session** | Datos ricos del intake (JSON) | session_key (`{tenant}:{user}`), datos (json: ocupacion, ingresos, fumador, placa, preexistencias…) |
+| **kyc_document** | Documentos KYC del cierre (cédula, autorización firmada, selfie, tarjeta de propiedad) | id, session_key, phone, tipo, file_id, path, status (recibido/verificado/rechazado), extracted (json) · UNIQUE(session_key,tipo) |
+| **identity_verification** | Veredicto biométrico cédula↔selfie (YuNet + SFace, `app/identity.py`) | id, session_key, decision (aprobado/rechazado/revision/no_disponible), score, threshold, method, detail (json) |
 
 **Nota:** el catálogo real de requisitos de intake (KYC/SARLAFT/underwriting por producto)
 vive en [`../data/market/requisitos_seguros.json`](../data/market/requisitos_seguros.json)

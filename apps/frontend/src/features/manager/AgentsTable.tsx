@@ -21,7 +21,84 @@ export function AgentsTable({ agents }: Props) {
           Ver todos <Icon name="chevron_right" className="text-sm" />
         </button>
       </div>
-      <div className="overflow-x-auto">
+      {/* Móvil (<md): cada agente como tarjeta apilada */}
+      <div className="flex flex-col gap-3 p-4 md:hidden">
+        {agents.map((agent) => (
+          <div
+            key={agent.id}
+            className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                {agent.avatar ? (
+                  <img
+                    src={agent.avatar}
+                    alt={agent.name}
+                    className="size-9 shrink-0 rounded-full border-2 border-primary/20 object-cover"
+                  />
+                ) : (
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-primary/20 bg-primary-container text-xs font-bold text-on-primary-container">
+                    {agent.name
+                      .split(' ')
+                      .slice(0, 2)
+                      .map((w) => w[0])
+                      .join('')}
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-on-surface">
+                    {agent.name}
+                  </p>
+                  <p className="text-[10px] text-on-surface-variant">
+                    {agent.role}
+                  </p>
+                </div>
+              </div>
+              <Chip tone={agent.conversionTone === 'good' ? 'success' : 'amber'}>
+                {agent.conversion}
+              </Chip>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="grid flex-1 grid-cols-3 gap-2 text-center">
+                {[
+                  { label: 'Leads', value: agent.leads },
+                  { label: 'Llamadas', value: agent.calls },
+                  { label: 'Cierres', value: agent.closes, bold: true },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-lg bg-surface-container-low/60 py-2"
+                  >
+                    <p
+                      className={`text-sm text-on-surface ${s.bold ? 'font-bold' : ''}`}
+                    >
+                      {s.value}
+                    </p>
+                    <p className="text-[10px] tracking-wide text-on-surface-variant uppercase">
+                      {s.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <svg
+                className={`h-8 w-14 shrink-0 ${agent.sparkTone === 'up' ? 'text-green-600' : 'text-error'}`}
+                viewBox="0 0 100 40"
+                aria-label="Tendencia"
+              >
+                <polyline
+                  fill="none"
+                  points={agent.spark}
+                  stroke="currentColor"
+                  strokeWidth="2"
+                />
+              </svg>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop (md+): tabla */}
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-left">
           <thead>
             <tr className="bg-surface-container-low/50">

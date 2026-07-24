@@ -1,7 +1,11 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { OptionalJwtAuthGuard } from '../../common/jwt-auth.guard';
 import { TenantId } from '../../common/tenant.decorator';
-import { AgentPerformanceQueryDto, HotLeadsQueryDto } from './dashboard.dto';
+import {
+  AgentPerformanceQueryDto,
+  CustomerPortfolioQueryDto,
+  HotLeadsQueryDto,
+} from './dashboard.dto';
 import { DashboardService } from './dashboard.service';
 
 @UseGuards(OptionalJwtAuthGuard)
@@ -25,6 +29,14 @@ export class DashboardController {
   @Get('ai-impact')
   aiImpact(@TenantId() tenantId: string) {
     return this.dashboardService.aiImpact(tenantId);
+  }
+
+  @Get('customer-portfolio')
+  customerPortfolio(
+    @TenantId() tenantId: string,
+    @Query() query: CustomerPortfolioQueryDto,
+  ) {
+    return this.dashboardService.customerPortfolio(tenantId, query);
   }
 
   @Get('hot-leads-uncontacted')

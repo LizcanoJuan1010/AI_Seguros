@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Entrypoint del contenedor Hermes de SegurIA.
+# Entrypoint del contenedor Hermes de Tequendama.
 # Wirea el workspace montado en /workspace hacia la config global de Hermes:
-#  - persona SegurIA (SOUL.md) como identidad global
-#  - skills de SegurIA descubribles por Hermes
+#  - persona Tequendama (SOUL.md) como identidad global
+#  - skills de Tequendama descubribles por Hermes
 #  - proveedor DeepSeek desde variables de entorno
 # Luego arranca el gateway (WhatsApp) o el modo indicado por HERMES_MODE.
 set -euo pipefail
@@ -13,14 +13,14 @@ HB="$(command -v hermes || echo /root/.hermes/hermes-agent/venv/bin/hermes)"
 
 mkdir -p "$HERMES_HOME/skills"
 
-# 1) Persona global (SegurIA). Respaldamos cualquier SOUL.md previo una sola vez.
+# 1) Persona global (Tequendama). Respaldamos cualquier SOUL.md previo una sola vez.
 if [ -f "$WS/SOUL.md" ]; then
   [ -f "$HERMES_HOME/SOUL.md" ] && [ ! -f "$HERMES_HOME/SOUL.md.orig" ] \
     && cp "$HERMES_HOME/SOUL.md" "$HERMES_HOME/SOUL.md.orig" || true
   cp "$WS/SOUL.md" "$HERMES_HOME/SOUL.md"
 fi
 
-# 2) Skills de SegurIA: symlink de cada carpeta al dir global de skills de Hermes.
+# 2) Skills de Tequendama: symlink de cada carpeta al dir global de skills de Hermes.
 if [ -d "$WS/skills" ]; then
   for d in "$WS"/skills/*/; do
     name="seguria-$(basename "$d")"
@@ -33,7 +33,7 @@ if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   grep -q '^DEEPSEEK_API_KEY=' "$HERMES_HOME/.env" 2>/dev/null \
     || echo "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}" >> "$HERMES_HOME/.env"
   "$HB" config set model.provider deepseek || true
-  "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-chat}" || true
+  "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-v4-flash}" || true
   # La imagen trae un base_url de OpenRouter que rompe la auth con la key de
   # DeepSeek (401): apúntalo siempre al endpoint oficial.
   "$HB" config set model.base_url "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}" || true

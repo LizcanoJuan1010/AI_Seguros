@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getStoredTenantId } from '../../lib/api'
 import { authHeaders } from '../../lib/authFetch'
+import { getDeviceId } from '../../lib/clientIdentity'
+import {
+  type ChatMeta,
+  deleteChat,
+  getActiveChatId,
+  hasChat,
+  listChats,
+  newChatId,
+  setActiveChatId,
+  touchChat,
+} from '../../lib/chatSessions'
 import { useTenant } from '../../tenant/TenantContext'
 
 /**
@@ -136,7 +147,6 @@ type SseEvent =
   | { event: 'error'; data: { message?: string } }
   | { event: string; data: unknown }
 
-const SESSION_KEY = 'teq_assistant_session_id'
 const STREAM_ENDPOINT = '/api/assistant/chat/stream'
 // Tenant (organización) activo. En producción viene del equipo del usuario autenticado;
 // por defecto, el tenant demo de Colsubsidio. Configurable con VITE_TENANT_ID.
@@ -157,20 +167,32 @@ function makeId(prefix: string): string {
   return `${prefix}_${rnd}`
 }
 
-function loadSessionId(): string {
-  if (typeof window === 'undefined') return makeId('sess')
-  // Sesión (y por tanto memoria del asistente) particionada por tenant:
-  // cambiar de equipo abre una conversación independiente.
-  const key = `${SESSION_KEY}_${effectiveTenantId()}`
-  try {
-    const existing = window.localStorage.getItem(key)
-    if (existing) return existing
-    const fresh = makeId('sess')
-    window.localStorage.setItem(key, fresh)
-    return fresh
-  } catch {
-    return makeId('sess')
+type RawHistoryMsg = { role?: unknown; content?: unknown }
+
+/** Convierte las filas de `/api/assistant/history` en mensajes del chat. */
+function mapHistoryRows(rows: unknown): ChatMessage[] {
+  if (!Array.isArray(rows)) return []
+  const out: ChatMessage[] = []
+  for (const r of rows as RawHistoryMsg[]) {
+    const role = r?.role
+    const content = r?.content
+    if (
+      (role === 'user' || role === 'assistant') &&
+      typeof content === 'string' &&
+      content.trim().length > 0
+    ) {
+      out.push({
+        id: makeId('hist'),
+        role,
+        content,
+        tools: [],
+        quickReplies: [],
+        documents: [],
+        done: true,
+      })
+    }
   }
+  return out
 }
 
 /** Parsea un bloque SSE (líneas separadas por \n) en {event, data}. */
@@ -202,10 +224,21 @@ export type SendOptions = {
 export function useAssistantChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  // sessionId = conversación activa (rotable con "nueva conversación").
+  // chats = índice de conversaciones del dispositivo (la lista estilo ChatGPT).
+  const [sessionId, setSessionId] = useState<string>(() =>
+    typeof window === 'undefined'
+      ? makeId('sess')
+      : getActiveChatId(effectiveTenantId()),
+  )
+  const [chats, setChats] = useState<ChatMeta[]>(() =>
+    typeof window === 'undefined' ? [] : listChats(effectiveTenantId()),
+  )
 
   const { teamId } = useTenant()
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-deriva la sesión al cambiar de tenant
-  const sessionId = useMemo(loadSessionId, [teamId])
+  // La "cuenta" anónima nace al ENTRAR al chat (no al primer mensaje): así el
+  // dispositivo ya queda identificado aunque el cliente solo mire.
+  const deviceId = useMemo(getDeviceId, [])
 
   // --- refs de streaming ---
   const pendingTokensRef = useRef('')
@@ -476,6 +509,15 @@ export function useAssistantChat() {
         assistantMsg,
       ])
 
+      // Índice de chats: al primer mensaje la conversación entra a la lista con
+      // su título (ese mensaje); en los siguientes solo sube su recencia.
+      {
+        const tenant = effectiveTenantId()
+        const isFirst = !hasChat(tenant, sessionId)
+        touchChat(tenant, sessionId, isFirst ? { title: trimmed } : undefined)
+        setChats(listChats(tenant))
+      }
+
       currentAssistantIdRef.current = assistantId
       pendingTokensRef.current = ''
       streamingRef.current = true
@@ -497,6 +539,9 @@ export function useAssistantChat() {
           body: JSON.stringify({
             session_id: sessionId,
             message: trimmed,
+            // Identidad durable del cliente anónimo: ancla memoria y leads al
+            // dispositivo, no a la conversación (sobrevive a "chat nuevo").
+            device_id: deviceId,
             ...(options?.phone ? { phone: options.phone } : {}),
             ...(options?.managerKey ? { manager_key: options.managerKey } : {}),
           }),
@@ -576,6 +621,108 @@ export function useAssistantChat() {
     setMessages([])
   }, [])
 
+  // --- Gestión de conversaciones (multi-chat estilo ChatGPT) ---
+
+  // Token monótono: descarta cargas viejas si el usuario cambia de chat rápido.
+  const loadTokenRef = useRef(0)
+
+  /** Carga en la vista los mensajes de una conversación (reemplaza los actuales). */
+  const loadSession = useCallback((id: string, storageKey?: string) => {
+    abortRef.current?.abort()
+    const token = (loadTokenRef.current += 1)
+    const tenant = effectiveTenantId()
+    const key = storageKey ?? `${tenant}:${id}`
+    setMessages([])
+    fetch(`/api/assistant/history/${encodeURIComponent(key)}?limit=200`, {
+      headers: authHeaders(),
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        if (token !== loadTokenRef.current) return
+        const restored = mapHistoryRows(rows)
+        setMessages(restored)
+        // Si entramos a una conversación que aún no está en el índice (migrada
+        // del modelo anterior o abierta desde auditoría), la registramos.
+        if (restored.length > 0 && !hasChat(tenant, id)) {
+          const firstUser = restored.find((m) => m.role === 'user')?.content
+          touchChat(tenant, id, { title: firstUser })
+          setChats(listChats(tenant))
+        }
+      })
+      .catch(() => {
+        if (token === loadTokenRef.current) setMessages([])
+      })
+  }, [])
+
+  /** Abre una conversación en blanco (reutiliza la actual si ya está vacía). */
+  const newChat = useCallback(() => {
+    const tenant = effectiveTenantId()
+    if (messages.length === 0 && !hasChat(tenant, sessionId)) return
+    abortRef.current?.abort()
+    const id = newChatId(tenant)
+    setSessionId(id)
+    setMessages([])
+  }, [messages.length, sessionId])
+
+  /** Cambia a otra conversación del dispositivo y carga sus mensajes. */
+  const switchChat = useCallback(
+    (id: string) => {
+      if (id === sessionId) return
+      setActiveChatId(effectiveTenantId(), id)
+      setSessionId(id)
+      loadSession(id)
+    },
+    [sessionId, loadSession],
+  )
+
+  /** Quita una conversación de la lista (el servidor conserva sus mensajes). */
+  const removeChat = useCallback(
+    (id: string) => {
+      const tenant = effectiveTenantId()
+      deleteChat(tenant, id)
+      const remaining = listChats(tenant)
+      setChats(remaining)
+      if (id !== sessionId) return
+      if (remaining.length > 0) {
+        const next = remaining[0].id
+        setActiveChatId(tenant, next)
+        setSessionId(next)
+        loadSession(next)
+      } else {
+        setSessionId(newChatId(tenant))
+        setMessages([])
+      }
+    },
+    [sessionId, loadSession],
+  )
+
+  /**
+   * Entra a una conversación por su clave completa `<tenant>:<session_id>`
+   * (auditoría de staff): abre en la vista principal, no en un lector aparte.
+   */
+  const enterSession = useCallback(
+    (storageKey: string) => {
+      const tenant = effectiveTenantId()
+      const sep = storageKey.indexOf(':')
+      const rawId = sep >= 0 ? storageKey.slice(sep + 1) : storageKey
+      setActiveChatId(tenant, rawId)
+      setSessionId(rawId)
+      loadSession(rawId, storageKey)
+    },
+    [loadSession],
+  )
+
+  // Al montar y al cambiar de tenant: fija la conversación activa y carga sus
+  // mensajes. Migra la sesión única del modelo anterior si existía.
+  useEffect(() => {
+    const tenant = effectiveTenantId()
+    const active = getActiveChatId(tenant)
+    setSessionId(active)
+    setChats(listChats(tenant))
+    loadSession(active)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-init al cambiar de tenant
+  }, [teamId])
+
   // Aborta el stream en curso al desmontar.
   useEffect(() => {
     return () => {
@@ -584,5 +731,17 @@ export function useAssistantChat() {
     }
   }, [])
 
-  return { messages, isStreaming, sessionId, sendMessage, stop, reset }
+  return {
+    messages,
+    isStreaming,
+    sessionId,
+    chats,
+    sendMessage,
+    stop,
+    reset,
+    newChat,
+    switchChat,
+    removeChat,
+    enterSession,
+  }
 }

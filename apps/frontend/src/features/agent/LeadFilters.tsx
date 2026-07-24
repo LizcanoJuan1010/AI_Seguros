@@ -15,14 +15,14 @@ const tabs: { id: Tab; label: string }[] = [
 
 export function LeadFilters({ active, onChange }: Props) {
   return (
-    <div className="flex gap-4 border-b border-outline-variant bg-surface-container-low px-8 py-4">
+    <div className="flex flex-wrap items-center gap-3 border-b border-outline-variant bg-surface-container-low px-4 py-3 md:gap-4 md:px-8 md:py-4">
       <div className="flex rounded-lg bg-surface-variant p-1">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => onChange(tab.id)}
-            className={`rounded-md px-4 py-1.5 text-sm transition-all ${
+            className={`rounded-md px-3 py-2 text-sm transition-all md:px-4 md:py-1.5 ${
               active === tab.id
                 ? 'bg-surface-container-lowest font-bold text-primary shadow-sm'
                 : 'font-medium text-on-surface-variant hover:text-on-surface'
@@ -32,7 +32,7 @@ export function LeadFilters({ active, onChange }: Props) {
           </button>
         ))}
       </div>
-      <div className="h-8 w-px self-center bg-outline-variant" />
+      <div className="hidden h-8 w-px self-center bg-outline-variant sm:block" />
       <Chip tone="neutral" className="cursor-default rounded-md border border-outline-variant bg-transparent">
         Filtrar por Intención
       </Chip>

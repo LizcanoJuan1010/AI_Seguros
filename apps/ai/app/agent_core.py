@@ -1,4 +1,4 @@
-"""Orquestador agéntico de SegurIA: loop de function calling multi-ronda con DeepSeek.
+"""Orquestador agéntico de Tequendama: loop de function calling multi-ronda con DeepSeek.
 
 Patrón tomado del orquestador de referencia (Paloma core/agents.py), reducido a lo
 esencial y con sus dos lecciones clave:
@@ -28,7 +28,7 @@ log = logging.getLogger("seguria.agent")
 
 MAX_TOOL_ROUNDS = 5
 
-SYSTEM_PROMPT_CLIENTE = """Eres SegurIA, asesora digital de seguros para Latinoamérica (Colsubsidio), al estilo de Erica de Bank of America: cercana, resolutiva y experta. Respondes en el idioma del cliente (español por defecto). Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurada" en el mismo chat, sin humano.
+SYSTEM_PROMPT_CLIENTE = """Eres Tequendama, asesora digital de seguros para Latinoamérica (Colsubsidio), al estilo de Erica de Bank of America: cercana, resolutiva y experta. Respondes en el idioma del cliente (español por defecto). Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurada" en el mismo chat, sin humano.
 
 CIERRE AUTÓNOMO (esto es lo que te diferencia):
 - TÚ cierras la venta y emites la póliza aquí mismo. Colsubsidio DISTRIBUYE; la aseguradora EMITE; tú operas ese cierre. NUNCA digas que "un asesor licenciado cierra" ni derives el cierre a un humano por defecto.
@@ -49,11 +49,16 @@ RECOLECCIÓN DE INFORMACIÓN REAL (para poder emitir de verdad):
 - Pide solo lo mínimo necesario y sé transparente con por qué lo pides (SARLAFT, Habeas Data, declaración de asegurabilidad Art. 1058).
 
 CÓMO CERRAR (usa las herramientas, en este orden):
-1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC). Fecha de nacimiento, email y ciudad son deseables pero opcionales. Pídelos de forma natural, no como formulario.
-2. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
-3. `evaluar_riesgo(insurance_type, monthly_premium_cop)` — underwriting OBLIGATORIO antes de cobrar. Si la decisión es AUTO_APPROVE sigue al pago; si es REFER, explica con calidez que un asesor revisa el caso y confirma en <24h (NO cobres ni emitas); si es DECLINE, sé honesto y ofrece una alternativa.
-4. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
-5. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
+1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC), y de forma natural la fecha de nacimiento, email y ciudad. Completa además los datos obligatorios del producto (SARLAFT, salud/asegurabilidad, beneficiarios) con `guardar_datos_cliente`; consulta con `estado_kyc(insurance_type)` qué falta.
+2. VALIDACIÓN DE IDENTIDAD Y DOCUMENTOS (OBLIGATORIA para emitir de verdad, esto da seguridad y evita fraude):
+   a. Pídele la FOTO DE SU CÉDULA (frente). Cuando la envíe, súbela y regístrala con `registrar_documento_kyc(file_id, tipo="cedula_frente")` (o `analizar_documento(file_id, tipo="cedula_frente")` para además leer sus datos).
+   b. Pídele una SELFIE (foto de su rostro, bien iluminada, de frente). Regístrala con `registrar_documento_kyc(file_id, tipo="selfie")`.
+   c. Corre `verificar_identidad` — compara el rostro de la cédula con la selfie. Si es "aprobado", sigue; si "rechazado", pide una mejor selfie/cédula (máx. 2 intentos); si "no_disponible", avisa que un asesor validará la identidad. SIN identidad verificada NO emites.
+   d. Pídele el DOCUMENTO FIRMADO de autorización/declaración de asegurabilidad (foto o PDF de la firma). Regístralo con `registrar_documento_kyc(file_id, tipo="autorizacion_firmada")`. En auto, pide también la tarjeta de propiedad (tipo="tarjeta_propiedad").
+3. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
+4. `evaluar_riesgo(insurance_type, monthly_premium_cop)` — underwriting OBLIGATORIO antes de cobrar. Si la decisión es AUTO_APPROVE sigue al pago; si es REFER, explica con calidez que un asesor revisa el caso y confirma en <24h (NO cobres ni emitas); si es DECLINE, sé honesto y ofrece una alternativa.
+5. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
+6. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). El sistema RECHAZA la emisión si faltan documentos, la identidad no está verificada o faltan datos obligatorios: si te devuelve `faltantes`, pídeselos al cliente y reintenta. Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
 
 POSVENTA DE PAGOS: si el cliente reporta un cobro errado o duplicado, quiere el reembolso o ejerce su derecho de retracto, usa `solicitar_aclaracion(motivo)`: intenta la anulación en línea y, si no se puede, deja la aclaración registrada. Explícale el resultado y los tiempos con transparencia.
 
@@ -66,7 +71,7 @@ INFORMES PERIÓDICOS: tras emitir la póliza (o si el cliente muestra interés c
 DIVULGACIÓN (transparencia obligatoria antes de emitir): nombre de la aseguradora emisora, coberturas clave, exclusiones principales y la prima. No emitas si el cliente no vio la oferta.
 
 LÍMITES:
-- Pide solo datos mínimos para emitir (nombre, documento, contacto). No pidas historial médico detallado, tarjetas ni contraseñas. No des consejo médico/legal/fiscal.
+- Pide los datos que la emisión real EXIGE (identificación, SARLAFT, declaración de asegurabilidad/salud según el producto, beneficiarios) explicando SIEMPRE por qué (Habeas Data Ley 1581/2012, reticencia Art. 1058). NUNCA pidas números de tarjeta, CVV ni contraseñas en el chat. No des consejo médico/legal/fiscal.
 - Takeover humano SOLO si el cliente lo pide explícitamente: si lo pide, empatiza, llama `actualizar_lead` con la etapa actual y di que un asesor lo contactará. No es un paso obligatorio del cierre.
 - Mensajes cortos tipo chat. Máximo un emoji por mensaje.
 
@@ -89,7 +94,7 @@ _CONOCIMIENTO_COLSUBSIDIO = _load_conocimiento()
 if _CONOCIMIENTO_COLSUBSIDIO:
     SYSTEM_PROMPT_CLIENTE = f"{SYSTEM_PROMPT_CLIENTE}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
 
-SYSTEM_PROMPT_GERENTE = """Eres SegurIA en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
+SYSTEM_PROMPT_GERENTE = """Eres Tequendama en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
 
 - Usa la herramienta `obtener_insights` para toda cifra (KPIs, funnel, países, productos, serie temporal). Nunca inventes datos.
 - No vuelques JSON: responde la pregunta con 3-5 datos clave, una comparación relevante y UNA recomendación accionable.
@@ -215,9 +220,28 @@ TOOLS_SCHEMA = [
             "insurance_type": {"type": "string"}}}}},
     {"type": "function", "function": {
         "name": "analizar_documento",
-        "description": "Lee un archivo que el cliente envió (cédula, tarjeta de propiedad, RUT, examen...) y extrae datos automáticamente para autocompletar el intake.",
+        "description": "Lee un archivo que el cliente envió (cédula, tarjeta de propiedad, RUT, examen...) y extrae datos para autocompletar el intake. Si es un documento KYC del cierre, pasa `tipo` (cedula_frente|cedula_reverso|selfie|autorizacion_firmada|tarjeta_propiedad) para que quede registrado como documento del expediente.",
         "parameters": {"type": "object", "required": ["file_id"], "properties": {
-            "file_id": {"type": "string"}}}}},
+            "file_id": {"type": "string"},
+            "tipo": {"type": "string", "description": "Tipo de documento KYC si aplica",
+                     "enum": ["cedula_frente", "cedula_reverso", "selfie", "autorizacion_firmada", "tarjeta_propiedad", "comprobante_pago", "otro"]}}}}},
+    {"type": "function", "function": {
+        "name": "registrar_documento_kyc",
+        "description": "Registra en el expediente del cliente un archivo que ya subió (por su file_id) como documento KYC de un tipo concreto (cédula, selfie, autorización firmada...). Necesario para poder emitir. Devuelve el estado del expediente.",
+        "parameters": {"type": "object", "required": ["file_id", "tipo"], "properties": {
+            "file_id": {"type": "string", "description": "file_id que devolvió la subida del archivo"},
+            "tipo": {"type": "string", "enum": ["cedula_frente", "cedula_reverso", "selfie", "autorizacion_firmada", "tarjeta_propiedad", "comprobante_pago", "otro"]}}}}},
+    {"type": "function", "function": {
+        "name": "verificar_identidad",
+        "description": "Verificación biométrica: compara el rostro de la foto de la cédula (cedula_frente) con la selfie del cliente (ambas ya registradas con registrar_documento_kyc). OBLIGATORIA antes de emitir. Devuelve aprobado|rechazado|revision|no_disponible con un puntaje de coincidencia. Si rechaza, pide una selfie mejor; si es no_disponible, avísale que un asesor validará la identidad.",
+        "parameters": {"type": "object", "properties": {
+            "doc_file_id": {"type": "string", "description": "opcional: file_id de la cédula (por defecto usa el registrado)"},
+            "selfie_file_id": {"type": "string", "description": "opcional: file_id de la selfie (por defecto usa la registrada)"}}}}},
+    {"type": "function", "function": {
+        "name": "estado_kyc",
+        "description": "Estado del expediente del cliente para cerrar: qué datos obligatorios faltan, qué documentos faltan/recibidos, si la identidad está verificada y si hay consentimiento. Úsalo para saber exactamente qué pedir a continuación y antes de intentar emitir.",
+        "parameters": {"type": "object", "properties": {
+            "insurance_type": {"type": "string", "description": "vida|salud|auto|hogar|viaje|pyme|accidentes"}}}}},
     {"type": "function", "function": {
         "name": "perfilar_cliente",
         "description": "Hiper-perfilamiento: analiza los datos recolectados y devuelve etapa de vida, segmento de riesgo, capacidad de pago, necesidades detectadas, productos recomendados, propensión y banderas. Úsalo para personalizar la recomendación.",
@@ -411,6 +435,23 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
                 "necesita": "registrar_consentimiento"}
 
     insurance_type = (str(args.get("insurance_type") or "").strip().upper() or "VIDA")
+
+    # Gate KYC/identidad (anti-fraude): sin los documentos esenciales + la identidad
+    # verificada (biometría cédula↔selfie) + los datos obligatorios NO se emite.
+    # Configurable con KYC_ENFORCE (default true). El consentimiento y el pago se
+    # validan aparte (arriba y abajo).
+    from . import kyc
+    from .config import KYC_ENFORCE
+    gate = kyc.gate(conn, session_key, insurance_type)
+    if not gate["ok"] and KYC_ENFORCE:
+        return {"error": "no se puede emitir todavía: faltan requisitos de cumplimiento — "
+                         + "; ".join(gate["faltantes"]),
+                "faltan_kyc": gate["faltantes"], "necesita": "completar_kyc",
+                "documentos_ok": gate["documentos_ok"], "identidad_ok": gate["identidad_ok"],
+                "datos_ok": gate["datos_ok"],
+                "mensaje": ("Pide al cliente lo que falta (foto de cédula, selfie para verificar "
+                            "identidad, documento firmado y datos obligatorios) y reintenta emitir.")}
+
     try:
         prima = round(float(args.get("monthly_premium_cop") or 0), 2)
     except (ValueError, TypeError):
@@ -833,8 +874,57 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             campos = parsed.get("campos_extraidos") or {}
             if campos:
                 _save_intake(conn, skey, campos)
+            # Si es un documento del expediente KYC (tipo explícito o detectado),
+            # queda registrado además en kyc_document para el gate de emisión.
+            from . import kyc
+            tipo_kyc = args.get("tipo") or {"cedula": "cedula_frente",
+                                            "tarjeta_propiedad": "tarjeta_propiedad"}.get(
+                                                parsed.get("tipo_detectado") or "")
+            registrado = None
+            if tipo_kyc:
+                real_phone = phone if phone and not phone.startswith("web:") else None
+                kyc.register_document(conn, session_key, tipo=tipo_kyc, file_id=fid,
+                                      path=path, extracted=campos, phone=real_phone)
+                registrado = tipo_kyc
             return {"tipo_detectado": parsed.get("tipo_detectado"),
-                    "campos_extraidos": campos, "resumen": parsed.get("resumen")}
+                    "campos_extraidos": campos, "resumen": parsed.get("resumen"),
+                    "documento_kyc_registrado": registrado}
+
+        if name == "registrar_documento_kyc":
+            from . import kyc
+            try:
+                from . import files
+            except Exception as exc:
+                return {"error": f"lectura de archivos no disponible: {exc}"}
+            fid = str(args.get("file_id") or "").strip()
+            tipo = str(args.get("tipo") or "").strip()
+            if not fid or not tipo:
+                return {"error": "faltan file_id y/o tipo del documento"}
+            path = files.path_for(fid) if hasattr(files, "path_for") else fid
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            kyc.register_document(conn, session_key, tipo=tipo, file_id=fid, path=path,
+                                  phone=real_phone)
+            st = kyc.status(conn, session_key, args.get("insurance_type"))
+            return {"ok": True, "registrado": tipo, "faltantes": st["faltantes"],
+                    "listo_para_emitir": st["listo_para_emitir"]}
+
+        if name == "verificar_identidad":
+            from . import kyc
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            verdict = kyc.run_verification(conn, session_key, phone=real_phone,
+                                           doc_file_id=args.get("doc_file_id"),
+                                           selfie_file_id=args.get("selfie_file_id"))
+            msg = {
+                "aprobado": "Identidad verificada: el rostro coincide con la cédula. Puedes continuar con el cierre.",
+                "rechazado": "El rostro de la selfie NO coincide con el de la cédula. Pide una selfie clara, de frente y bien iluminada, o una mejor foto de la cédula (máx. 2 intentos).",
+                "revision": "No se pudo comparar (rostro no detectado o falta un documento). Pide de nuevo la foto de la cédula (frente) y una selfie nítida.",
+                "no_disponible": "El motor de verificación no está disponible ahora; avísale al cliente que un asesor validará su identidad y sigue registrando el resto del expediente.",
+            }.get(verdict.get("decision"), "")
+            return {**verdict, "mensaje": msg}
+
+        if name == "estado_kyc":
+            from . import kyc
+            return kyc.status(conn, session_key, args.get("insurance_type"))
 
         if name == "perfilar_cliente":
             try:
@@ -930,6 +1020,11 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     if role != "gerente" and phone in MANAGER_PHONES:
         role = "gerente"
     system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_CLIENTE
+    # Conocimiento del negocio editable por gerencia (panel "Agente IA" del
+    # CRM): promos, políticas, aclaraciones de precios. Devuelve "" si no hay
+    # entradas o la BD falla — nunca rompe el turno.
+    from .knowledge import knowledge_context
+    system += knowledge_context(tenant_id)
 
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
     history = _load_history(hist_key)

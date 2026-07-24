@@ -89,6 +89,23 @@ decode_access_token = decode_token
 
 _MANAGER_ROLES = {"GERENTE", "ADMIN"}
 
+# Personal interno con login (incluye vendedores). El cliente final NUNCA tiene
+# token: su identidad es el device_id anónimo del navegador.
+_STAFF_ROLES = {"GERENTE", "ADMIN", "AGENTE"}
+
+
+def is_staff_token(authorization: Optional[str]) -> bool:
+    """True si `Authorization: Bearer <access>` trae un token válido de personal
+    interno (gerente, admin o vendedor). Se usa para gatear vistas de auditoría
+    (p. ej. el historial global de conversaciones) que un anónimo no debe ver."""
+    if not authorization:
+        return False
+    scheme, _, raw = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    claims = decode_token(raw.strip())
+    return bool(claims) and (claims.get("role") or "").upper() in _STAFF_ROLES
+
 
 def resolve_identity(
     authorization: Optional[str],

@@ -71,6 +71,9 @@
   --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-hand: "Edu VIC WA NT Hand", "Segoe Print", cursive;
 
+  /* Breakpoint extra para celulares angostos (grids de métricas 2-col) */
+  --breakpoint-xs: 25rem;
+
   /* Spacing tokens */
   --spacing-margin-mobile: 16px;
   --spacing-margin-desktop: 48px;
@@ -100,10 +103,26 @@
     background-color: var(--color-background);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Ningún texto largo (URLs, tokens, valores) desborda su contenedor. */
+    overflow-wrap: break-word;
   }
 
   #root {
     min-height: 100svh;
+    /* Red de seguridad: cualquier desborde horizontal accidental se recorta
+       en vez de crear scroll lateral en toda la página. `clip` (a diferencia
+       de `hidden`) no rompe position:sticky ni crea un contenedor de scroll. */
+    overflow-x: clip;
+  }
+
+  /* iOS Safari hace zoom al enfocar inputs con font-size < 16px. En celular
+     forzamos 16px en todos los campos para que el layout no salte. */
+  @media (max-width: 640px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
   }
 
   .material-symbols-outlined {
@@ -305,6 +324,72 @@
     opacity: 1;
     transform: none;
     transition: none;
+  }
+}
+
+/* ===== Carrusel del showcase de funciones (landing) ===== */
+/* Fundido en los bordes del carril: las cards no se cortan en seco, se
+   desvanecen. La máscara se aplica solo hacia el lado donde hay más
+   contenido (clases intercambiadas desde el componente). */
+.carousel-mask-both {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 96px,
+    black calc(100% - 96px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 96px,
+    black calc(100% - 96px),
+    transparent
+  );
+}
+.carousel-mask-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black,
+    black calc(100% - 96px),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    black,
+    black calc(100% - 96px),
+    transparent
+  );
+}
+.carousel-mask-left {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 96px, black);
+  mask-image: linear-gradient(to right, transparent, black 96px, black);
+}
+
+/* Aparición progresiva de cada card según su posición en el carril
+   (scroll-driven animations con view(); donde no hay soporte —o con
+   reduced motion— simplemente no anima y la máscara hace el trabajo). */
+@keyframes carousel-item-in {
+  from {
+    opacity: 0.2;
+    transform: scale(0.92);
+  }
+}
+@keyframes carousel-item-out {
+  to {
+    opacity: 0.2;
+    transform: scale(0.92);
+  }
+}
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .carousel-item {
+      animation:
+        carousel-item-in linear both,
+        carousel-item-out linear both;
+      animation-timeline: view(inline), view(inline);
+      animation-range: entry, exit;
+    }
   }
 }
 
@@ -584,6 +669,83 @@
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Wordmark "Tequendama": al pasar el mouse, un barrido de gradiente
+   (verde bosque → teal cascada → ámbar) recorre las letras como agua. */
+.brand-wordmark {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-primary) 0%,
+    var(--color-primary) 42%,
+    #14505e 50%,
+    var(--color-amber-cta) 58%,
+    var(--color-primary) 66%,
+    var(--color-primary) 100%
+  );
+  background-size: 300% 100%;
+  background-position: 0% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: background-position 0.9s ease;
+}
+.group:hover .brand-wordmark {
+  background-position: 100% 0;
+}
+
+/* Subrayado que se dibuja bajo la frase manuscrita del hero */
+.hand-underline {
+  position: relative;
+}
+.hand-underline::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 0.09em;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-amber-cta),
+    color-mix(in srgb, var(--color-amber-cta) 55%, white)
+  );
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.5s ease;
+}
+h1:hover .hand-underline::after {
+  transform: scaleX(1);
+}
+
+/* Caret de transcripción en vivo (subtítulos de la llamada) */
+.transcript-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.7;
+  animation: caret-blink 0.9s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
+/* Al colgar: la llamada se disuelve en la bruma antes de volver al chat */
+.call-leaving {
+  animation: call-fade-out 0.85s ease-in forwards;
+}
+@keyframes call-fade-out {
+  to {
+    opacity: 0;
+    filter: blur(16px);
+    transform: scale(1.015);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .call-card, .call-caption { animation: none; opacity: 1; }
+  .transcript-caret { animation: none; }
+  .call-leaving { animation: none; opacity: 0; transition: opacity 0.4s; }
 }

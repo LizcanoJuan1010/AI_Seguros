@@ -36,6 +36,7 @@ function toUiLead(lead: ApiLead, customer: ApiCustomer | undefined): Lead {
   const closed = lead.status.startsWith('CERRADO')
   return {
     id: lead.id,
+    customerId: lead.customerId,
     name,
     initials: name
       .split(' ')
@@ -110,29 +111,21 @@ export function AgentLeadsPage() {
             Leads generados por IA en tiempo real
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="relative">
+        <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-4">
+          <div className="relative flex-1 sm:flex-none">
             <Icon
               name="search"
               className="absolute top-1/2 left-3 -translate-y-1/2 text-outline"
             />
             <input
-              className="w-40 rounded-lg border-none bg-surface-container py-2 pr-4 pl-10 text-sm transition-all focus:ring-2 focus:ring-primary sm:w-64"
+              className="w-full rounded-lg border-none bg-surface-container py-2 pr-4 pl-10 text-sm transition-all focus:ring-2 focus:ring-primary sm:w-64"
               placeholder="Buscar cliente..."
               type="text"
             />
           </div>
-          <button
-            type="button"
-            className="relative flex size-10 items-center justify-center rounded-full bg-surface-container hover:bg-surface-variant"
-            aria-label="Notificaciones"
-          >
-            <Icon name="notifications" />
-            <span className="absolute top-2 right-2 size-2 rounded-full bg-error" />
-          </button>
-          <Button className="rounded-lg px-4 py-2 text-sm">
+          <Button className="shrink-0 rounded-lg px-4 py-2 text-sm">
             <Icon name="download" className="text-sm" />
-            Exportar Reporte
+            Exportar<span className="hidden sm:inline"> Reporte</span>
           </Button>
         </div>
       </header>

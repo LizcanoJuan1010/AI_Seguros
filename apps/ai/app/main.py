@@ -1,4 +1,4 @@
-"""SegurIA API — catálogo, cotizador, leads, documentos e insights.
+"""Tequendama API — catálogo, cotizador, leads, documentos e insights.
 
 Consumida por las skills del agente Hermes (vía HTTP) y por la SPA (chat + panel gerencial).
 """
@@ -17,7 +17,7 @@ from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
 from .embedded import router as embedded_router
-from .auth import resolve_identity
+from .auth import is_staff_token, resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
 from .db import COUNTRY_NAMES, get_conn, init_db, log_conversation
@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
         await memory.close_pool()
 
 
-app = FastAPI(title="SegurIA API", version="0.1.0", lifespan=lifespan,
+app = FastAPI(title="Tequendama Insurance API", version="0.1.0", lifespan=lifespan,
               description="Backend del asistente de venta de seguros LATAM")
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
@@ -58,6 +58,9 @@ class ChatRequest(BaseModel):
     session_id: str = Field(..., description="Identificador estable de la conversación")
     message: str
     phone: str | None = Field(None, description="WhatsApp del cliente si se conoce")
+    device_id: str | None = Field(
+        None, description="Identidad durable del navegador del cliente anónimo "
+                          "(ancla memoria y leads entre visitas)")
     manager_key: str | None = Field(None, description="API key para actuar con rol gerente")
 
 
@@ -73,11 +76,12 @@ def chat(req: ChatRequest, background_tasks: BackgroundTasks,
     particiona por `(tenant_id, user_id)`."""
     from .agent_core import run_agent
     tenant_id, role = resolve_identity(authorization, x_tenant_id, req.manager_key)
-    phone = req.phone or f"web:{req.session_id}"
+    # Identidad: teléfono real > device_id (durable entre visitas) > session_id.
+    phone = req.phone or f"web:{req.device_id or req.session_id}"
     log_conversation(phone, role, req.message, channel="web")
     background_tasks.add_task(backend_client.log_turn, tenant_id, phone,
                               "WEB_CHAT", role, req.message)
-    result = run_agent(req.session_id, req.message, phone=req.phone or "", role=role,
+    result = run_agent(req.session_id, req.message, phone=phone, role=role,
                        tenant_id=tenant_id)
     if result.get("reply"):
         log_conversation(phone, "asistente", result["reply"], channel="web")
@@ -94,9 +98,14 @@ def intake_requisitos(tipo: str) -> dict:
 
 
 @app.post("/api/assistant/upload")
-async def assistant_upload(file: UploadFile = File(...), session_id: str = "", phone: str = "") -> dict:
-    """El cliente sube un documento (cédula, tarjeta de propiedad, RUT...); se guarda y
-    queda disponible para que el agente lo lea con la herramienta analizar_documento."""
+async def assistant_upload(file: UploadFile = File(...), session_id: str = "",
+                           phone: str = "", tipo: str = "") -> dict:
+    """El cliente sube un documento (cédula, tarjeta de propiedad, selfie, RUT...); se
+    guarda y queda disponible para que el agente lo lea con `analizar_documento`.
+
+    Si se pasa `tipo` (cedula_frente|cedula_reverso|selfie|autorizacion_firmada|
+    tarjeta_propiedad...) y un `phone` real, además queda REGISTRADO en el expediente
+    KYC de esa sesión — así el canal WhatsApp (Hermes) sube la foto y la fija de una vez."""
     try:
         from . import files as files_mod
     except Exception as exc:
@@ -105,10 +114,27 @@ async def assistant_upload(file: UploadFile = File(...), session_id: str = "", p
     saved = files_mod.save_upload(file.filename or "documento", content)
     # lectura inmediata (best-effort) para dar feedback al cliente
     parsed = files_mod.parse_document(saved["path"], file.filename or "")
+    registrado = None
+    if tipo and phone and not phone.startswith("web:"):
+        try:
+            from . import kyc
+            conn = get_conn()
+            try:
+                kyc.register_document(conn, _kyc_key(phone), tipo=tipo,
+                                      file_id=saved["file_id"], path=saved["path"],
+                                      filename=saved.get("filename"), mime=saved.get("mime"),
+                                      extracted=parsed.get("campos_extraidos") or {},
+                                      phone=_norm_phone(phone))
+                registrado = tipo
+            finally:
+                conn.close()
+        except Exception:
+            registrado = None  # el registro KYC es best-effort; la subida no falla por él
     return {"file_id": saved["file_id"], "filename": saved.get("filename"),
             "tipo_detectado": parsed.get("tipo_detectado"),
             "campos_extraidos": parsed.get("campos_extraidos", {}),
-            "resumen": parsed.get("resumen")}
+            "resumen": parsed.get("resumen"),
+            "documento_kyc_registrado": registrado}
 
 
 # ---------- Voz: TTS de la respuesta (proxy al Kokoro del perfil `voz`) ----------
@@ -194,9 +220,17 @@ def _parse_history_row(raw: str) -> dict | None:
 
 
 @app.get("/api/assistant/sessions")
-def assistant_sessions(limit: int = 30) -> list[dict[str, Any]]:
+def assistant_sessions(limit: int = 30,
+                       authorization: str = Header(default="")) -> list[dict[str, Any]]:
     """Lista las conversaciones guardadas (más recientes primero) con un
-    preview del primer mensaje del usuario — para el panel de historial."""
+    preview del primer mensaje del usuario — para el panel de historial.
+
+    Solo staff (Bearer de gerente/admin/vendedor): el listado expone las
+    conversaciones de TODOS los clientes. El cliente anónimo restaura la suya
+    por `/api/assistant/history/{tenant}:{session_id}`, cuya clave solo él
+    conoce (UUID no adivinable en su localStorage)."""
+    if not is_staff_token(authorization):
+        raise HTTPException(403, "Solo el personal autorizado puede listar el historial")
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -352,6 +386,223 @@ def products(country: str | None = None, tipo: str | None = None) -> list[dict]:
             "coberturas": json.loads(r["coberturas"]),
         })
     return out
+
+
+# ---------- Panel "Agente IA": precios y conocimiento (gerencia) ----------
+
+def require_manager_flex(authorization: str = Header(default=""),
+                         x_api_key: str = Header(default=""),
+                         x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> str:
+    """Gerencia autenticada por cualquiera de las dos vías: el JWT del login
+    (claims.role GERENTE/ADMIN, la vía normal de la SPA) o la API key
+    histórica `X-Api-Key` (scripts/pruebas). Devuelve el tenant resuelto."""
+    tenant_id, role = resolve_identity(authorization, x_tenant_id, x_api_key)
+    if role != "gerente":
+        raise HTTPException(403, "Solo gerencia puede administrar el agente")
+    return tenant_id
+
+
+class KnowledgeCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class KnowledgeUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=120)
+    content: str | None = Field(None, min_length=1, max_length=4000)
+    active: bool | None = None
+
+
+class ProductUpdate(BaseModel):
+    nombre: str | None = Field(None, min_length=1, max_length=160)
+    tipo: str | None = Field(None, min_length=1, max_length=40)
+    aseguradora: str | None = Field(None, min_length=1, max_length=120)
+    prima_base_usd: float | None = Field(None, ge=0)
+    suma_base_usd: float | None = Field(None, ge=0)
+    coberturas: list[str] | None = None
+    paises: list[str] | None = None
+
+
+class ProductCreate(BaseModel):
+    nombre: str = Field(min_length=1, max_length=160)
+    tipo: str = Field(min_length=1, max_length=40)
+    aseguradora: str = Field(min_length=1, max_length=120)
+    prima_base_usd: float = Field(ge=0)
+    suma_base_usd: float = Field(ge=0)
+    coberturas: list[str] = Field(default_factory=list)
+    paises: list[str] = Field(default_factory=lambda: ["CO"])
+
+
+@app.get("/api/knowledge")
+def knowledge_list(tenant_id: str = Depends(require_manager_flex)) -> list[dict]:
+    from . import knowledge
+    return knowledge.list_entries(tenant_id)
+
+
+@app.post("/api/knowledge", status_code=201)
+def knowledge_create(req: KnowledgeCreate,
+                     tenant_id: str = Depends(require_manager_flex)) -> dict:
+    from . import knowledge
+    return knowledge.create_entry(tenant_id, req.title, req.content)
+
+
+@app.post("/api/knowledge/upload", status_code=201)
+async def knowledge_upload(file: UploadFile = File(...),
+                           tenant_id: str = Depends(require_manager_flex)) -> dict:
+    """Sube un documento (PDF/DOCX/TXT) y lo convierte en conocimiento del
+    agente: extrae su texto y lo guarda como entrada activa."""
+    from . import knowledge
+    content = await file.read()
+    if not content:
+        raise HTTPException(422, "Archivo vacío")
+    try:
+        return knowledge.create_from_document(
+            tenant_id, file.filename or "documento", content)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.patch("/api/knowledge/{entry_id}")
+def knowledge_update(entry_id: int, req: KnowledgeUpdate,
+                     tenant_id: str = Depends(require_manager_flex)) -> dict:
+    from . import knowledge
+    if req.title is None and req.content is None and req.active is None:
+        raise HTTPException(422, "Nada que actualizar")
+    row = knowledge.update_entry(tenant_id, entry_id, title=req.title,
+                                 content=req.content, active=req.active)
+    if not row:
+        raise HTTPException(404, "Entrada no encontrada")
+    return row
+
+
+@app.delete("/api/knowledge/{entry_id}", status_code=204)
+def knowledge_delete(entry_id: int,
+                     tenant_id: str = Depends(require_manager_flex)) -> Response:
+    from . import knowledge
+    if not knowledge.delete_entry(tenant_id, entry_id):
+        raise HTTPException(404, "Entrada no encontrada")
+    return Response(status_code=204)
+
+
+def _product_out(row: dict) -> dict:
+    out = dict(row)
+    out["coberturas"] = json.loads(out["coberturas"]) if out.get("coberturas") else []
+    out["paises"] = json.loads(out["paises"]) if out.get("paises") else []
+    return out
+
+
+def _slugify(text: str) -> str:
+    import re
+    import unicodedata
+    base = unicodedata.normalize("NFD", text.lower())
+    base = "".join(c for c in base if unicodedata.category(c) != "Mn")
+    base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+    return base[:48] or "producto"
+
+
+@app.post("/api/products", status_code=201)
+def product_create(req: ProductCreate,
+                   _tenant_id: str = Depends(require_manager_flex)) -> dict:
+    """Alta de producto desde el panel gerencial. Nace `editado_manual=TRUE`
+    para que el seed del catálogo JSON nunca lo pise. Disponible de inmediato
+    en el cotizador del agente."""
+    base_id = _slugify(req.nombre)
+    conn = get_conn()
+    try:
+        pid, n = base_id, 1
+        while conn.execute("SELECT 1 FROM products WHERE id = %s", (pid,)).fetchone():
+            n += 1
+            pid = f"{base_id}-{n}"
+        row = conn.execute(
+            """INSERT INTO products
+               (id, tipo, nombre, aseguradora, paises, suma_base_usd,
+                prima_base_usd, prima_por_dia, coberturas, factores, editado_manual)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,0,%s,'{}',TRUE)
+               RETURNING id, tipo, nombre, aseguradora, paises, suma_base_usd,
+                         prima_base_usd, coberturas""",
+            (pid, req.tipo.strip().lower(), req.nombre.strip(), req.aseguradora.strip(),
+             json.dumps([p.upper() for p in req.paises]), req.suma_base_usd,
+             req.prima_base_usd, json.dumps(req.coberturas, ensure_ascii=False))).fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    return _product_out(row)
+
+
+@app.patch("/api/products/{product_id}")
+def product_update(product_id: str, req: ProductUpdate,
+                   _tenant_id: str = Depends(require_manager_flex)) -> dict:
+    """Edición de catálogo desde el panel gerencial. Marca `editado_manual`
+    para que el seed del catálogo JSON no pise el cambio en el próximo boot.
+    El cotizador (`quoting.recommend`) lee esta misma tabla: el nuevo precio
+    rige de inmediato en las cotizaciones del agente."""
+    sets, params = ["editado_manual = TRUE"], []
+    if req.nombre is not None:
+        sets.append("nombre = %s")
+        params.append(req.nombre.strip())
+    if req.tipo is not None:
+        sets.append("tipo = %s")
+        params.append(req.tipo.strip().lower())
+    if req.aseguradora is not None:
+        sets.append("aseguradora = %s")
+        params.append(req.aseguradora.strip())
+    if req.prima_base_usd is not None:
+        sets.append("prima_base_usd = %s")
+        params.append(req.prima_base_usd)
+    if req.suma_base_usd is not None:
+        sets.append("suma_base_usd = %s")
+        params.append(req.suma_base_usd)
+    if req.coberturas is not None:
+        sets.append("coberturas = %s")
+        params.append(json.dumps(req.coberturas, ensure_ascii=False))
+    if req.paises is not None:
+        sets.append("paises = %s")
+        params.append(json.dumps([p.upper() for p in req.paises]))
+    if len(sets) == 1:
+        raise HTTPException(422, "Nada que actualizar")
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            f"""UPDATE products SET {', '.join(sets)} WHERE id = %s
+                RETURNING id, tipo, nombre, aseguradora, paises, suma_base_usd,
+                          prima_base_usd, coberturas""",
+            (*params, product_id)).fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "Producto no encontrado")
+    return _product_out(row)
+
+
+@app.delete("/api/products/{product_id}", status_code=204)
+def product_delete(product_id: str,
+                   _tenant_id: str = Depends(require_manager_flex)) -> Response:
+    """Baja de producto del catálogo. Bloquea si tiene cotizaciones que lo
+    referencian (integridad): en ese caso el gerente debe desactivarlo, no
+    borrarlo. Best-effort para productos sin dependencias."""
+    conn = get_conn()
+    try:
+        used = conn.execute(
+            "SELECT 1 FROM quotes WHERE product_id = %s LIMIT 1", (product_id,)).fetchone()
+        if used:
+            raise HTTPException(
+                409, "El producto tiene cotizaciones asociadas; no se puede eliminar")
+        cur = conn.execute("DELETE FROM products WHERE id = %s", (product_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Producto no encontrado")
+    return Response(status_code=204)
+
+
+@app.get("/api/insights/product-ideas")
+def insights_product_ideas(tenant_id: str = Depends(require_manager_flex)) -> dict:
+    """Muro de ideas: demanda de productos NO cubiertos detectada en las
+    conversaciones de clientes, con viabilidad explicada."""
+    from .product_ideas import product_ideas
+    return product_ideas(tenant_id)
 
 
 # ---------- Cotización + leads ----------
@@ -512,6 +763,161 @@ def role_for_phone(phone: str) -> dict:
     normalized = phone.replace(" ", "")
     return {"phone": normalized,
             "role": "gerente" if normalized in MANAGER_PHONES else "cliente"}
+
+
+# ---------- KYC / Identidad / Cierre (canal WhatsApp/Hermes vía HTTP) ----------
+# Estas rutas exponen por HTTP el mismo cierre KYC que el cerebro web (run_agent)
+# hace con tools, para que la skill `cierre-kyc` de Hermes lo maneje con curl. La
+# sesión se particiona por `{DEMO_TENANT_ID}:{phone}` (igual que en agent_core).
+
+def _norm_phone(phone: str) -> str:
+    """Normaliza el teléfono para que la clave de sesión coincida entre llamadas.
+
+    En un query string el `+` se decodifica como espacio (ej. subir la foto con
+    `?phone=+57...`), así que unificamos: sin espacios y con un único `+` inicial.
+    Las claves web (`web:...`) se dejan intactas."""
+    p = (phone or "").strip()
+    if not p or p.startswith("web:"):
+        return p
+    p = p.replace(" ", "")
+    return p if p.startswith("+") else "+" + p
+
+
+def _kyc_key(phone: str) -> str:
+    return f"{DEMO_TENANT_ID}:{_norm_phone(phone)}"
+
+
+class KycDocRegister(BaseModel):
+    phone: str
+    tipo: str = Field(..., description="cedula_frente|cedula_reverso|selfie|autorizacion_firmada|tarjeta_propiedad|comprobante_pago|otro")
+    file_id: str = Field(..., description="file_id devuelto por POST /api/assistant/upload")
+
+
+@app.post("/api/kyc/documento", dependencies=[Depends(require_service)])
+def kyc_registrar_documento(req: KycDocRegister) -> dict:
+    """Registra en el expediente KYC un archivo ya subido (por file_id)."""
+    from . import kyc
+    try:
+        from . import files as files_mod
+        path = files_mod.path_for(req.file_id)
+    except Exception:
+        path = req.file_id
+    conn = get_conn()
+    try:
+        skey = _kyc_key(req.phone)
+        kyc.register_document(conn, skey, tipo=req.tipo, file_id=req.file_id,
+                              path=path, phone=req.phone)
+        return kyc.status(conn, skey, None)
+    finally:
+        conn.close()
+
+
+class IdentidadVerificar(BaseModel):
+    phone: str
+    doc_file_id: str | None = None
+    selfie_file_id: str | None = None
+
+
+@app.post("/api/identidad/verificar", dependencies=[Depends(require_service)])
+def identidad_verificar(req: IdentidadVerificar) -> dict:
+    """Verificación biométrica cédula↔selfie de la sesión (YuNet + SFace). Devuelve
+    el veredicto (aprobado|rechazado|revision|no_disponible) y lo persiste."""
+    from . import kyc
+    conn = get_conn()
+    try:
+        return kyc.run_verification(conn, _kyc_key(req.phone), phone=req.phone,
+                                    doc_file_id=req.doc_file_id,
+                                    selfie_file_id=req.selfie_file_id)
+    finally:
+        conn.close()
+
+
+@app.get("/api/kyc/estado/{phone}", dependencies=[Depends(require_service)])
+def kyc_estado(phone: str, insurance_type: str = "") -> dict:
+    """Checklist del cierre: qué datos/documentos faltan, identidad y consentimiento."""
+    from . import kyc
+    conn = get_conn()
+    try:
+        return kyc.status(conn, _kyc_key(phone), insurance_type or None)
+    finally:
+        conn.close()
+
+
+class DatosClienteReq(BaseModel):
+    phone: str
+    full_name: str | None = None
+    document_id: str | None = None
+    document_type: str | None = "CC"
+    birth_date: str | None = None
+    email: str | None = None
+    city: str | None = None
+    campos: dict[str, Any] = Field(default_factory=dict,
+                                   description="Otros campos KYC/SARLAFT/salud {id: valor}")
+
+
+@app.post("/api/datos-cliente", dependencies=[Depends(require_service)])
+def datos_cliente(req: DatosClienteReq) -> dict:
+    """Captura/actualiza los datos del cliente para el cierre (checkout + intake)."""
+    from .agent_core import (_save_checkout, _save_intake, _get_checkout,
+                             _checkout_missing)
+    conn = get_conn()
+    try:
+        skey = _kyc_key(req.phone)
+        _save_checkout(conn, skey, full_name=req.full_name, document_id=req.document_id,
+                       document_type=req.document_type or "CC", birth_date=req.birth_date,
+                       email=req.email, city=req.city, phone=req.phone)
+        if req.campos:
+            _save_intake(conn, skey, req.campos)
+        sess = _get_checkout(conn, skey)
+        return {"ok": True, "faltan_minimos": _checkout_missing(sess)}
+    finally:
+        conn.close()
+
+
+class ConsentimientoReq(BaseModel):
+    phone: str
+    acepta: bool
+
+
+@app.post("/api/consentimiento", dependencies=[Depends(require_service)])
+def consentimiento(req: ConsentimientoReq) -> dict:
+    """Registra el consentimiento de habeas data (Ley 1581/2012)."""
+    from datetime import datetime as _dt
+    from .agent_core import _save_checkout
+    if not req.acepta:
+        raise HTTPException(400, "sin consentimiento explícito no se puede emitir")
+    conn = get_conn()
+    try:
+        _save_checkout(conn, _kyc_key(req.phone), consent=1,
+                       consent_at=_dt.utcnow().isoformat())
+        return {"ok": True, "consentimiento": True}
+    finally:
+        conn.close()
+
+
+class EmitirReq(BaseModel):
+    phone: str
+    insurance_type: str = "VIDA"
+    monthly_premium_cop: float = 0
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    payment_method: str = "simulado"
+    payment_reference: str | None = None
+
+
+@app.post("/api/emitir", dependencies=[Depends(require_service)])
+def emitir(req: EmitirReq) -> dict:
+    """Emite la póliza aplicando el gate KYC (documentos + identidad verificada +
+    datos + consentimiento + underwriting + pago). Si faltan requisitos, los devuelve."""
+    from .agent_core import _emitir_poliza
+    conn = get_conn()
+    try:
+        args = {"insurance_type": req.insurance_type,
+                "monthly_premium_cop": req.monthly_premium_cop,
+                "coverage": req.coverage, "payment_method": req.payment_method,
+                "payment_reference": req.payment_reference}
+        return _emitir_poliza(conn, args, phone=_norm_phone(req.phone), tenant_id=DEMO_TENANT_ID)
+    finally:
+        conn.close()
 
 
 @app.post("/channels/whatsapp/inbound/tequendama",

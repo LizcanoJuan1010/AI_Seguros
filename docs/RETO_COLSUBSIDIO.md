@@ -12,8 +12,9 @@
 | Detectar momento/necesidad | 🟡 conversacional (SPIN) | añadir disparadores de "momento" (entrada proactiva) |
 | Presentar oferta | 🟢 cotizador + 3 opciones + PDF | — |
 | Explicar / objeciones | 🟢 | — |
-| **Cerrar la venta** | 🔴 falta | **construir flujo de cierre/emisión (foco de esta fase)** |
-| Sin humano | 🔴 postura "pre-venta" | reformular a **cierre autónomo** |
+| **Cerrar la venta** | 🟢 cierre autónomo con KYC + emisión real | documentos, identidad verificada, consentimiento → `POST /api/v1/checkout` |
+| **Validar identidad** | 🟢 biometría cédula↔selfie (YuNet + SFace, CPU) | `app/identity.py` + `kyc_document`/`identity_verification`; gate `KYC_ENFORCE` |
+| Sin humano | 🟢 cierre autónomo | Hermes skill `cierre-kyc` + tools del cerebro web |
 | 24/7 / escala / WhatsApp | 🟢 arquitectura nueva | cablear cierre por WhatsApp |
 
 ## Diseño del cierre autónomo (de cotización → póliza)
@@ -81,7 +82,7 @@ Nuevo evento además de los de FUSION.md:
   llama `POST /api/v1/checkout`, genera el **PDF de póliza** y emite el evento `policy`.
 
 ## Reformulación de cumplimiento (cierre autónomo)
-- SegurIA **cierra sola**; Colsubsidio distribuye; la aseguradora emite.
+- Tequendama **cierra sola**; Colsubsidio distribuye; la aseguradora emite.
 - Consentimiento habeas data **obligatorio** y registrado antes de emitir.
 - Divulgación clara de aseguradora, coberturas, exclusiones y prima.
 - Derecho de **retracto** informado. Datos mínimos (no historial médico innecesario).

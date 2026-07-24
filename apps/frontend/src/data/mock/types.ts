@@ -3,6 +3,8 @@ export type IntentTone = 'hot' | 'warm' | 'cold'
 
 export type Lead = {
   id: string
+  /** Id del Customer en el backend; los leads mock (demo) no lo tienen. */
+  customerId?: string
   name: string
   initials: string
   when: string

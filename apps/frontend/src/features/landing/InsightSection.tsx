@@ -35,7 +35,7 @@ export function InsightSection() {
               </p>
             </div>
           </Reveal>
-          <div className="grid grid-cols-2 gap-stack-md">
+          <div className="grid grid-cols-1 gap-stack-md xs:grid-cols-2">
             <Reveal delay={240}>
               <div className="h-full rounded-lg border border-outline-variant/30 bg-white p-6 shadow-sm">
                 <p className="mb-1 text-display-lg-mobile font-bold text-secondary">

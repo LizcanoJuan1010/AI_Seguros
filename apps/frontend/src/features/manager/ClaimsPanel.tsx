@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Icon } from '../../components/ui/Icon'
 import { formatCop, type ApiClaim } from '../../lib/api'
+import { CustomerDetailDrawer } from '../agent/CustomerDetailDrawer'
 
 type Props = {
   items: ApiClaim[]
@@ -25,6 +27,11 @@ const STATUS_LABEL: Record<string, { label: string; className: string }> = {
 
 /** Reclamos del equipo con su score de fraude (triage del servicio IA). */
 export function ClaimsPanel({ items }: Props) {
+  const [selected, setSelected] = useState<{
+    customerId: string
+    name: string | null
+  } | null>(null)
+
   return (
     <div className="overflow-hidden rounded-lg border border-outline-variant bg-white shadow-sm">
       <div className="flex items-center gap-2 bg-primary px-4 py-3">
@@ -36,14 +43,25 @@ export function ClaimsPanel({ items }: Props) {
       </div>
       <div className="flex flex-col gap-3 p-4">
         {items.map((claim) => {
-          const status =
-            STATUS_LABEL[claim.status] ?? STATUS_LABEL.REPORTADO
+          const status = STATUS_LABEL[claim.status] ?? STATUS_LABEL.REPORTADO
           const fraud = Number(claim.fraudScore ?? 0)
           const flags = claim.fraudFlags ?? []
+          const linkable = Boolean(claim.customerId)
           return (
             <div
               key={claim.id}
-              className="rounded-lg border border-outline-variant/60 p-3"
+              className={`rounded-lg border border-outline-variant/60 p-3 ${
+                linkable
+                  ? 'cursor-pointer transition-colors hover:border-primary/40 hover:bg-mist-white'
+                  : ''
+              }`}
+              onClick={() =>
+                claim.customerId &&
+                setSelected({
+                  customerId: claim.customerId,
+                  name: claim.customerName,
+                })
+              }
             >
               <div className="mb-1 flex items-center justify-between gap-2">
                 <p className="font-mono text-xs font-bold text-on-surface">
@@ -55,6 +73,12 @@ export function ClaimsPanel({ items }: Props) {
                   {status.label}
                 </span>
               </div>
+              {claim.customerName && (
+                <p className="mb-1 flex items-center gap-1 text-xs font-bold text-on-surface">
+                  <Icon name="person" className="text-[14px] text-primary" />
+                  {claim.customerName}
+                </p>
+              )}
               <p className="text-[11px] text-on-surface-variant">
                 {claim.insuranceType ?? '—'}
                 {claim.amountEstimateCop
@@ -82,10 +106,23 @@ export function ClaimsPanel({ items }: Props) {
                   ))}
                 </div>
               ) : null}
+              {linkable && (
+                <p className="mt-2 flex items-center gap-1 text-[11px] font-bold text-primary">
+                  <Icon name="forum" className="text-[14px]" />
+                  Ver cliente y su conversación
+                </p>
+              )}
             </div>
           )
         })}
       </div>
+
+      <CustomerDetailDrawer
+        customerId={selected?.customerId ?? null}
+        name={selected?.name ?? undefined}
+        open={selected != null}
+        onClose={() => setSelected(null)}
+      />
     </div>
   )
 }

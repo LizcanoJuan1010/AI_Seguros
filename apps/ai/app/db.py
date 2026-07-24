@@ -9,6 +9,7 @@ consultas quedan sin cualificar y caen siempre en `seguria`.
 """
 import csv
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 
@@ -99,6 +100,45 @@ CREATE TABLE IF NOT EXISTS intake_session (
     datos TEXT DEFAULT '{}',
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+-- Documentos KYC que el cliente envía para poder emitir la póliza (cédula por
+-- ambas caras, autorización firmada, selfie...). El archivo físico vive en el
+-- store de uploads (app/files.py); aquí queda el registro auditable, ligado a la
+-- sesión (session_key = tenant_id:phone). UNIQUE(session_key,tipo): un doc vigente
+-- por tipo por sesión (reenviar reemplaza).
+CREATE TABLE IF NOT EXISTS kyc_document (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    phone TEXT,
+    tipo TEXT NOT NULL,             -- cedula_frente|cedula_reverso|selfie|autorizacion_firmada|comprobante_pago|otro
+    file_id TEXT,
+    path TEXT,
+    filename TEXT,
+    mime TEXT,
+    status TEXT DEFAULT 'recibido', -- recibido|verificado|rechazado
+    extracted TEXT DEFAULT '{}',    -- JSON con campos OCR (numero_documento, nombre...)
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (session_key, tipo)
+);
+-- Veredicto de la verificación biométrica cédula ↔ selfie (YuNet + SFace, ver
+-- app/identity.py). Historial: cada intento inserta una fila; el gate usa el más
+-- reciente. decision ∈ aprobado|rechazado|revision|no_disponible.
+CREATE TABLE IF NOT EXISTS identity_verification (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    phone TEXT,
+    doc_file_id TEXT,
+    selfie_file_id TEXT,
+    decision TEXT NOT NULL,
+    score DOUBLE PRECISION,
+    threshold DOUBLE PRECISION,
+    method TEXT DEFAULT 'yunet_sface',
+    detail TEXT DEFAULT '{}',       -- JSON con motivos y scores de detección
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_kyc_document_session ON kyc_document (session_key);
+CREATE INDEX IF NOT EXISTS idx_identity_verification_session
+    ON identity_verification (session_key, created_at DESC);
 CREATE TABLE IF NOT EXISTS chat_history (
     session_id TEXT,
     seq INTEGER,
@@ -114,6 +154,20 @@ CREATE TABLE IF NOT EXISTS customer_profile (
     fuente TEXT DEFAULT 'llamada',
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+-- Conocimiento del negocio editable por gerencia (panel "Agente IA" del CRM).
+-- Las entradas activas se inyectan al system prompt de TODAS las
+-- conversaciones del tenant (ver agent_core.run_agent / knowledge.py).
+CREATE TABLE IF NOT EXISTS agent_knowledge (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    active BOOLEAN DEFAULT TRUE,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+-- true cuando gerencia editó el producto desde el CRM: el seed del catálogo
+-- JSON deja de pisar esa fila en los siguientes arranques.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS editado_manual BOOLEAN DEFAULT FALSE;
 """
 
 COUNTRY_CURRENCY = {
@@ -167,6 +221,16 @@ def init_db(seed_demo: bool = True) -> None:
             from .mock_profiles import seed_mock_profiles
             seed_mock_profiles(conn)
         conn.commit()
+        # Documentos firmados demo: idempotente (regenera archivos faltantes,
+        # no duplica la referencia en la BD), fuera del guard de "primera vez"
+        # porque los PDFs viven en un dir efímero del contenedor.
+        if seed_demo:
+            try:
+                from .demo_documents import seed_demo_documents
+                seed_demo_documents(conn)
+            except Exception as exc:  # noqa: BLE001 - demo best-effort
+                logging.getLogger("seguria.db").warning(
+                    "seed_demo_documents falló: %s", exc)
     finally:
         conn.close()
 
@@ -183,7 +247,8 @@ def _seed_catalog(conn: psycopg.Connection) -> None:
                  tipo=EXCLUDED.tipo, nombre=EXCLUDED.nombre, aseguradora=EXCLUDED.aseguradora,
                  paises=EXCLUDED.paises, suma_base_usd=EXCLUDED.suma_base_usd,
                  prima_base_usd=EXCLUDED.prima_base_usd, prima_por_dia=EXCLUDED.prima_por_dia,
-                 coberturas=EXCLUDED.coberturas, factores=EXCLUDED.factores""",
+                 coberturas=EXCLUDED.coberturas, factores=EXCLUDED.factores
+               WHERE products.editado_manual IS DISTINCT FROM TRUE""",
             (p["id"], p["tipo"], p["nombre"], p["aseguradora"], json.dumps(p["paises"]),
              p["suma_base_usd"], p["prima_base_usd"], int(p.get("prima_por_dia", False)),
              json.dumps(p["coberturas"], ensure_ascii=False),
