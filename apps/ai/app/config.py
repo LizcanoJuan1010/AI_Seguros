@@ -133,6 +133,8 @@ TTS_VOICE = os.getenv("TTS_VOICE", "ef_dora")
 # el Voice Agent de Deepgram. Sin DEEPGRAM_API_KEY el endpoint no puede abrir
 # las conexiones a Deepgram (sin modo demo todavía, ver riesgos del diseño).
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+# Voz Aura-2 en español colombiano (acento del mercado de Tequendama).
+DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")
 
 # Marca de los documentos generados (cotización / certificado de póliza)
 BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")
