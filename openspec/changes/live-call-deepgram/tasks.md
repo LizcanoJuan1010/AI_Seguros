@@ -30,10 +30,10 @@ Tracker branch: `feat/live-call-deepgram` → `main` (draft, no-merge until all 
 
 ## Phase 1: Foundation
 
-- [ ] 1.1 Add `WEB_VOICE_CALL` to `Channel` enum in `apps/backend/prisma/schema.prisma`; run `prisma migrate dev`
-- [ ] 1.2 Add `DEEPGRAM_API_KEY` to `apps/ai/app/config.py`, `.env.example` files, and `docker-compose.yml` (`seguria-ai` env)
-- [ ] 1.3 Add `ws`+`@types/ws` to `apps/backend/package.json`; add `websockets` to `apps/ai/requirements.txt`
-- [ ] 1.4 Fix `deploy/nginx.conf` `/api/v1/` location: add `Upgrade`/`Connection`/`proxy_http_version 1.1` headers
+- [x] 1.1 Add `WEB_VOICE_CALL` to `Channel` enum in `apps/backend/prisma/schema.prisma`; run `prisma migrate dev`
+- [x] 1.2 Add `DEEPGRAM_API_KEY` to `apps/ai/app/config.py` and `docker-compose.yml` (`seguria-ai` env). `.env.example` (root) left for the user — `.env*` paths are denied by this project's permission settings
+- [x] 1.3 Add `ws`+`@types/ws` to `apps/backend/package.json`; add `websockets` to `apps/ai/requirements.txt`
+- [x] 1.4 Fix `deploy/nginx.conf` `/api/v1/` location: add `Upgrade`/`Connection`/`proxy_http_version 1.1` headers
 
 ## Phase 2: Python Voice Endpoint (`apps/ai`)
 
