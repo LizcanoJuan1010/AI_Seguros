@@ -20,3 +20,6 @@ generated_docs/
 
 backend/src/generated/prisma/
 apps/backend/src/generated/prisma/
+
+# Sesion temporal del emparejamiento de WhatsApp (credenciales)
+.wa-pairing/
