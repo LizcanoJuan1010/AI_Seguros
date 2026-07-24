@@ -47,16 +47,38 @@ docker compose ps                      # todos "Up" / healthy
 
 ## 4. Conecta WhatsApp (emparejamiento QR, una sola vez)
 El contenedor `hermes-agent` arranca por defecto en modo `idle` (vivo para configurar).
-Para el gateway de WhatsApp:
+El compose ya deja el bot **abierto a cualquier remitente** (`WHATSAPP_MODE=bot`,
+`WHATSAPP_DM_POLICY=open`, `WHATSAPP_ALLOWED_USERS=*`); para cerrarlo tras la demo,
+pon `WHATSAPP_DM_POLICY=pairing` en `.env`.
+
+> ⚠️ **Trampa conocida (regresión Hermes #27602)**: el asistente `hermes whatsapp`
+> guarda la sesión en `~/.hermes/whatsapp/session` (ruta *legacy*), que queda **fuera**
+> del volumen `hermes-platforms`. Si emparejas en un contenedor efímero, el QR escanea
+> bien, el wizard dice "Pairing complete"… y las credenciales se pierden. Por eso el
+> procedimiento monta esa ruta y copia la sesión al volumen.
+
 ```bash
 # 1) cambia el modo a gateway en .env:  HERMES_MODE=gateway
+docker compose stop hermes-agent
+# 2) empareja en un contenedor aparte con la ruta real de la sesión montada
+#    (imprime el QR en la terminal; escanéalo con el teléfono del negocio):
+docker compose run --rm -e HERMES_MODE=cli \
+  -v "$PWD/.wa-pairing:/root/.hermes/whatsapp" hermes-agent whatsapp
+# 3) instala la sesión donde el gateway la busca (ajusta el prefijo del volumen
+#    al nombre del proyecto compose: docker volume ls | grep hermes-platforms):
+docker run --rm -v "$PWD/.wa-pairing:/src" \
+  -v hackathoncolsupcidio_hermes-platforms:/dst alpine \
+  sh -c "mkdir -p /dst/whatsapp/session && cp -a /src/session/. /dst/whatsapp/session/"
+# 4) arranca el gateway; a partir de aquí la sesión persiste en el volumen:
 docker compose up -d hermes-agent
-# 2) empareja escaneando el QR (se imprime en la terminal):
-docker compose exec hermes-agent hermes whatsapp
-# El emparejamiento persiste en el volumen hermes-platforms; no hay que repetirlo.
+docker exec -it $(docker compose ps -q hermes-agent) \
+  sh -c 'tail -f /root/.hermes/platforms/whatsapp/bridge.log'   # "✅ WhatsApp connected!"
 ```
+Si el bot contesta "Provider authentication failed": la imagen es vieja (traía un
+`base_url` de OpenRouter que rompe la key de DeepSeek; el entrypoint actual lo fija a
+`https://api.deepseek.com`) — reconstruye con `docker compose build hermes-agent`.
 Producción sin riesgo de bloqueo: usa WhatsApp Cloud API oficial de Meta (cliente de
-referencia en `services/insurance-api/app/reference/whatsapp_official_client.py`) o el
+referencia en `apps/ai/app/reference/whatsapp_official_client.py`) o el
 `baileys-bridge` (`docker compose --profile baileys up -d`).
 
 ## 5. Prueba el agente sin WhatsApp (modo headless)

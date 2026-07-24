@@ -1,70 +1,163 @@
+# SegurIA × Tequendama — stack de fusión (arquitectura polyglot).
+#   frontend(nginx) -> /api/v1 -> backend(NestJS)   -> postgres
+#                   -> /api    -> seguria-ai(Python) -> postgres + redis
+# Servicios opcionales (voz, agente Hermes, baileys) bajo perfiles.
 services:
-  # ---------- Backend: catálogo, cotizador, leads, documentos, insights + SPA ----------
-  seguria-api:
-    build: ./services/insurance-api
-    image: seguria/api:latest
-    ports:
-      - "8085:8085"
+  postgres:
+    image: postgres:16-alpine
     environment:
+      - POSTGRES_USER=seguria
+      - POSTGRES_PASSWORD=seguria
+      - POSTGRES_DB=seguria
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seguria"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Dominio: CRM de seguros (NestJS + Prisma) ----------
+  backend:
+    build: ./apps/backend
+    image: seguria/backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://seguria:seguria@postgres:5432/seguria?schema=public
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
+      - JWT_ACCESS_MINUTES=${JWT_ACCESS_MINUTES:-480}
+      - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
+      # Secreto del webhook de Polar (Standard Webhooks): firma del webhook de pagos
+      - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET:-}
+    ports:
+      - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
+    restart: unless-stopped
+
+  # ---------- Cerebro IA: chat SSE, cotizador, memoria, PDF (Python) ----------
+  seguria-ai:
+    build: ./apps/ai
+    image: seguria/ai:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://seguria:seguria@postgres:5432/seguria
+      - REDIS_URL=redis://redis:6379/0
+      - BACKEND_URL=http://backend:3000
+      - JWT_SECRET=${JWT_SECRET:-demo-secret-seguria-2026}
       - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
       - MANAGER_PHONES=${MANAGER_PHONES:-}
-      - CORS_ORIGINS=${CORS_ORIGINS:-}
-      - METABASE_URL=${METABASE_URL:-}
-      - METABASE_API_KEY=${METABASE_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      # Pasarela Polar (SANDBOX). Sin access token el pago corre en modo demo.
+      - POLAR_BASE_URL=${POLAR_BASE_URL:-https://sandbox-api.polar.sh/v1}
+      - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN:-}
+      - POLAR_SUCCESS_URL=${POLAR_SUCCESS_URL:-}
+      # Informes por correo (patrón Paloma: SMTP primario, Resend fallback)
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SEGURIA_DATA_DIR=/data/market
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Seguro embebido (quote & bind para aliados) y TTS del chat web
+      - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
+      - TTS_URL=${TTS_URL:-http://seguria-tts:8880}
+      - TTS_VOICE=${TTS_VOICE:-ef_dora}
     volumes:
       - ./data/market:/data/market:ro
       - seguria-state:/app/state
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8085/api/health').status==200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
+    ports:
+      - "8085:8085"
     restart: unless-stopped
 
-  # ---------- Voz: TTS local en español (Kokoro, API OpenAI-compatible) ----------
+  # ---------- Frontend (Tequendama React servido por nginx + proxy APIs) ----------
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: ../../deploy/frontend.Dockerfile
+    image: seguria/frontend:latest
+    depends_on:
+      - backend
+      - seguria-ai
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"   # 8080 del host lo ocupa palomaos-evolution-api de otro proyecto
+    restart: unless-stopped
+
+  # ---------- Voz TTS (opcional) ----------
   seguria-tts:
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    profiles: ["voz"]
     ports:
       - "8880:8880"
     volumes:
       - kokoro-cache:/app/.cache
     restart: unless-stopped
 
-  # ---------- Agente Hermes: persona SegurIA + skills + WhatsApp + OfficeCLI ----------
+  # ---------- Agente Hermes (opcional, consola/WhatsApp) ----------
   hermes-agent:
     build:
       context: .
       dockerfile: deploy/hermes.Dockerfile
     image: seguria/hermes:latest
-    depends_on:
-      - seguria-api
+    profiles: ["hermes"]
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
-      - SEGURIA_API_URL=http://seguria-api:8085
+      - SEGURIA_API_URL=http://seguria-ai:8085
       - SEGURIA_TTS_URL=http://seguria-tts:8880
       - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
-      # gateway = arranca WhatsApp (requiere emparejar QR); idle = contenedor vivo para exec
       - HERMES_MODE=${HERMES_MODE:-idle}
+      # Gateway WhatsApp: habilita la plataforma; el emparejamiento QR se hace
+      # con `docker compose exec hermes-agent hermes whatsapp` (persiste en volumen)
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
+      # Atiende a CUALQUIER remitente (demo hackathon): modo bot (no self-chat),
+      # DMs abiertos y opt-in explícito que exige Hermes para política abierta.
+      - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
+      - WHATSAPP_DM_POLICY=${WHATSAPP_DM_POLICY:-open}
+      - GATEWAY_ALLOW_ALL_USERS=${GATEWAY_ALLOW_ALL_USERS:-true}
+      # El bridge Node exige su propio allowlist; * = bot abierto a cualquiera
+      - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
     volumes:
-      - ./agent:/workspace:ro
+      - ./apps/services/hermes-agent:/workspace:ro
       - hermes-sessions:/root/.hermes/sessions
       - hermes-platforms:/root/.hermes/platforms
       - hermes-memories:/root/.hermes/memories
     restart: unless-stopped
 
-  # ---------- WhatsApp plan B (Baileys, API compatible Evolution) ----------
   baileys-bridge:
-    build: ./services/baileys-bridge
+    build: ./apps/services/baileys-bridge
     image: seguria/baileys:latest
     profiles: ["baileys"]
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - API_KEY=${BAILEYS_API_KEY:-seguria-baileys}
     volumes:
@@ -72,6 +165,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  pg-data:
+  redis-data:
   seguria-state:
   kokoro-cache:
   hermes-sessions:

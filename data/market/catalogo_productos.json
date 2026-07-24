@@ -147,6 +147,138 @@
       "prima_base_usd": 9.0,
       "coberturas": ["Limpiezas y prevención dental", "Ortodoncia (50%)", "Examen visual anual", "Lentes y monturas"],
       "factores": {"dependientes_factor_por_hijo": 0.45}
+    },
+    {
+      "id": "cs-vida-personal",
+      "tipo": "vida",
+      "nombre": "Seguro de Vida Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio (aliado MetLife)",
+      "paises": ["CO"],
+      "suma_base_usd": 25000,
+      "prima_base_usd": 12.0,
+      "coberturas": ["Fallecimiento por cualquier causa", "Incapacidad total y permanente", "Enfermedades graves (adelanto de capital)", "Auxilio funerario", "Asistencia psicológica para la familia"],
+      "factores": {"edad": {"18-30": 0.85, "31-45": 1.0, "46-60": 1.55, "61-70": 2.6}, "fumador": 1.4, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-vida-ahorro",
+      "tipo": "vida",
+      "nombre": "Vida y Ahorro Doble Beneficio",
+      "aseguradora": "Seguros Colsubsidio (aliado MetLife)",
+      "paises": ["CO"],
+      "suma_base_usd": 20000,
+      "prima_base_usd": 28.0,
+      "coberturas": ["Fallecimiento accidental", "Capital de ahorro que crece automáticamente", "Devolución del ahorro al final del plazo", "Rescate parcial del fondo", "Protección financiera para la familia"],
+      "factores": {"edad": {"18-30": 0.9, "31-45": 1.0, "46-55": 1.35}, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-ap-exequial",
+      "tipo": "accidentes",
+      "nombre": "Accidentes Personales + Asistencia Exequial",
+      "aseguradora": "Seguros Colsubsidio (aliado MetLife)",
+      "paises": ["CO"],
+      "suma_base_usd": 15000,
+      "prima_base_usd": 4.5,
+      "coberturas": ["Muerte accidental", "Incapacidad total permanente por accidente", "Renta mensual por muerte accidental (12 meses)", "Gastos exequiales completos", "Auxilio funerario de pago único"],
+      "factores": {"edad": {"18-45": 1.0, "46-70": 1.3}, "trabajo_riesgo": 1.5, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-exequial-familiar",
+      "tipo": "exequial",
+      "nombre": "Plan Exequial Familiar Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 3000,
+      "prima_base_usd": 5.5,
+      "coberturas": ["Servicio funerario completo hasta para 9 familiares", "Sala de velación y cofre", "Traslado nacional del cuerpo", "Trámites y asistencia 24/7", "Cobertura opcional para mascotas"],
+      "factores": {"edad": {"18-60": 1.0, "61-80": 1.45}, "dependientes_factor_por_hijo": 0.12, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-asistencia-medica",
+      "tipo": "salud",
+      "nombre": "Asistencias Médicas Familiares Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 5000,
+      "prima_base_usd": 9.5,
+      "coberturas": ["Médico a domicilio (Bogotá)", "Medicina especializada con tarifa preferencial", "Orientación médica telefónica 24/7", "Cobertura para todo el núcleo familiar", "Red de urgencias aliada"],
+      "factores": {"edad": {"18-60": 1.0, "61-75": 1.4}, "dependientes_factor_por_hijo": 0.2, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-mascotas",
+      "tipo": "mascotas",
+      "nombre": "Seguro para Mascotas Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 2000,
+      "prima_base_usd": 8.0,
+      "coberturas": ["Asistencia veterinaria por accidente y enfermedad", "Responsabilidad civil por daños a terceros", "Vacunación anual", "Hospedaje por emergencia del dueño", "Orientación veterinaria telefónica"],
+      "factores": {"afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-carro-todo-riesgo",
+      "tipo": "auto",
+      "nombre": "Seguro de Carro Todo Riesgo Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 15000,
+      "prima_base_usd": 40.0,
+      "coberturas": ["Pérdida total y parcial por daños", "Hurto total y parcial", "Responsabilidad civil extracontractual", "Asistencia en vía y grúa 24/7", "Conductor elegido y carro taller"],
+      "factores": {"edad": {"18-25": 1.5, "26-45": 1.0, "46-65": 0.92, "66-80": 1.2}, "zona_alto_riesgo": 1.3, "valor_vehiculo_pct": 0.0021, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-soat",
+      "tipo": "auto",
+      "nombre": "SOAT Digital Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 5000,
+      "prima_base_usd": 13.0,
+      "coberturas": ["Gastos médicos por accidente de tránsito", "Incapacidad y muerte de ocupantes y terceros", "Obligatorio por ley para carro y moto", "Tarifa regulada (valor anual mensualizado)", "Expedición 100% digital"],
+      "factores": {}
+    },
+    {
+      "id": "cs-bici-patineta",
+      "tipo": "movilidad",
+      "nombre": "Seguro Bicicleta, Scooter y Patineta",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 1500,
+      "prima_base_usd": 6.0,
+      "coberturas": ["Hurto calificado del vehículo", "Daños por accidente", "Responsabilidad civil frente a terceros", "Accidentes personales del ciclista", "Asistencia jurídica"],
+      "factores": {"valor_vehiculo_pct": 0.003, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-hogar-contenido",
+      "tipo": "hogar",
+      "nombre": "Seguro Hogar y Contenidos Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 40000,
+      "prima_base_usd": 8.5,
+      "coberturas": ["Incendio, rayo y explosión", "Terremoto y temblor", "Hurto de contenidos", "Daños por agua", "RC familiar y asistencia domiciliaria 24/7"],
+      "factores": {"zona_sismica": 1.35, "valor_inmueble_pct": 0.00016, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-arrendamiento",
+      "tipo": "hogar",
+      "nombre": "Seguro de Arrendamiento Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio",
+      "paises": ["CO"],
+      "suma_base_usd": 5000,
+      "prima_base_usd": 20.0,
+      "coberturas": ["Canon de arrendamiento garantizado (hasta 36 meses)", "Servicios públicos y cuotas de administración", "Estudio del arrendatario en minutos", "Acompañamiento jurídico en restitución del inmueble"],
+      "factores": {"valor_canon_pct": 0.05, "afiliado_colsubsidio": 0.9}
+    },
+    {
+      "id": "cs-colectivo-empresas",
+      "tipo": "pyme",
+      "nombre": "Seguros Colectivos Empresariales Colsubsidio",
+      "aseguradora": "Seguros Colsubsidio (aliado MetLife)",
+      "paises": ["CO"],
+      "suma_base_usd": 150000,
+      "prima_base_usd": 45.0,
+      "coberturas": ["Vida grupo para empleados", "Exequial colectivo", "Accidentes personales colectivo", "Tarifas por volumen para empresas afiliadas", "Bienestar y retención de talento"],
+      "factores": {"actividad_riesgo_alta": 1.4, "afiliado_colsubsidio": 0.9}
     }
   ]
 }

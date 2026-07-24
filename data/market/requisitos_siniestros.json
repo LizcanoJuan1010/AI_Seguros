@@ -1,0 +1,64 @@
+{
+  "descripcion": "Documentos de soporte para el primer aviso de siniestro (FNOL) por tipo de seguro. Data-driven: claims_ai.py los consume igual que intake.py consume requisitos_seguros.json.",
+  "por_tipo": {
+    "auto": {
+      "documentos": [
+        "Fotos del vehículo y de los daños (mínimo 3 ángulos)",
+        "Tarjeta de propiedad del vehículo",
+        "Licencia de conducción vigente de quien conducía",
+        "Denuncia ante autoridad (obligatoria en hurto o daños a terceros)",
+        "Cotización o factura de la reparación (si ya la tiene)"
+      ]
+    },
+    "vida": {
+      "documentos": [
+        "Registro civil de defunción",
+        "Cédula del asegurado y de los beneficiarios",
+        "Historia clínica o acta de levantamiento (según el caso)",
+        "Formulario de reclamación firmado por los beneficiarios"
+      ]
+    },
+    "salud": {
+      "documentos": [
+        "Historia clínica o epicrisis de la atención",
+        "Facturas y soportes de los gastos médicos",
+        "Órdenes y fórmulas médicas relacionadas"
+      ]
+    },
+    "hogar": {
+      "documentos": [
+        "Fotos de los daños o del sitio del hurto",
+        "Denuncia ante autoridad (obligatoria en hurto)",
+        "Facturas, avalúos o cotizaciones de los bienes afectados"
+      ]
+    },
+    "viaje": {
+      "documentos": [
+        "Tiquetes y comprobante del viaje",
+        "Soportes del evento (constancia médica, denuncio, carta de la aerolínea)",
+        "Facturas de los gastos incurridos"
+      ]
+    },
+    "accidentes": {
+      "documentos": [
+        "Historia clínica o epicrisis de la atención de urgencias",
+        "Incapacidad médica (si aplica)",
+        "Facturas y soportes de gastos"
+      ]
+    },
+    "pyme": {
+      "documentos": [
+        "Fotos de los daños o inventario afectado",
+        "Denuncia ante autoridad (si aplica)",
+        "Facturas, contabilidad o avalúos que soporten la pérdida"
+      ]
+    }
+  },
+  "default": {
+    "documentos": [
+      "Documento de identidad del asegurado",
+      "Soportes del evento (fotos, constancias, denuncias)",
+      "Facturas o cotizaciones de la pérdida"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+# Dependencias y build
+node_modules/
+dist/
+coverage/
+
+# Código generado por Prisma (no formatear)
+src/generated/
+
+# Migraciones y lockfiles
+package-lock.json

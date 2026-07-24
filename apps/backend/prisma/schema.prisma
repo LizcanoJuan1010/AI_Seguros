@@ -1,0 +1,420 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  AGENTE @map("agente")
+  GERENTE @map("gerente")
+  ADMIN @map("admin")
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVO @map("activo")
+  INACTIVO @map("inactivo")
+  VACACIONES @map("vacaciones")
+
+  @@map("user_status")
+}
+
+enum InsuranceType {
+  VIDA @map("vida")
+  AUTO @map("auto")
+  SALUD @map("salud")
+
+  @@map("insurance_type")
+}
+
+enum CallStatus {
+  EN_CURSO @map("en_curso")
+  COMPLETADA @map("completada")
+  ABANDONADA @map("abandonada")
+  TRANSFERIDA_HUMANO @map("transferida_humano")
+  FALLIDA @map("fallida")
+
+  @@map("call_status")
+}
+
+enum LeadIntent {
+  CALIENTE @map("caliente")
+  TIBIO @map("tibio")
+  FRIO @map("frio")
+
+  @@map("lead_intent")
+}
+
+enum LeadStatus {
+  NUEVO @map("nuevo")
+  CONTACTADO @map("contactado")
+  COTIZADO @map("cotizado")
+  NEGOCIACION @map("negociacion")
+  CERRADO_GANADO @map("cerrado_ganado")
+  CERRADO_PERDIDO @map("cerrado_perdido")
+
+  @@map("lead_status")
+}
+
+enum QuoteStatus {
+  BORRADOR @map("borrador")
+  ENVIADA @map("enviada")
+  ACEPTADA @map("aceptada")
+  RECHAZADA @map("rechazada")
+  VENCIDA @map("vencida")
+
+  @@map("quote_status")
+}
+
+enum PolicyStatus {
+  VIGENTE @map("vigente")
+  CANCELADA @map("cancelada")
+  VENCIDA @map("vencida")
+  SUSPENDIDA @map("suspendida")
+
+  @@map("policy_status")
+}
+
+enum SpeakerType {
+  IA @map("ia")
+  CLIENTE @map("cliente")
+
+  @@map("speaker_type")
+}
+
+enum PaymentStatus {
+  PENDING @map("pending")
+  APPROVED @map("approved")
+  DECLINED @map("declined")
+  VOIDED @map("voided")
+  ERROR @map("error")
+  REFUND_REQUESTED @map("refund_requested")
+
+  @@map("payment_status")
+}
+
+enum ClaimStatus {
+  REPORTADO @map("reportado")
+  EN_REVISION @map("en_revision")
+  DOCS_PENDIENTES @map("docs_pendientes")
+  APROBADO @map("aprobado")
+  RECHAZADO @map("rechazado")
+  PAGADO @map("pagado")
+
+  @@map("claim_status")
+}
+
+enum EventType {
+  LLAMADA_SALIENTE @map("llamada_saliente")
+  WHATSAPP @map("whatsapp")
+  EMAIL @map("email")
+  REUNION @map("reunion")
+  NOTA @map("nota")
+  CAMBIO_ESTADO @map("cambio_estado")
+  REASIGNACION @map("reasignacion")
+
+  @@map("event_type")
+}
+
+model Team {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  managerId String?  @map("manager_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  manager   User?      @relation("TeamManager", fields: [managerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_teams_manager")
+  users     User[]     @relation("TeamMembers")
+  alerts    Alert[]
+  customers Customer[]
+  leads     Lead[]
+  quotes    Quote[]
+  policies  Policy[]
+  payments  Payment[]
+  claims    Claim[]
+
+  @@map("teams")
+}
+
+model User {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId    String?    @map("team_id") @db.Uuid
+  fullName  String     @map("full_name")
+  email     String     @unique
+  phone     String?
+  role         UserRole   @default(AGENTE)
+  status       UserStatus @default(ACTIVO)
+  avatarUrl    String?    @map("avatar_url")
+  passwordHash String?    @map("password_hash")
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team         Team?       @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "users_team_id_fkey")
+  managedTeams Team[]      @relation("TeamManager")
+  leads        Lead[]
+  leadEvents   LeadEvent[]
+  quotes       Quote[]
+  policies     Policy[]
+  alerts       Alert[]
+
+  @@map("users")
+}
+
+model Customer {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?   @map("team_id") @db.Uuid
+  fullName      String?   @map("full_name")
+  email         String?
+  phone         String?
+  documentType  String?   @default("CC") @map("document_type")
+  documentId    String?   @map("document_id")
+  birthDate     DateTime? @map("birth_date") @db.Date
+  city          String?
+  department    String?
+  consentData   Boolean   @default(false) @map("consent_data")
+  consentAt     DateTime? @map("consent_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team     Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")
+  aiCalls  AiCall[]
+  leads    Lead[]
+  policies Policy[]
+  claims   Claim[]
+
+  @@unique([documentType, documentId])
+  @@index([teamId], map: "idx_customers_team")
+  @@index([phone], map: "idx_customers_phone")
+  @@map("customers")
+}
+
+model Product {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  insuranceType  InsuranceType @map("insurance_type")
+  name           String
+  description    String?
+  basePremiumCop Decimal?      @map("base_premium_cop") @db.Decimal(14, 2)
+  coverageSchema Json?         @map("coverage_schema") @db.JsonB
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  quotes Quote[]
+
+  @@map("products")
+}
+
+model AiCall {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId   String?     @map("customer_id") @db.Uuid
+  status       CallStatus  @default(EN_CURSO)
+  startedAt    DateTime    @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt      DateTime?   @map("ended_at") @db.Timestamptz(6)
+  durationSec  Int?        @default(dbgenerated()) @map("duration_sec")
+  recordingUrl String?     @map("recording_url")
+  summary      String?
+  intent       LeadIntent?
+  intentScore  Decimal?    @map("intent_score") @db.Decimal(3, 2)
+  sentiment    String?
+  metadata     Json?       @default("{}") @db.JsonB
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  customer Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "ai_calls_customer_id_fkey")
+  messages CallMessage[]
+  lead     Lead?
+
+  @@index([customerId], map: "idx_ai_calls_customer")
+  @@index([startedAt(sort: Desc)], map: "idx_ai_calls_started_at")
+  @@map("ai_calls")
+}
+
+model CallMessage {
+  id       String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  callId   String      @map("call_id") @db.Uuid
+  speaker  SpeakerType
+  content  String
+  spokenAt DateTime    @default(now()) @map("spoken_at") @db.Timestamptz(6)
+
+  call AiCall @relation(fields: [callId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "call_messages_call_id_fkey")
+
+  @@index([callId, spokenAt], map: "idx_call_messages_call")
+  @@map("call_messages")
+}
+
+model Lead {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId         String?       @map("team_id") @db.Uuid
+  customerId     String        @map("customer_id") @db.Uuid
+  aiCallId       String?       @unique @map("ai_call_id") @db.Uuid
+  agentId        String?       @map("agent_id") @db.Uuid
+  insuranceType  InsuranceType? @map("insurance_type")
+  status         LeadStatus    @default(NUEVO)
+  intent         LeadIntent    @default(TIBIO)
+  assignedAt     DateTime?     @map("assigned_at") @db.Timestamptz(6)
+  firstContactAt DateTime?     @map("first_contact_at") @db.Timestamptz(6)
+  closedAt       DateTime?     @map("closed_at") @db.Timestamptz(6)
+  lostReason     String?       @map("lost_reason")
+  aiNextSteps    Json?         @map("ai_next_steps") @db.JsonB
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team     Team?       @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_team_id_fkey")
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "leads_customer_id_fkey")
+  aiCall   AiCall?     @relation(fields: [aiCallId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_ai_call_id_fkey")
+  agent    User?       @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "leads_agent_id_fkey")
+  events   LeadEvent[]
+  quotes   Quote[]
+  alerts   Alert[]
+
+  @@index([agentId, status], map: "idx_leads_agent_status")
+  @@index([createdAt(sort: Desc)], map: "idx_leads_created_at")
+  @@index([teamId], map: "idx_leads_team")
+  @@map("leads")
+}
+
+model LeadEvent {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId    String    @map("lead_id") @db.Uuid
+  agentId   String?   @map("agent_id") @db.Uuid
+  eventType EventType @map("event_type")
+  notes     String?
+  payload   Json?     @default("{}") @db.JsonB
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  lead  Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
+  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+
+  @@index([leadId, createdAt], map: "idx_lead_events_lead")
+  @@map("lead_events")
+}
+
+model Quote {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?     @map("team_id") @db.Uuid
+  leadId            String      @map("lead_id") @db.Uuid
+  productId         String      @map("product_id") @db.Uuid
+  createdBy         String?     @map("created_by") @db.Uuid
+  coverage          Json        @default("{}") @db.JsonB
+  monthlyPremiumCop Decimal     @map("monthly_premium_cop") @db.Decimal(14, 2)
+  status            QuoteStatus @default(BORRADOR)
+  validUntil        DateTime?   @map("valid_until") @db.Date
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team      Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "quotes_team_id_fkey")
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "quotes_lead_id_fkey")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "quotes_product_id_fkey")
+  creator   User?    @relation(fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "quotes_created_by_fkey")
+  policy    Policy?
+
+  @@index([leadId], map: "idx_quotes_lead")
+  @@index([teamId], map: "idx_quotes_team")
+  @@map("quotes")
+}
+
+model Policy {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?      @map("team_id") @db.Uuid
+  quoteId           String       @unique @map("quote_id") @db.Uuid
+  customerId        String       @map("customer_id") @db.Uuid
+  agentId           String?      @map("agent_id") @db.Uuid
+  policyNumber      String       @unique @map("policy_number")
+  status            PolicyStatus @default(VIGENTE)
+  startDate         DateTime     @map("start_date") @db.Date
+  endDate           DateTime     @map("end_date") @db.Date
+  monthlyPremiumCop Decimal      @map("monthly_premium_cop") @db.Decimal(14, 2)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  team     Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "policies_team_id_fkey")
+  quote    Quote    @relation(fields: [quoteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_quote_id_fkey")
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_customer_id_fkey")
+  agent    User?    @relation(fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_agent_id_fkey")
+  claims   Claim[]
+
+  @@index([agentId], map: "idx_policies_agent")
+  @@index([teamId], map: "idx_policies_team")
+  @@map("policies")
+}
+
+// Reclamo / siniestro (FNOL). Lo reporta el asistente por chat/WhatsApp; el
+// triage (severidad, banderas de fraude, resumen) lo calcula el servicio IA
+// de forma determinista y queda registrado aquí para el panel gerencial.
+model Claim {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId            String?        @map("team_id") @db.Uuid
+  policyId          String?        @map("policy_id") @db.Uuid
+  customerId        String?        @map("customer_id") @db.Uuid
+  claimNumber       String         @unique @map("claim_number")
+  insuranceType     InsuranceType? @map("insurance_type")
+  status            ClaimStatus    @default(REPORTADO)
+  description       String?
+  incidentDate      DateTime?      @map("incident_date") @db.Date
+  amountEstimateCop Decimal?       @map("amount_estimate_cop") @db.Decimal(14, 2)
+  fraudScore        Decimal?       @map("fraud_score") @db.Decimal(3, 2)
+  fraudFlags        Json?          @default("[]") @map("fraud_flags") @db.JsonB
+  documents         Json?          @default("[]") @db.JsonB
+  aiSummary         String?        @map("ai_summary")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team     Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_team_id_fkey")
+  policy   Policy?   @relation(fields: [policyId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_policy_id_fkey")
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "claims_customer_id_fkey")
+
+  @@index([teamId], map: "idx_claims_team")
+  @@index([policyId], map: "idx_claims_policy")
+  @@map("claims")
+}
+
+// Pago de una póliza vía pasarela (Polar sandbox) o simulado (provider "demo").
+// Lo crea el servicio IA al generar el checkout; el estado lo actualizan el
+// webhook `POST /api/v1/payments/webhook` (order.paid / refund.*) y el polling
+// de `verificar_pago`. `reference` es la referencia SEG-... que viaja por todo
+// el flujo; `linkId` guarda el checkout_id y `transactionId` la orden de Polar.
+model Payment {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?       @map("team_id") @db.Uuid
+  reference     String        @unique
+  provider      String        @default("polar")
+  linkId        String?       @map("link_id")
+  transactionId String?       @map("transaction_id")
+  checkoutUrl   String?       @map("checkout_url")
+  amountCop     Decimal       @map("amount_cop") @db.Decimal(14, 2)
+  currency      String        @default("COP")
+  method        String?
+  status        PaymentStatus @default(PENDING)
+  concept       String?
+  sessionKey    String?       @map("session_key")
+  disputeReason String?       @map("dispute_reason")
+  metadata      Json?         @default("{}") @db.JsonB
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team Team? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "payments_team_id_fkey")
+
+  @@index([teamId], map: "idx_payments_team")
+  @@index([linkId], map: "idx_payments_link")
+  @@map("payments")
+}
+
+model Alert {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId     String?   @map("team_id") @db.Uuid
+  leadId     String?   @map("lead_id") @db.Uuid
+  agentId    String?   @map("agent_id") @db.Uuid
+  message    String
+  severity   String    @default("media")
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  team  Team? @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "alerts_team_id_fkey")
+  lead  Lead? @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "alerts_lead_id_fkey")
+  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "alerts_agent_id_fkey")
+
+  @@map("alerts")
+}

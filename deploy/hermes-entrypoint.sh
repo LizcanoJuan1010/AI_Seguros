@@ -34,6 +34,9 @@ if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     || echo "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}" >> "$HERMES_HOME/.env"
   "$HB" config set model.provider deepseek || true
   "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-chat}" || true
+  # La imagen trae un base_url de OpenRouter que rompe la auth con la key de
+  # DeepSeek (401): apúntalo siempre al endpoint oficial.
+  "$HB" config set model.base_url "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}" || true
 fi
 
 cd "$WS"   # así Hermes lee AGENTS.md del workspace
