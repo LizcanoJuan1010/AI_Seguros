@@ -46,12 +46,12 @@ Tracker branch: `feat/live-call-deepgram` → `main` (draft, no-merge until all 
 
 ## Phase 3: NestJS Gateway (`apps/backend`)
 
-- [ ] 3.1 Create `apps/backend/src/modules/live-call/live-call.module.ts` (imports `AiCallsModule`, `CallMessagesModule`)
-- [ ] 3.2 Create `live-call.gateway.ts`: `@WebSocketGateway({path:'/api/v1/live-call'})`; reject connections without valid post-connect JWT auth frame
-- [ ] 3.3 Dial outbound `ws` client to Python `/ws/voice/live`; relay binary+JSON frames both directions unmodified
-- [ ] 3.4 Create `live-call.service.ts`: `AiCallsService.openSession` wiring (`phone="web:"+claims.sub`, channel `WEB_VOICE_CALL`), `CallMessagesService` writes on `transcript_final`/`turn_end`
-- [ ] 3.5 Cascade-close + status mapping (COMPLETADA/ABANDONADA/FALLIDA), mirroring `mapCallStatus` in `elevenlabs.service.ts`
-- [ ] 3.6 Register `LiveCallModule` in `apps/backend/src/app.module.ts`
+- [x] 3.1 Create `apps/backend/src/modules/live-call/live-call.module.ts` (imports `AiCallsModule`, `CallMessagesModule`)
+- [x] 3.2 Create `live-call.gateway.ts`: `@WebSocketGateway({path:'/api/v1/live-call'})`; reject connections without valid post-connect JWT auth frame
+- [x] 3.3 Dial outbound `ws` client to Python `/ws/voice/live`; relay binary+JSON frames both directions unmodified
+- [x] 3.4 Create `live-call.service.ts`: `AiCallsService.openSession` wiring (`phone="web:"+claims.sub`, channel `WEB_VOICE_CALL`), `CallMessagesService` writes on `transcript_final`/`turn_end`
+- [x] 3.5 Cascade-close + status mapping (COMPLETADA/ABANDONADA/FALLIDA), mirroring `mapCallStatus` in `elevenlabs.service.ts`
+- [x] 3.6 Register `LiveCallModule` in `apps/backend/src/app.module.ts`
 
 ## Phase 4: Frontend (`apps/frontend`)
 
