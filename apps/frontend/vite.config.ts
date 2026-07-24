@@ -13,10 +13,12 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         // Dominio NestJS (auth, teams, leads, dashboard). Prefijo más
-        // específico primero: gana sobre '/api'.
+        // específico primero: gana sobre '/api'. ws:true además reenvía el
+        // handshake del gateway de la llamada en vivo (/api/v1/live-call).
         '/api/v1': {
           target: backendTarget,
           changeOrigin: true,
+          ws: true,
         },
         // Servicio IA (FastAPI): chat SSE, documentos, productos, insights.
         // El frontend habla siempre contra rutas relativas /api/* y Vite las

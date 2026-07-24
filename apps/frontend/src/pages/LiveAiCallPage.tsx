@@ -2,159 +2,56 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import { AiVisualizerStub, type AiOrbState } from '../features/call/AiVisualizerStub'
 import { CallControls } from '../features/call/CallControls'
 import { Icon } from '../components/ui/Icon'
-
-type CallCard = {
-  icon: string
-  label: string
-  value: string
-  hint?: string
-  tone?: 'amber'
-}
-
-type CallStep = {
-  speaker: 'ai' | 'user'
-  text: string
-  dur: number
-  /** Datos que la asesora proyecta al lado del orbe durante este paso. */
-  cards?: CallCard[]
-}
-
-/**
- * Guion demo de la llamada (voz-primero, estilo Gemini Live / modo voz GPT):
- * el orbe protagoniza la pantalla; cuando el cliente pregunta por su cuenta
- * o por valores, la asesora proyecta cards y el orbe se hace a un lado;
- * al seguir la conversación las cards se desvanecen y el orbe vuelve al centro.
- */
-const STEPS: CallStep[] = [
-  {
-    speaker: 'ai',
-    text: 'Hola, soy tu asesora Tequendama. ¿En qué te puedo ayudar hoy?',
-    dur: 4200,
-  },
-  {
-    speaker: 'user',
-    text: '"Hola, quiero saber cómo va mi cuenta."',
-    dur: 3200,
-  },
-  {
-    speaker: 'ai',
-    text: 'Claro. Este es el estado de tu cuenta al día de hoy:',
-    dur: 7500,
-    cards: [
-      {
-        icon: 'directions_car',
-        label: 'Póliza activa',
-        value: 'Auto · Mazda CX-30',
-        hint: 'Vigente hasta jul 2027',
-      },
-      {
-        icon: 'task_alt',
-        label: 'Pagos',
-        value: 'Al día',
-        hint: 'Próxima cuota: 05 de agosto',
-      },
-      {
-        icon: 'savings',
-        label: 'Ahorro acumulado con IA',
-        value: '$312.000 COP',
-        hint: 'Desde el inicio de tu póliza',
-        tone: 'amber',
-      },
-    ],
-  },
-  {
-    speaker: 'user',
-    text: '"¿Y cuánto me costaría agregar la cobertura de viajes a la costa?"',
-    dur: 3600,
-  },
-  {
-    speaker: 'ai',
-    text: 'Con cobertura nacional de viajes, tu mensualidad quedaría así:',
-    dur: 7500,
-    cards: [
-      {
-        icon: 'payments',
-        label: 'Mensualidad actual',
-        value: '$185.000 COP',
-      },
-      {
-        icon: 'add_road',
-        label: 'Con cobertura de viajes',
-        value: '$198.500 COP',
-        hint: '+$13.500 · asistencia 24/7 en carretera',
-      },
-      {
-        icon: 'auto_awesome',
-        label: 'Ahorro IA aplicado',
-        value: '15%',
-        hint: 'Por buen comportamiento de manejo',
-        tone: 'amber',
-      },
-    ],
-  },
-  {
-    speaker: 'user',
-    text: '"Me parece bien, déjame pensarlo y te confirmo."',
-    dur: 3400,
-  },
-  {
-    speaker: 'ai',
-    text: 'Perfecto, queda guardada la cotización. ¿Te ayudo con algo más?',
-    dur: 4200,
-  },
-]
+import { useLiveVoiceCall, type CallCard } from '../features/assistant/useLiveVoiceCall'
 
 function formatDuration(s: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
 export function LiveAiCallPage() {
-  const [muted, setMuted] = useState(false)
-  const [ended, setEnded] = useState(false)
+  const { status, muted, aiSpeaking, caption, cards, error, start, toggleMute, endCall } =
+    useLiveVoiceCall()
   const [sentNote, setSentNote] = useState(false)
-  const [stepIndex, setStepIndex] = useState(0)
   const [seconds, setSeconds] = useState(0)
-  const [cards, setCards] = useState<CallCard[] | null>(null)
+  const [displayCards, setDisplayCards] = useState<CallCard[] | null>(null)
   const [cardsLeaving, setCardsLeaving] = useState(false)
 
-  const step = STEPS[stepIndex]
-  const aiSpeaking = step.speaker === 'ai' && !muted && !ended
+  const ended = status === 'ended' || status === 'error'
 
-  // Avanza el guion demo mientras la llamada esté activa.
+  // Arranca la llamada real al entrar a la pantalla. `startedRef`-like guard
+  // vía `status !== 'idle'` evita un segundo intento si React StrictMode
+  // (activo en este proyecto) vuelve a montar el efecto en dev — igual, en
+  // dev vas a ver un mic-permission/reconexión de más una sola vez al
+  // cargar la página; no pasa en producción (StrictMode no duplica ahí).
   useEffect(() => {
-    if (muted || ended) return
-    const id = window.setTimeout(
-      () => setStepIndex((i) => (i + 1) % STEPS.length),
-      step.dur,
-    )
-    return () => window.clearTimeout(id)
-  }, [stepIndex, muted, ended, step.dur])
+    void start()
+  }, [start])
 
-  // Cronómetro real de la llamada.
+  // Cronómetro real: solo corre mientras la llamada está activa de verdad.
   useEffect(() => {
-    if (ended) return
+    if (status !== 'active') return
     const id = window.setInterval(() => setSeconds((s) => s + 1), 1000)
     return () => window.clearInterval(id)
-  }, [ended])
+  }, [status])
 
-  // Proyección de cards: entran con el paso que las trae y se desvanecen
-  // cuando la conversación sigue.
+  // Proyección de cards: entran cuando el turno trae tool_result y se
+  // desvanecen cuando arranca el turno siguiente (mismo timing que el guion
+  // de demo original).
   useEffect(() => {
-    const next = step.cards ?? null
-    if (next) {
-      setCards(next)
+    if (cards.length > 0) {
+      setDisplayCards(cards)
       setCardsLeaving(false)
       return
     }
     setCardsLeaving(true)
     const id = window.setTimeout(() => {
-      setCards(null)
+      setDisplayCards(null)
       setCardsLeaving(false)
     }, 500)
     return () => window.clearTimeout(id)
-  }, [stepIndex, step.cards])
+  }, [cards])
 
-  const showingCards = cards !== null && !cardsLeaving
+  const showingCards = displayCards !== null && !cardsLeaving
   const orbState: AiOrbState = ended
     ? 'ended'
     : muted
@@ -162,6 +59,15 @@ export function LiveAiCallPage() {
       : aiSpeaking
         ? 'speaking'
         : 'listening'
+
+  const captionText = ended
+    ? 'Llamada finalizada'
+    : muted
+      ? 'Micrófono silenciado'
+      : status === 'connecting'
+        ? 'Conectando con tu asesora...'
+        : (caption?.text ?? 'Contanos en qué te podemos ayudar.')
+  const captionIsUser = !ended && !muted && caption?.speaker === 'user'
 
   return (
     <div className="relative h-full min-h-[560px] overflow-hidden">
@@ -240,22 +146,27 @@ export function LiveAiCallPage() {
                   ? 'Silenciado'
                   : aiSpeaking
                     ? 'Hablando...'
-                    : 'Escuchando...'}
+                    : status === 'connecting'
+                      ? 'Conectando...'
+                      : 'Escuchando...'}
               {sentNote ? ' · Correo marcado' : ''}
             </p>
+            {error && (
+              <p className="mt-2 text-label-sm text-error">{error}</p>
+            )}
           </div>
         </div>
 
-        {/* Cards proyectadas por la asesora */}
-        {cards && (
+        {/* Cards proyectadas por la asesora (mapeadas desde tool_result) */}
+        {displayCards && (
           <div
             className={`absolute inset-x-4 bottom-28 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
               cardsLeaving ? 'call-cards-leaving' : ''
             }`}
           >
-            {cards.map((card, i) => (
+            {displayCards.map((card, i) => (
               <div
-                key={`${stepIndex}-${card.label}`}
+                key={`${card.label}-${i}`}
                 className={`call-card glass-card rounded-2xl p-5 shadow-lg ${
                   card.tone === 'amber' ? 'border-2 border-amber-cta/60' : ''
                 }`}
@@ -299,22 +210,20 @@ export function LiveAiCallPage() {
           }`}
         >
           <p
-            key={stepIndex}
+            key={captionText}
             className={`call-caption max-w-xl rounded-2xl bg-white/70 px-6 py-3 text-center text-body-md shadow-sm backdrop-blur-md ${
-              step.speaker === 'user'
-                ? 'italic text-on-surface-variant'
-                : 'text-on-surface'
+              captionIsUser ? 'italic text-on-surface-variant' : 'text-on-surface'
             } ${showingCards ? 'sm:translate-x-[-18%]' : ''}`}
           >
-            {muted ? 'Micrófono silenciado' : step.text}
+            {captionText}
           </p>
         </div>
       )}
 
       <CallControls
         muted={muted}
-        onMuteToggle={() => setMuted((v) => !v)}
-        onEnd={() => setEnded(true)}
+        onMuteToggle={toggleMute}
+        onEnd={endCall}
         onSend={() => setSentNote(true)}
       />
     </div>
