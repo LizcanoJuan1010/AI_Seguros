@@ -23,7 +23,11 @@ phases:
     chain_strategy: feature-branch-chain
     tracker_branch: feat/live-call-deepgram
   apply:
-    status: pending
+    status: in_progress
+    pr1_foundation: done
+    branch: live-call-deepgram/foundation
+    base: feat/live-call-deepgram
+    remaining_units: [pr2_python_voice, pr3_nest_gateway, pr4_frontend]
   verify:
     status: pending
   archive:
