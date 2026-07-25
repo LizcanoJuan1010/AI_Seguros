@@ -224,6 +224,10 @@ export type SendOptions = {
 export function useAssistantChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  // `hydrated` = el historial inicial de la sesión ya terminó de cargar. Sirve
+  // para no disparar un auto-envío (p. ej. `/asistente?q=...`) antes de que la
+  // carga async del historial resuelva y sobrescriba el mensaje con [].
+  const [hydrated, setHydrated] = useState(false)
   // sessionId = conversación activa (rotable con "nueva conversación").
   // chats = índice de conversaciones del dispositivo (la lista estilo ChatGPT).
   const [sessionId, setSessionId] = useState<string>(() =>
@@ -641,6 +645,7 @@ export function useAssistantChat() {
         if (token !== loadTokenRef.current) return
         const restored = mapHistoryRows(rows)
         setMessages(restored)
+        setHydrated(true)
         // Si entramos a una conversación que aún no está en el índice (migrada
         // del modelo anterior o abierta desde auditoría), la registramos.
         if (restored.length > 0 && !hasChat(tenant, id)) {
@@ -650,7 +655,9 @@ export function useAssistantChat() {
         }
       })
       .catch(() => {
-        if (token === loadTokenRef.current) setMessages([])
+        if (token !== loadTokenRef.current) return
+        setMessages([])
+        setHydrated(true)
       })
   }, [])
 
@@ -734,6 +741,7 @@ export function useAssistantChat() {
   return {
     messages,
     isStreaming,
+    hydrated,
     sessionId,
     chats,
     sendMessage,

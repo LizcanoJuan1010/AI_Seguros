@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { TeamSwitcher } from '../components/chrome/TeamSwitcher'
 import { Icon } from '../components/ui/Icon'
 import { KpiCards } from '../features/manager/KpiCards'
 import { AlertsPanel } from '../features/manager/AlertsPanel'
@@ -161,14 +160,6 @@ export function ManagerDashboardPage() {
               </span>
             )}
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <TeamSwitcher />
-          <img
-            src="/assets/avatars/manager.png"
-            alt="Gerente"
-            className="size-10 rounded-full object-cover"
-          />
         </div>
       </div>
 

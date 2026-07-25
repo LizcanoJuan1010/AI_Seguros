@@ -371,6 +371,7 @@ export function AssistantChat() {
   const {
     messages,
     isStreaming,
+    hydrated,
     sendMessage,
     sessionId,
     chats,
@@ -400,14 +401,16 @@ export function AssistantChat() {
 
   // Pregunta pre-cargada desde el inicio (`/asistente?q=...`, cards de la
   // landing): se envía una sola vez y se limpia la URL para que recargar o
-  // compartir el enlace del chat no la repita.
+  // compartir el enlace del chat no la repita. Espera a `hydrated` — si se
+  // enviara antes de que cargue el historial inicial, la carga async lo
+  // sobrescribiría con [] (carrera).
   useEffect(() => {
     const q = searchParams.get('q')?.trim()
-    if (!q || autoAskRef.current) return
+    if (!q || !hydrated || autoAskRef.current) return
     autoAskRef.current = true
     setSearchParams({}, { replace: true })
     void sendMessage(q)
-  }, [searchParams, setSearchParams, sendMessage])
+  }, [searchParams, setSearchParams, sendMessage, hydrated])
 
   /** Dictado: un toque escucha, otro detiene. El texto cae al input editable. */
   const toggleMic = () => {
