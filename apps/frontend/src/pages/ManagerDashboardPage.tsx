@@ -3,9 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { TeamSwitcher } from '../components/chrome/TeamSwitcher'
 import { Icon } from '../components/ui/Icon'
 import { KpiCards } from '../features/manager/KpiCards'
-import { AgentsTable } from '../features/manager/AgentsTable'
 import { AlertsPanel } from '../features/manager/AlertsPanel'
-import { Leaderboard } from '../features/manager/Leaderboard'
 import { ReportsCard } from '../features/manager/ReportsCard'
 import { AiPrediction } from '../features/manager/AiPrediction'
 import { AiImpactCard } from '../features/manager/AiImpactCard'
@@ -14,22 +12,18 @@ import { CustomerPortfolio } from '../features/manager/CustomerPortfolio'
 import { FunnelHealthCard } from '../features/manager/FunnelHealthCard'
 import { ProductIdeasWall } from '../features/manager/ProductIdeasWall'
 import { AgentKnowledgePanel } from '../features/manager/AgentKnowledgePanel'
-import { QueueHealthCard } from '../features/manager/QueueHealthCard'
 import { HotLeadsCard } from '../features/manager/HotLeadsCard'
-import { agents as mockAgents, alerts as mockAlerts, kpis as mockKpis, leaders } from '../data/mock/manager'
-import type { AgentRow, Alert, Kpi } from '../data/mock/types'
-import { api, formatCop, type AgentPerformance, type AiImpact, type ApiAlert, type ApiClaim, type DailyKpis } from '../lib/api'
+import { alerts as mockAlerts, kpis as mockKpis } from '../data/mock/manager'
+import type { Alert, Kpi } from '../data/mock/types'
+import { api, formatCop, type AiImpact, type ApiAlert, type ApiClaim, type DailyKpis } from '../lib/api'
 import { useTenant } from '../tenant/TenantContext'
 
-const SPARK_UP = '0,35 20,30 40,32 60,15 80,18 100,5'
-const SPARK_DOWN = '0,8 20,12 40,15 60,22 80,26 100,32'
 
-type TabId = 'resumen' | 'clientes' | 'equipo' | 'funnel' | 'reclamos' | 'agente'
+type TabId = 'resumen' | 'clientes' | 'funnel' | 'reclamos' | 'agente'
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'resumen', label: 'Resumen', icon: 'dashboard' },
   { id: 'clientes', label: 'Clientes', icon: 'diversity_3' },
-  { id: 'equipo', label: 'Equipo', icon: 'groups' },
   { id: 'funnel', label: 'Funnel', icon: 'conversion_path' },
   { id: 'reclamos', label: 'Reclamos', icon: 'health_and_safety' },
   { id: 'agente', label: 'Agente IA', icon: 'smart_toy' },
@@ -79,25 +73,6 @@ function toKpis(k: DailyKpis): Kpi[] {
   ]
 }
 
-function toAgentRows(rows: AgentPerformance[]): AgentRow[] {
-  return rows.map((r) => {
-    const conv = Number(r.conversionPct ?? 0)
-    const good = conv >= 15
-    return {
-      id: r.agentId,
-      name: r.fullName,
-      role: `${formatCop(r.revenueMensualCop)} /mes`,
-      avatar: '',
-      leads: r.leadsRecibidos,
-      calls: r.llamadasRealizadas,
-      closes: r.polizasCerradas,
-      conversion: `${conv.toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`,
-      conversionTone: good ? 'good' : 'warn',
-      spark: good ? SPARK_UP : SPARK_DOWN,
-      sparkTone: good ? 'up' : 'down',
-    }
-  })
-}
 
 function toAlerts(rows: ApiAlert[]): Alert[] {
   return rows
@@ -120,7 +95,6 @@ export function ManagerDashboardPage() {
     : 'resumen'
 
   const [kpis, setKpis] = useState<Kpi[]>(mockKpis)
-  const [agents, setAgents] = useState<AgentRow[]>(mockAgents)
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts)
   const [impact, setImpact] = useState<AiImpact | null>(null)
   const [claims, setClaims] = useState<ApiClaim[]>([])
@@ -131,14 +105,11 @@ export function ManagerDashboardPage() {
     let alive = true
     Promise.all([
       api.dailyKpis(),
-      api.agentPerformance(teamId || undefined),
       api.alerts(teamId || undefined),
     ])
-      .then(([k, perf, al]) => {
+      .then(([k, al]) => {
         if (!alive) return
         setKpis(toKpis(k))
-        if (perf.data.length) setAgents(toAgentRows(perf.data))
-        else setAgents([])
         const mapped = toAlerts(al.data)
         setAlerts(mapped.length ? mapped : [])
         setLive(true)
@@ -255,24 +226,6 @@ export function ManagerDashboardPage() {
       )}
 
       {activeTab === 'clientes' && <CustomerPortfolio />}
-
-      {activeTab === 'equipo' && (
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-6 lg:flex-row">
-            {agents.length ? (
-              <AgentsTable agents={agents} />
-            ) : (
-              <div className="flex flex-1 items-center justify-center rounded-lg border border-outline-variant bg-surface-container-lowest p-12 text-sm text-on-surface-variant">
-                Este equipo aún no tiene actividad registrada.
-              </div>
-            )}
-            <aside className="flex w-full flex-col gap-6 lg:w-80">
-              <Leaderboard entries={leaders} />
-            </aside>
-          </div>
-          <QueueHealthCard />
-        </div>
-      )}
 
       {activeTab === 'funnel' && (
         <div className="flex flex-col gap-6">

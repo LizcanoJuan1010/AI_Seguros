@@ -215,12 +215,12 @@ export const featureCards: FeatureCard[] = [
     to: '/gerente',
   },
   {
-    id: 'vendedor',
-    icon: 'badge',
-    title: 'Bandeja de leads',
-    desc: 'Cola priorizada con scoring HOT/WARM/COLD por canal, lista para que el vendedor cierre.',
+    id: 'clientes',
+    icon: 'diversity_3',
+    title: 'Cartera de clientes 360',
+    desc: 'Expediente completo de cada cliente con scoring HOT/WARM/COLD, riesgo, pólizas y conversación con la IA.',
     category: 'experiencias',
-    to: '/vendedor',
+    to: '/gerente?tab=clientes',
   },
   {
     id: 'embed',

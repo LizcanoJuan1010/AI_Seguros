@@ -28,10 +28,10 @@ const shortcuts: Shortcut[] = [
     tone: 'amber',
   },
   {
-    to: '/vendedor',
-    icon: 'badge',
-    title: 'Vendedor',
-    hint: 'Leads y oportunidades',
+    to: '/gerente?tab=clientes',
+    icon: 'diversity_3',
+    title: 'Clientes',
+    hint: 'Cartera y expediente 360',
     requiresAuth: true,
   },
   {
