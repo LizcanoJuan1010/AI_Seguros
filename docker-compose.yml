@@ -4,7 +4,12 @@
 # Servicios opcionales (voz, agente Hermes, baileys) bajo perfiles.
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector (no postgres:16-alpine liso): el schema `docket` del
+    # motor de versionado/QA de prompts necesita la extensión `vector`
+    # (docket.call_turns.embedding). Supabase la trae disponible de fábrica —
+    # este swap solo hace que el Postgres local de desarrollo se comporte
+    # igual; no hace falta ningún cambio equivalente en el Supabase real.
+    image: pgvector/pgvector:pg16
     environment:
       - POSTGRES_USER=seguria
       - POSTGRES_PASSWORD=seguria
@@ -51,7 +56,10 @@ services:
       - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
       # Secreto del webhook de Polar (Standard Webhooks): firma del webhook de pagos
       - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET:-}
+      # ELEVENLABS_WEBHOOK_SECRET: header simple de POST /elevenlabs/init (inicio de llamada).
       - ELEVENLABS_WEBHOOK_SECRET=${ELEVENLABS_WEBHOOK_SECRET:-demo-elevenlabs-secret-2026}
+      # ELEVENLABS_POSTCALL_SECRET: firma HMAC de POST /elevenlabs/webhook (post-call).
+      - ELEVENLABS_POSTCALL_SECRET=${ELEVENLABS_POSTCALL_SECRET:-demo-elevenlabs-postcall-secret-2026}
       # Perfilamiento post-llamada: el backend llama de vuelta al servicio IA
       # (primera llamada NestJS->Python del sistema; hasta ahora todo iba al revés).
       - AI_SERVICE_URL=${AI_SERVICE_URL:-http://seguria-ai:8085}
@@ -100,6 +108,8 @@ services:
       - WA_GATEWAY_URL=${WA_GATEWAY_URL:-}
       - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}
       - WA_GATEWAY_TENANT=${WA_GATEWAY_TENANT:-tequendama}
+      # Motor de versionado/QA de prompts (docket, ver app/docket_engine/). false = demo.
+      - DOCKET_ENGINE_ENABLED=${DOCKET_ENGINE_ENABLED:-false}
       - SEGURIA_DATA_DIR=/data/market
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Seguro embebido (quote & bind para aliados) y TTS del chat web
@@ -169,6 +179,34 @@ services:
       - API_KEY=${BAILEYS_API_KEY:-seguria-baileys}
     volumes:
       - baileys-instances:/data/instances
+    restart: unless-stopped
+
+  # Agente de voz saliente (Deepgram Voice Agent API + Twilio), adaptado del
+  # reference implementation de Deepgram (deepgram-devs/deepgram-voice-agent-
+  # outbound-telephony) para Tequendama Seguros: español colombiano, seguro
+  # de vehículo, Verified Caller ID en vez de número comprado. Necesita
+  # SERVER_EXTERNAL_URL apuntando a un túnel público (ngrok) para que Twilio
+  # pueda abrir el WebSocket de audio de vuelta — no funciona sin eso.
+  deepgram-outbound:
+    build: ./apps/services/deepgram-outbound
+    image: seguria/deepgram-outbound:latest
+    profiles: ["voice-outbound"]
+    ports:
+      - "8082:8080"
+    environment:
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - SERVER_EXTERNAL_URL=${DEEPGRAM_SERVER_EXTERNAL_URL:-}
+      - STT_MODEL=${DEEPGRAM_STT_MODEL:-nova-3}
+      - STT_LANGUAGE=${DEEPGRAM_STT_LANGUAGE:-es}
+      - LLM_MODEL=${DEEPGRAM_LLM_MODEL:-gpt-4o-mini}
+      - LLM_PROVIDER=${DEEPGRAM_LLM_PROVIDER:-open_ai}
+      - VOICE_MODEL=${DEEPGRAM_VOICE_MODEL:-aura-2-celeste-es}
+      - TTS_PROVIDER=deepgram
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      # Verified Caller ID (+573203199867), NO un número comprado.
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
+      - ENDPOINT_SECRET=${DEEPGRAM_ENDPOINT_SECRET:-}
     restart: unless-stopped
 
 volumes:

@@ -28,7 +28,7 @@ log = logging.getLogger("seguria.agent")
 
 MAX_TOOL_ROUNDS = 5
 
-SYSTEM_PROMPT_CLIENTE = """Eres SegurIA, asesora digital de seguros para Latinoamérica (Colsubsidio), al estilo de Erica de Bank of America: cercana, resolutiva y experta. Respondes en el idioma del cliente (español por defecto). Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurada" en el mismo chat, sin humano.
+SYSTEM_PROMPT_CLIENTE_DEFAULT = """Eres SegurIA, asesora digital de seguros para Latinoamérica (Colsubsidio), al estilo de Erica de Bank of America: cercana, resolutiva y experta. Respondes en el idioma del cliente (español por defecto). Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurada" en el mismo chat, sin humano.
 
 CIERRE AUTÓNOMO (esto es lo que te diferencia):
 - TÚ cierras la venta y emites la póliza aquí mismo. Colsubsidio DISTRIBUYE; la aseguradora EMITE; tú operas ese cierre. NUNCA digas que "un asesor licenciado cierra" ni derives el cierre a un humano por defecto.
@@ -51,9 +51,10 @@ RECOLECCIÓN DE INFORMACIÓN REAL (para poder emitir de verdad):
 CÓMO CERRAR (usa las herramientas, en este orden):
 1. `capturar_datos_cliente` — pide nombre completo y número de documento (CC). Fecha de nacimiento, email y ciudad son deseables pero opcionales. Pídelos de forma natural, no como formulario.
 2. `registrar_consentimiento(acepta=true)` — OBLIGATORIO antes de emitir. Explica breve: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin un "sí" explícito del cliente NO emites.
-3. `evaluar_riesgo(insurance_type, monthly_premium_cop)` — underwriting OBLIGATORIO antes de cobrar. Si la decisión es AUTO_APPROVE sigue al pago; si es REFER, explica con calidez que un asesor revisa el caso y confirma en <24h (NO cobres ni emitas); si es DECLINE, sé honesto y ofrece una alternativa.
-4. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
-5. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
+3. `evaluar_riesgo(insurance_type, monthly_premium_cop)` — underwriting OBLIGATORIO antes de cobrar. Si la decisión es AUTO_APPROVE sigue al siguiente paso; si es REFER, explica con calidez que un asesor revisa el caso y confirma en <24h (NO cobres ni emitas); si es DECLINE, sé honesto y ofrece una alternativa.
+4. `generar_firma_poliza()` — OBLIGATORIO tras el AUTO_APPROVE y ANTES de cobrar: le manda al cliente un link de un solo clic (WhatsApp/correo) para AUTORIZAR la emisión (firma electrónica, Ley 527/1999). Dile que revise WhatsApp o su correo y haga clic en "Acepto"; sin esa autorización `emitir_poliza` va a fallar. Si el cliente confirma que ya hizo clic, continúa (no hay una herramienta de "verificar firma": simplemente intenta el siguiente paso).
+5. Pago: pregunta cómo prefiere pagar. Si elige tarjeta débito/crédito, usa `generar_link_pago(monto_cop)` con la prima mensual cotizada y entrégale el enlace: el pago ocurre en la página segura de la pasarela (Polar), en pesos colombianos. NUNCA pidas números de tarjeta, CVV ni claves en el chat. Cuando el cliente diga que ya pagó, confirma con `verificar_pago`; solo con estado APPROVED continúas. Si prefiere dejarlo simulado (o la pasarela no está disponible), usa payment_method="simulado".
+6. `emitir_poliza(insurance_type, monthly_premium_cop, coverage, payment_method, payment_reference)` — emite la póliza real (con pago real pasa payment_method="tarjeta" y el payment_reference del pago aprobado). Si falta la firma, te va a devolver un error pidiéndote llamar `generar_firma_poliza` — hazlo y pide al cliente que la complete antes de reintentar. Al recibir el número de póliza, CONFIRMA con calidez: "¡Ya quedaste asegurada! Tu póliza es N.º ...", entrega el enlace de descarga y menciona el derecho de retracto (5 días hábiles, Ley 1480/2011).
 
 POSVENTA DE PAGOS: si el cliente reporta un cobro errado o duplicado, quiere el reembolso o ejerce su derecho de retracto, usa `solicitar_aclaracion(motivo)`: intenta la anulación en línea y, si no se puede, deja la aclaración registrada. Explícale el resultado y los tiempos con transparencia.
 
@@ -87,9 +88,34 @@ def _load_conocimiento() -> str:
 
 _CONOCIMIENTO_COLSUBSIDIO = _load_conocimiento()
 if _CONOCIMIENTO_COLSUBSIDIO:
-    SYSTEM_PROMPT_CLIENTE = f"{SYSTEM_PROMPT_CLIENTE}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
+    SYSTEM_PROMPT_CLIENTE_DEFAULT = f"{SYSTEM_PROMPT_CLIENTE_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
 
-SYSTEM_PROMPT_GERENTE = """Eres SegurIA en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
+
+def _web_handoff_suffix() -> str:
+    """Ajuste de rol SOLO para el canal web (nunca WhatsApp, ver `run_agent`/
+    `assistant._run_llm`): ahí el cierre autónomo sigue siendo el objetivo,
+    pero el chat web es más informativo y no insiste — ofrece cerrar una vez
+    y, si el cliente no muestra intención clara, invita a seguir por WhatsApp
+    sin presionar más. Lo que ya se cotizó/capturó sigue disponible allá
+    (misma sesión particionada por phone, ver session_key)."""
+    from .config import WHATSAPP_BUSINESS_NUMBER
+    numero = f" ({WHATSAPP_BUSINESS_NUMBER})" if WHATSAPP_BUSINESS_NUMBER else ""
+    return f"""
+
+CANAL: chat WEB (no WhatsApp). Aquí tu rol es más informativo que en WhatsApp:
+descubre la necesidad y cotiza con calma, explicando coberturas bien. SÍ puedes
+ofrecer cerrar la venta ahí mismo (no le niegues el cierre si el cliente insiste
+en hacerlo ya), pero ofrécelo UNA sola vez por conversación. Si el cliente no
+muestra intención clara de comprar ahora, NO insistas más: dile con calidez
+algo como "bueno, si prefieres algo más cómodo o quieres más información,
+escríbenos por WhatsApp{numero}" y sigue resolviendo dudas sin presionar. Todo
+lo que ya cotizó o contó acá sigue disponible si continúa por WhatsApp — no le
+hagas repetir nada."""
+
+
+WEB_HANDOFF_SUFFIX = _web_handoff_suffix()
+
+SYSTEM_PROMPT_GERENTE_DEFAULT = """Eres SegurIA en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
 
 - Usa la herramienta `obtener_insights` para toda cifra (KPIs, funnel, países, productos, serie temporal). Nunca inventes datos.
 - No vuelques JSON: responde la pregunta con 3-5 datos clave, una comparación relevante y UNA recomendación accionable.
@@ -98,6 +124,33 @@ SYSTEM_PROMPT_GERENTE = """Eres SegurIA en modo analista para un GERENTE verific
 - Termina cada respuesta con la línea:
 SUGERENCIAS: pregunta 1 | pregunta 2
 con 2 análisis de profundización que probablemente quiera (ej. "¿Dónde se caen los leads? | Compárame Colombia vs México")."""
+
+
+def _load_active_prompt(campaign_slug: str, default_text: str) -> str:
+    """Versión más reciente del prompt en `docket.versions` (motor de
+    versionado/QA, ver app/docket_engine/), o `default_text` si el motor está
+    apagado, la tabla no existe todavía o la conexión falla — nunca rompe el
+    arranque del servicio (mismo criterio fail-open que `_load_conocimiento`)."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED:
+        return default_text
+    try:
+        from .docket_engine import store as _docket_store
+        c = _docket_store.conn()
+        try:
+            text = _docket_store.latest_prompt_text(c, campaign_slug)
+        finally:
+            c.close()
+        if text:
+            log.info("prompt activo de docket para %s: cargado desde docket.versions", campaign_slug)
+            return text
+    except Exception:
+        log.warning("no se pudo leer docket.versions para %s; uso el prompt por defecto", campaign_slug)
+    return default_text
+
+
+SYSTEM_PROMPT_CLIENTE = _load_active_prompt("tequendama-cliente", SYSTEM_PROMPT_CLIENTE_DEFAULT)
+SYSTEM_PROMPT_GERENTE = _load_active_prompt("tequendama-gerente", SYSTEM_PROMPT_GERENTE_DEFAULT)
 
 TOOLS_SCHEMA = [
     {"type": "function", "function": {
@@ -149,6 +202,10 @@ TOOLS_SCHEMA = [
         "description": "Registra el consentimiento de habeas data (Ley 1581/2012). OBLIGATORIO antes de emitir. Sin acepta=true no se puede emitir la póliza.",
         "parameters": {"type": "object", "required": ["acepta"], "properties": {
             "acepta": {"type": "boolean", "description": "true si el cliente autorizó explícitamente el tratamiento de sus datos"}}}}},
+    {"type": "function", "function": {
+        "name": "generar_firma_poliza",
+        "description": "Envía por WhatsApp/correo un link de un solo clic para que el cliente AUTORICE la emisión de la póliza (firma electrónica, Ley 527/1999). OBLIGATORIO después de evaluar_riesgo (AUTO_APPROVE) y ANTES de emitir_poliza — sin esto emitir_poliza falla. Idempotente: si ya hay un link vigente sin abrir, no reenvía otro.",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "evaluar_riesgo",
         "description": "Underwriting semiautónomo: evalúa si la póliza elegida puede emitirse automáticamente. OBLIGATORIO después del consentimiento y ANTES de cobrar/emitir. AUTO_APPROVE = continúa con pago y emisión; REFER = un gerente debe aprobar (NO cobres ni emitas: explica que un asesor confirma en <24h); DECLINE = no asegurable por este canal, ofrece alternativas.",
@@ -409,6 +466,13 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
         return {"error": "falta el consentimiento de habeas data (Ley 1581/2012); "
                          "regístralo con registrar_consentimiento antes de emitir",
                 "necesita": "registrar_consentimiento"}
+
+    from . import esign
+    if not esign.is_signed(conn, session_key, "autorizacion_poliza"):
+        return {"error": "falta la autorización firmada (link de un clic) antes de "
+                         "emitir; usa generar_firma_poliza si el cliente todavía no "
+                         "la recibió",
+                "necesita": "generar_firma_poliza"}
 
     insurance_type = (str(args.get("insurance_type") or "").strip().upper() or "VIDA")
     try:
@@ -694,6 +758,25 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             return {"ok": True, "consentimiento": True,
                     "mensaje": "Consentimiento de habeas data registrado."}
 
+        if name == "generar_firma_poliza":
+            from . import esign
+            pending = esign.latest_pending(conn, session_key, "autorizacion_poliza")
+            if pending:
+                return {"ok": True, "ya_enviado": True, "status": pending["status"],
+                        "mensaje": "ya hay un link de autorización vigente sin abrir; "
+                                  "dile al cliente que revise WhatsApp o su correo"}
+            sess = _get_checkout(conn, session_key)
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            result = esign.request_signature(conn, session_key, tenant_id,
+                                             phone=real_phone, email=sess.get("email"))
+            if not (real_phone or sess.get("email")):
+                result = {**result, "aviso": "no hay teléfono ni correo del cliente; "
+                                             "captúralos con capturar_datos_cliente primero"}
+            result["mensaje"] = ("Explícale al cliente con calidez que le llega un link "
+                                 "por WhatsApp/correo para autorizar su póliza con un solo "
+                                 "clic; sin eso no se puede emitir. El link vence en unas horas.")
+            return result
+
         if name == "evaluar_riesgo":
             from . import underwriting
             uw = underwriting.evaluate(
@@ -930,6 +1013,8 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     if role != "gerente" and phone in MANAGER_PHONES:
         role = "gerente"
     system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_CLIENTE
+    if role == "cliente" and phone.startswith("web:"):
+        system = f"{system}{WEB_HANDOFF_SUFFIX}"
 
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
     history = _load_history(hist_key)
@@ -1011,5 +1096,30 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     _append_history(hist_key, new_msgs)
 
     documents = [a["download_url"] for a in actions if a.get("download_url")]
+    _sync_turn_to_docket(role, user_message, reply)
     return {"reply": reply, "quick_replies": quick_replies, "actions": actions,
             "role": role, "documents": documents}
+
+
+def _sync_turn_to_docket(role: str, user_message: str, reply: str) -> None:
+    """Alimenta el motor de versionado/QA (docket, ver app/docket_engine/) con
+    el turno real recién ocurrido — fire-and-forget, nunca bloquea ni rompe la
+    respuesta al cliente si falla."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED or not reply:
+        return
+    try:
+        import uuid
+
+        from .docket_engine import store as _docket_store
+        campaign_slug = "tequendama-gerente" if role == "gerente" else "tequendama-cliente"
+        turns = [{"role": "customer", "text": user_message}, {"role": "agent", "text": reply}]
+        transcript = f"Cliente: {user_message}\nSegurIA: {reply}"
+        c = _docket_store.conn()
+        try:
+            _docket_store.insert_call(c, campaign_slug, str(uuid.uuid4()), transcript, turns)
+            c.commit()
+        finally:
+            c.close()
+    except Exception:
+        log.warning("no se pudo sincronizar el turno hacia docket (campaña=%s)", role, exc_info=True)

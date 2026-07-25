@@ -36,6 +36,16 @@ if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-chat}" || true
 fi
 
+# 3.5) Silenciar las notas internas de self-improvement (memoria/skills) del
+# gateway: por defecto Hermes manda "💾 Memory updated" / "💾 Skill 'X' created"
+# como mensaje de chat tras cada turno — y eso incluye WhatsApp, el cliente
+# real las ve. El aprendizaje/las escrituras de memoria siguen ocurriendo
+# igual; esto solo apaga el aviso en el canal del cliente (ver
+# display.memory_notifications en la doc de Hermes). Idempotente, corre siempre.
+"$HB" config set display.memory_notifications off || true
+"$HB" config set display.platforms.whatsapp.memory_notifications off || true
+"$HB" config set display.tool_progress off || true
+
 cd "$WS"   # así Hermes lee AGENTS.md del workspace
 
 MODE="${HERMES_MODE:-gateway}"

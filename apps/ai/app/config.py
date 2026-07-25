@@ -112,6 +112,27 @@ WA_GATEWAY_URL = os.getenv("WA_GATEWAY_URL", "")
 WA_GATEWAY_WEBHOOK_SECRET = os.getenv("WA_GATEWAY_WEBHOOK_SECRET", "")
 WA_GATEWAY_TENANT = os.getenv("WA_GATEWAY_TENANT", "tequendama")
 
+# Número de WhatsApp del negocio (el ya emparejado con el gateway Baileys) que
+# el chat WEB le ofrece al cliente cuando prefiere continuar por ahí (ver
+# agent_core.WEB_HANDOFF_SUFFIX). Solo texto para mostrar, ej. "+57 300 000 0000".
+WHATSAPP_BUSINESS_NUMBER = os.getenv("WHATSAPP_BUSINESS_NUMBER", "")
+
+# URL pública donde vive ESTE servicio (seguria-ai), para construir links que
+# el cliente pueda abrir de verdad fuera de la red interna: descarga de
+# documentos por WhatsApp y el link de firma electrónica (ver esign.py). Sin
+# esto configurado, esos links quedan como ruta relativa (rota fuera de la SPA).
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
+# Firma electrónica in-house (clickwrap): TTL del magic link.
+ESIGN_LINK_TTL_MINUTES = int(os.getenv("ESIGN_LINK_TTL_MINUTES", "60"))
+
+# Motor de versionado/QA de prompts (docket-motor, adaptado — ver
+# app/docket_engine/). Sin monitoreo en vivo (esa pieza del repo original es
+# enterprise-only en ElevenLabs, descartada). Default False: sin esto, el
+# proyecto sigue leyendo los prompts hardcodeados de agent_core.py, igual
+# que siempre — cero riesgo para quien no lo active.
+DOCKET_ENGINE_ENABLED = os.getenv("DOCKET_ENGINE_ENABLED", "false").lower() == "true"
+
 # Backend NestJS (sistema de registro del dominio): expone POST /api/v1/checkout
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo
 # del asistente llama a este servicio. Default apto para docker-compose.
@@ -136,3 +157,38 @@ BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
 BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Estudio de banners de marketing (correo / Instagram / LinkedIn) generados con
+# Gemini (familia "Nano Banana"). Default gemini-3.1-flash-image: mejor
+# renderizado de texto que el 2.5 (pionero, ya legacy) — crítico porque el
+# titular se escribe DENTRO de la imagen. gemini-3-pro-image es la opción
+# premium (más lenta/cara) para banners con más texto o más detalle.
+# Sin GEMINI_API_KEY el endpoint corre en modo demo (no genera nada, igual
+# que el resto del stack sin keys).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+BANNERS_DIR = Path(os.getenv("SEGURIA_BANNERS_DIR", BASE_DIR.parent / "generated_banners"))
+BANNERS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Paleta de marca de Colsubsidio (distribuidor), tomada de sus design tokens
+# públicos (--color-blue/--color-yellow del CSS de colsubsidio.com) — para que
+# los banners de campaña combinen con su sitio, no con el verde de Tequendama.
+COLSUBSIDIO_PALETTE = {
+    "azul": "#0067B1",
+    "azul_fondo": "#F0F9F7",
+    "amarillo": "#FFD000",
+    "amarillo_claro": "#FFEC99",
+    "amarillo_fondo": "#FFFDF4",
+    "gris_texto": "#333333",
+    "blanco": "#FFFFFF",
+}
+
+# Envío masivo de WhatsApp por campaña (ver campaign_broadcast.py). 8s fijos
+# entre envíos: el gateway Baileys reusado NO es oficial (riesgo real de ban
+# por detección de bulk, no un rate-limit de API como el de Resend en
+# email_service.py) — ver docs/PLAN.md sobre "Baileys solo para demo".
+CAMPAIGN_SEND_DELAY_SECONDS = int(os.getenv("CAMPAIGN_SEND_DELAY_SECONDS", "8"))
+# Tope por llamada a /api/marketing/campaigns/broadcast (el backend NestJS ya
+# rechaza segmentos más grandes antes de llegar acá; esto es una segunda
+# barrera del lado del servicio que de verdad envía).
+CAMPAIGN_BROADCAST_MAX = int(os.getenv("CAMPAIGN_BROADCAST_MAX", "300"))

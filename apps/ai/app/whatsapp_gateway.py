@@ -41,3 +41,53 @@ def enviar_whatsapp(phone: str, text: str) -> bool:
     except Exception as exc:
         log.warning("no se pudo enviar WhatsApp a %s: %s", phone, exc)
         return False
+
+
+def _sintetizar(text: str) -> bytes | None:
+    """MP3 del texto vía Kokoro-FastAPI (el mismo TTS que ya usa el chat web
+    en `/api/assistant/tts`, perfil `voz` del compose). None si el servicio
+    no responde — nunca rompe el turno."""
+    from .config import TTS_URL, TTS_VOICE
+    try:
+        resp = requests.post(
+            f"{TTS_URL}/v1/audio/speech",
+            json={"model": "kokoro", "voice": TTS_VOICE, "input": text[:600],
+                 "response_format": "mp3"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.content
+    except Exception as exc:
+        log.info("TTS no disponible para nota de voz (%s): %s", text[:40], exc)
+        return None
+
+
+def enviar_nota_voz(phone: str, text: str) -> bool:
+    """Sintetiza `text` con Kokoro y lo envía como nota de voz por WhatsApp
+    vía `POST {WA_GATEWAY_URL}/send-audio` (audio en base64, mp3). Este
+    endpoint es NUEVO: hoy solo `/send` (texto) existe confirmado en el
+    gateway Baileys reusado — antes de depender de esta función en
+    producción, hay que agregar `/send-audio` en ESE gateway (ver nota en
+    docs/AUDITORIA.md). Degrada limpio a False (nunca rompe el turno) si el
+    TTS o el gateway no responden — el texto ya se manda aparte."""
+    if not enabled():
+        log.info("WA_GATEWAY no configurado: no se envía nota de voz a %s (demo)", phone)
+        return False
+    audio = _sintetizar(text)
+    if audio is None:
+        return False
+    import base64
+    digits = phone.lstrip("+")
+    try:
+        resp = requests.post(
+            f"{WA_GATEWAY_URL}/send-audio",
+            json={"tenant": WA_GATEWAY_TENANT, "to": digits,
+                 "audio_base64": base64.b64encode(audio).decode(), "mimetype": "audio/mpeg"},
+            timeout=_TIMEOUT,
+            headers={"x-webhook-secret": WA_GATEWAY_WEBHOOK_SECRET},
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        log.info("gateway sin /send-audio todavía (o falló) para %s: %s", phone, exc)
+        return False

@@ -3,20 +3,23 @@
 Consumida por las skills del agente Hermes (vía HTTP) y por la SPA (chat + panel gerencial).
 """
 import json
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import (BackgroundTasks, Depends, FastAPI, File, Header,
-                     HTTPException, Response, UploadFile)
+                     HTTPException, Request, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
+from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
+from .marketing_studio import router as marketing_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
@@ -52,6 +55,8 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
+app.include_router(marketing_router)  # /api/marketing/* (banners de campaña con Gemini)
+app.include_router(campaign_broadcast_router)  # /api/marketing/campaigns/broadcast (envío masivo)
 
 
 class ChatRequest(BaseModel):
@@ -321,6 +326,15 @@ class CallProfilingRequest(BaseModel):
         description="Transcript de ElevenLabs: [{role, message, time_in_call_secs}]")
 
 
+class DocketIngestRequest(BaseModel):
+    """Shape mínimo para alimentar el motor de versionado/QA de prompts
+    (docket, ver app/docket_engine/) con una llamada real ya terminada."""
+    conversation_id: str | None = Field(None, description="conversation_id de ElevenLabs, si existe")
+    transcript: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Igual shape que CallProfilingRequest.transcript: [{role, message}]")
+
+
 # ---------- Catálogo ----------
 
 @app.get("/api/health")
@@ -481,6 +495,90 @@ def download_document(filename: str) -> FileResponse:
     return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
+def _clickwrap_html(token: str, sig: dict) -> str:
+    """Página pública (sin auth: el magic-link ES la credencial) que muestra
+    los términos exactos y captura el clic. Ver apps/ai/app/esign.py."""
+    import html as _html
+    title = "Autorización de tu póliza — Tequendama Seguros"
+    body = _html.escape(sig["terms_text"])
+    status = sig["status"]
+    done = status in ("signed", "declined", "expired")
+    if status == "signed":
+        estado_msg = "✅ Ya autorizaste la emisión. Puedes cerrar esta ventana."
+    elif status == "declined":
+        estado_msg = "Registramos que NO autorizas por ahora. Escríbenos si cambias de opinión."
+    elif status == "expired":
+        estado_msg = "Este link venció. Pídele a tu asesora IA que te envíe uno nuevo."
+    else:
+        estado_msg = ""
+    tok = _html.escape(token)
+    buttons = "" if done else f"""
+      <button id="agree" style="background:#0a7a2f;color:#fff;border:0;border-radius:8px;
+              padding:12px 20px;font-size:16px;margin-right:10px;cursor:pointer">Acepto</button>
+      <button id="decline" style="background:#f1f1f1;color:#333;border:0;border-radius:8px;
+              padding:12px 20px;font-size:16px;cursor:pointer">No acepto</button>"""
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;
+             padding:0 16px;color:#141e17">
+<h2 style="color:#083911">{title}</h2>
+<p style="background:#f1fdf0;border:1px solid #c1c9bd;border-radius:12px;padding:16px">{body}</p>
+<p id="estado" style="font-weight:bold">{estado_msg}</p>
+<div id="botones">{buttons}</div>
+<script>
+async function act(path) {{
+  const a = document.getElementById('agree'), d = document.getElementById('decline');
+  if (a) a.disabled = true; if (d) d.disabled = true;
+  const r = await fetch(`/sign/{tok}/${{path}}`, {{ method: 'POST' }});
+  if (r.ok) location.reload();
+  else {{ if (a) a.disabled = false; if (d) d.disabled = false; }}
+}}
+const a = document.getElementById('agree'), d = document.getElementById('decline');
+if (a) a.addEventListener('click', () => act('accept'));
+if (d) d.addEventListener('click', () => act('decline'));
+</script>
+</body></html>"""
+
+
+@app.get("/sign/{token}", response_class=HTMLResponse)
+def sign_page(token: str) -> str:
+    """Página clickwrap que abre el magic link de `generar_firma_poliza`."""
+    from . import esign
+    conn = get_conn()
+    row = esign.get_by_token(conn, token)
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return _clickwrap_html(token, row)
+
+
+@app.post("/sign/{token}/accept")
+def sign_accept(token: str, request: Request) -> dict:
+    from . import esign
+    conn = get_conn()
+    row = esign.sign(conn, token, agree=True,
+                     ip=request.client.host if request.client else None,
+                     user_agent=request.headers.get("user-agent"))
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return esign.public_view(row)
+
+
+@app.post("/sign/{token}/decline")
+def sign_decline(token: str, request: Request) -> dict:
+    from . import esign
+    conn = get_conn()
+    row = esign.sign(conn, token, agree=False,
+                     ip=request.client.host if request.client else None,
+                     user_agent=request.headers.get("user-agent"))
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return esign.public_view(row)
+
+
 @app.post("/api/leads", dependencies=[Depends(require_service)])
 def update_lead(req: LeadUpdate, background_tasks: BackgroundTasks) -> dict:
     conn = get_conn()
@@ -512,6 +610,25 @@ def role_for_phone(phone: str) -> dict:
     normalized = phone.replace(" ", "")
     return {"phone": normalized,
             "role": "gerente" if normalized in MANAGER_PHONES else "cliente"}
+
+
+# Notas de voz educativas: cuando el turno pidió/registró un dato sensible,
+# además del texto se manda un audio corto explicando POR QUÉ se pide (nunca
+# cifras/coberturas — esas siempre van en texto, ver skills/voz/SKILL.md).
+# Reglas deterministas (no lo redacta el LLM) para que el motivo sea siempre
+# el correcto y no dependa de que el modelo lo mencione en su respuesta.
+_EDUCACION_VOZ = {
+    "capturar_datos_cliente": ("Te pedimos tu nombre completo y tu número de "
+        "documento porque son obligatorios para poder emitir tu póliza a tu "
+        "nombre. Sin estos dos datos no podemos activar tu seguro."),
+    "registrar_consentimiento": ("Te pedimos autorizar el tratamiento de tus "
+        "datos personales porque la ley 1581 de 2012, de habeas data, exige "
+        "tu consentimiento explícito antes de poder procesar tu información "
+        "para emitir la póliza."),
+    "generar_firma_poliza": ("Te acabamos de enviar un link para autorizar tu "
+        "póliza con un solo clic. Es tu firma electrónica: tiene la misma "
+        "validez legal que una firma escrita a mano."),
+}
 
 
 @app.post("/channels/whatsapp/inbound/tequendama",
@@ -547,6 +664,11 @@ def whatsapp_inbound(req: WaGatewayInbound,
                                       "WHATSAPP", "asistente", reply)
             from . import whatsapp_gateway
             background_tasks.add_task(whatsapp_gateway.enviar_whatsapp, phone, reply)
+
+            tools_del_turno = {a.get("tool") for a in (result.get("actions") or [])}
+            explicacion = next((v for k, v in _EDUCACION_VOZ.items() if k in tools_del_turno), None)
+            if explicacion:
+                background_tasks.add_task(whatsapp_gateway.enviar_nota_voz, phone, explicacion)
 
     return {"received": True, "accepted": accepted}
 
@@ -615,6 +737,50 @@ def profiling_from_call(req: CallProfilingRequest,
     from . import call_profiling
     tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
     return call_profiling.profile_from_call(tenant_id, req.phone, req.transcript)
+
+
+@app.post("/api/docket/ingest", dependencies=[Depends(require_service)])
+def docket_ingest(req: DocketIngestRequest) -> dict:
+    """Registra el transcript de una llamada de ElevenLabs ya terminada en el
+    motor de versionado/QA de prompts (`docket.calls`, campaña
+    `tequendama-cliente`) — la llama el backend justo después de procesar el
+    webhook post-call. Sin DOCKET_ENGINE_ENABLED, no hace nada (demo)."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED or not req.transcript:
+        return {"ok": True, "demo": True}
+    from .docket_engine import store as docket_store
+    turns = [{"role": "customer" if (t.get("role") or "").lower() != "agent" else "agent",
+             "text": t.get("message") or ""} for t in req.transcript]
+    transcript_text = "\n".join(f"{t['role']}: {t['text']}" for t in turns if t["text"])
+    external_id = req.conversation_id or str(uuid.uuid4())
+    c = docket_store.conn()
+    try:
+        call_id = docket_store.insert_call(c, "tequendama-cliente", external_id, transcript_text, turns)
+        c.commit()
+    finally:
+        c.close()
+    return {"ok": True, "demo": False, "call_id": call_id}
+
+
+@app.post("/api/docket/recompute", dependencies=[Depends(require_service)])
+def docket_recompute() -> dict:
+    """Corre cluster → judge → optimize una vez para ambas campañas
+    (tequendama-cliente/tequendama-gerente). Se dispara a mano cuando quieras
+    iterar el prompt — no corre en cron. Sin DOCKET_ENGINE_ENABLED, no hace
+    nada (demo)."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED:
+        return {"ok": True, "demo": True}
+    from .docket_engine import cluster as docket_cluster
+    from .docket_engine import judge as docket_judge
+    from .docket_engine import optimize as docket_optimize
+    from .docket_engine import seed as docket_seed
+    seeded = docket_seed.run_all()
+    clusters = docket_cluster.run_all()
+    scores = docket_judge.run_all()
+    versions = docket_optimize.run_all(list(docket_seed.CAMPAIGNS))
+    return {"ok": True, "demo": False, "seeded": seeded, "clusters": clusters,
+            "scores": scores, "versions": versions}
 
 
 @app.get("/api/insights/leads", dependencies=[Depends(require_manager)])
