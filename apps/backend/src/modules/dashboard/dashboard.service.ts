@@ -85,6 +85,16 @@ export interface PortfolioCustomer {
   risk: { level: RiskLevel; factors: string[] };
 }
 
+/** Alerta crítica derivada del riesgo de un cliente (calculada, no persistida). */
+export interface DashboardAlert {
+  id: string;
+  severity: 'alta' | 'media';
+  title: string;
+  message: string;
+  customerId: string;
+  kind: string;
+}
+
 const HOURS_STALE_MEDIO = 24;
 const HOURS_STALE_ALTO = 48;
 const SCORE_URGENTE = 700;
@@ -558,6 +568,43 @@ export class DashboardService {
         query.limit,
       ),
     };
+  }
+
+  /**
+   * Alertas críticas del panel: se derivan EN VIVO del riesgo de cada cliente
+   * (mismas reglas que la cartera — lead caliente sin contactar, prioridad
+   * urgente, cliente sin responder +48h, posible fraude). No se persisten:
+   * reflejan siempre el estado real del sistema. Una alerta por cliente en
+   * riesgo, con severidad según su nivel y las razones concatenadas.
+   */
+  async getAlerts(tenantId: string): Promise<{ data: DashboardAlert[] }> {
+    const portfolio = await this.customerPortfolio(tenantId, {
+      page: 1,
+      limit: 500,
+    } as CustomerPortfolioQueryDto);
+    const customers = portfolio.data as PortfolioCustomer[];
+
+    const alerts: DashboardAlert[] = [];
+    for (const c of customers) {
+      if (c.risk.level === 'bajo' || c.risk.factors.length === 0) continue;
+      const severity = c.risk.level === 'alto' ? 'alta' : 'media';
+      alerts.push({
+        id: c.customerId,
+        severity,
+        title:
+          severity === 'alta' ? 'Atención inmediata' : 'Requiere seguimiento',
+        message: `${c.fullName ?? 'Cliente sin nombre'} · ${c.risk.factors.join(
+          ' · ',
+        )}`,
+        customerId: c.customerId,
+        kind: 'riesgo_cliente',
+      });
+    }
+    // Las 'alta' primero; techo de 12 para no saturar el panel.
+    alerts.sort((a, b) =>
+      a.severity === b.severity ? 0 : a.severity === 'alta' ? -1 : 1,
+    );
+    return { data: alerts.slice(0, 12) };
   }
 
   private toPortfolioCustomer(row: PortfolioSqlRow): PortfolioCustomer {

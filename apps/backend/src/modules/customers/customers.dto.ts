@@ -48,6 +48,10 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsISO8601({ strict: true })
   consentAt?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 export class UpdateCustomerDto extends PartialType(CreateCustomerDto) {}

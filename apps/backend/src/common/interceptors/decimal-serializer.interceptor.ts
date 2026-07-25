@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   Injectable,
   NestInterceptor,
+  StreamableFile,
 } from '@nestjs/common';
 import { map, Observable } from 'rxjs';
 import { Prisma } from '../../generated/prisma/client';
@@ -10,6 +11,12 @@ import { Prisma } from '../../generated/prisma/client';
 function serializeDecimals(value: unknown): unknown {
   if (value instanceof Prisma.Decimal) {
     return value.toFixed();
+  }
+
+  // No recorrer descargas binarias: convertir un StreamableFile en objeto
+  // plano rompe el streaming (Nest deja de reconocerlo y lo serializa a JSON).
+  if (value instanceof StreamableFile) {
+    return value;
   }
 
   if (Array.isArray(value)) {

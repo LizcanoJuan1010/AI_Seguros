@@ -195,19 +195,40 @@ model Customer {
   department    String?
   consentData   Boolean   @default(false) @map("consent_data")
   consentAt     DateTime? @map("consent_at") @db.Timestamptz(6)
+  notes         String?
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  team     Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")
-  aiCalls  AiCall[]
-  leads    Lead[]
-  policies Policy[]
-  claims   Claim[]
+  team      Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")
+  aiCalls   AiCall[]
+  leads     Lead[]
+  policies  Policy[]
+  claims    Claim[]
+  documents CustomerDocument[]
 
   @@unique([documentType, documentId])
   @@index([teamId], map: "idx_customers_team")
   @@index([phone], map: "idx_customers_phone")
   @@map("customers")
+}
+
+/// Documentos/archivos adjuntos a un cliente (cédula, RUT, PDFs...). El binario
+/// vive en disco (CUSTOMER_UPLOADS_DIR); esta fila guarda solo la metadata.
+model CustomerDocument {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  teamId     String?  @map("team_id") @db.Uuid
+  filename   String
+  storedName String   @map("stored_name")
+  mimeType   String   @map("mime_type")
+  sizeBytes  Int      @map("size_bytes")
+  kind       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "customer_documents_customer_id_fkey")
+
+  @@index([customerId], map: "idx_customer_documents_customer")
+  @@map("customer_documents")
 }
 
 model Product {

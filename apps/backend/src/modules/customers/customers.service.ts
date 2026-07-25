@@ -1,4 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -7,6 +15,18 @@ import {
   QueryCustomersDto,
   UpdateCustomerDto,
 } from './customers.dto';
+
+/** Archivo subido (subconjunto de Express.Multer.File que usamos). */
+export interface UploadedFileLike {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
+/** Carpeta raíz de los binarios de documentos de clientes. */
+const UPLOADS_DIR =
+  process.env.CUSTOMER_UPLOADS_DIR ?? '/app/uploads/customers';
 
 /** Perfil calculado por el servicio IA (seguria.customer_profile). */
 interface AiProfileRow {
@@ -33,10 +53,30 @@ interface ConversationRow {
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(tenantId: string, dto: CreateCustomerDto) {
-    return this.prisma.customer.create({
-      data: { ...this.toData(dto), teamId: tenantId },
-    });
+  async create(tenantId: string, dto: CreateCustomerDto) {
+    try {
+      return await this.prisma.customer.create({
+        data: { ...this.toData(dto), teamId: tenantId },
+      });
+    } catch (err) {
+      throw this.mapDuplicate(err);
+    }
+  }
+
+  /**
+   * El par (documentType, documentId) es único a nivel de BD. Traducimos el
+   * P2002 de Prisma a un 409 legible en vez de un 500 opaco.
+   */
+  private mapDuplicate(err: unknown): unknown {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === 'P2002'
+    ) {
+      return new ConflictException(
+        'Ya existe un cliente con ese tipo y número de documento.',
+      );
+    }
+    return err;
   }
 
   async findAll(tenantId: string, query: QueryCustomersDto) {
@@ -86,7 +126,8 @@ export class CustomersService {
   async findFull(tenantId: string, id: string) {
     const customer = await this.findOne(tenantId, id);
 
-    const [leads, quotes, policies, claims, aiCalls] = await Promise.all([
+    const [leads, quotes, policies, claims, aiCalls, documents] =
+      await Promise.all([
       this.prisma.lead.findMany({
         where: { customerId: id, teamId: tenantId },
         orderBy: { createdAt: 'desc' },
@@ -117,6 +158,10 @@ export class CustomersService {
         orderBy: { startedAt: 'desc' },
         take: 10,
         include: { messages: { orderBy: { spokenAt: 'asc' } } },
+      }),
+      this.prisma.customerDocument.findMany({
+        where: { customerId: id, teamId: tenantId },
+        orderBy: { createdAt: 'desc' },
       }),
     ]);
 
@@ -219,6 +264,7 @@ export class CustomersService {
       policies,
       claims,
       aiCalls,
+      documents,
     };
   }
 
@@ -239,15 +285,86 @@ export class CustomersService {
 
   async update(tenantId: string, id: string, dto: UpdateCustomerDto) {
     await this.findOne(tenantId, id);
-    return this.prisma.customer.update({
-      where: { id },
-      data: this.toData(dto),
-    });
+    try {
+      return await this.prisma.customer.update({
+        where: { id },
+        data: this.toData(dto),
+      });
+    } catch (err) {
+      throw this.mapDuplicate(err);
+    }
   }
 
   async remove(tenantId: string, id: string): Promise<void> {
     await this.findOne(tenantId, id);
+    // Borra también los binarios en disco (las filas caen por FK Cascade).
     await this.prisma.customer.delete({ where: { id } });
+    await rm(join(UPLOADS_DIR, id), { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+  }
+
+  // ---- Documentos adjuntos del cliente --------------------------------------
+
+  /** Sube uno o más archivos al cliente: binario a disco + metadata en BD. */
+  async addDocuments(
+    tenantId: string,
+    customerId: string,
+    files: UploadedFileLike[],
+    kind?: string,
+  ) {
+    await this.findOne(tenantId, customerId); // valida pertenencia al tenant
+    const dir = join(UPLOADS_DIR, customerId);
+    await mkdir(dir, { recursive: true });
+
+    const created = [];
+    for (const file of files) {
+      const storedName = `${randomUUID()}__${file.originalname}`;
+      await writeFile(join(dir, storedName), file.buffer);
+      const doc = await this.prisma.customerDocument.create({
+        data: {
+          customerId,
+          teamId: tenantId,
+          filename: file.originalname,
+          storedName,
+          mimeType: file.mimetype,
+          sizeBytes: file.size,
+          ...(kind && { kind }),
+        },
+      });
+      created.push(doc);
+    }
+    return created;
+  }
+
+  listDocuments(tenantId: string, customerId: string) {
+    return this.prisma.customerDocument.findMany({
+      where: { customerId, teamId: tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Devuelve la metadata + un stream del binario para descargar. */
+  async getDocumentStream(tenantId: string, docId: string) {
+    const doc = await this.prisma.customerDocument.findFirst({
+      where: { id: docId, teamId: tenantId },
+    });
+    if (!doc) throw new NotFoundException('Documento no encontrado.');
+    const stream = createReadStream(
+      join(UPLOADS_DIR, doc.customerId, doc.storedName),
+    );
+    return { doc, stream };
+  }
+
+  async removeDocument(tenantId: string, docId: string): Promise<void> {
+    const doc = await this.prisma.customerDocument.findFirst({
+      where: { id: docId, teamId: tenantId },
+    });
+    if (!doc) throw new NotFoundException('Documento no encontrado.');
+    await this.prisma.customerDocument.delete({ where: { id: docId } });
+    await rm(join(UPLOADS_DIR, doc.customerId, doc.storedName), {
+      force: true,
+    }).catch(() => undefined);
   }
 
   private toData(dto: CreateCustomerDto): Prisma.CustomerUncheckedCreateInput;
