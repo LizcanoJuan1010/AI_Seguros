@@ -1,4 +1,4 @@
-# SegurIA × Tequendama — stack de fusión (arquitectura polyglot).
+# Tequendama Insurance AI — stack de fusión (arquitectura polyglot).
 #   frontend(nginx) -> /api/v1 -> backend(NestJS)   -> postgres
 #                   -> /api    -> seguria-ai(Python) -> postgres + redis
 # Servicios opcionales (voz, agente Hermes, baileys) bajo perfiles.
@@ -78,7 +78,7 @@ services:
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
       - MANAGER_PHONES=${MANAGER_PHONES:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
       # Pasarela Polar (SANDBOX). Sin access token el pago corre en modo demo.
       - POLAR_BASE_URL=${POLAR_BASE_URL:-https://sandbox-api.polar.sh/v1}
       - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN:-}
@@ -101,6 +101,10 @@ services:
       - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}
       - WA_GATEWAY_TENANT=${WA_GATEWAY_TENANT:-tequendama}
       - SEGURIA_DATA_DIR=/data/market
+      # Cierre autónomo: verificación biométrica de identidad (YuNet+SFace) + gate KYC.
+      # KYC_ENFORCE=true (default) NO emite sin documentos + identidad verificada + datos.
+      - SEGURIA_KYC_ENFORCE=${SEGURIA_KYC_ENFORCE:-true}
+      - SEGURIA_FACE_MATCH_THRESHOLD=${SEGURIA_FACE_MATCH_THRESHOLD:-0.363}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Seguro embebido (quote & bind para aliados) y TTS del chat web
       - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
@@ -147,6 +151,7 @@ services:
     profiles: ["hermes"]
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
       - SEGURIA_API_URL=http://seguria-ai:8085
       - SEGURIA_TTS_URL=http://seguria-tts:8880
       - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}

@@ -30,3 +30,6 @@ data/market/Usos_Productos_Afiliados_SIN_ID.csv
 
 # Sesion temporal del emparejamiento de WhatsApp (credenciales)
 .wa-pairing/
+
+# Runtime del servicio IA (subidas de clientes, PII) — no versionar
+apps/ai/app/state/

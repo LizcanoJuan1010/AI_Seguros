@@ -167,7 +167,7 @@ def _polar_create_checkout(amount_cop: float, concept: str,
     cobro crea su propio producto con la prima exacta (visibility=hidden para
     no ensuciar el catálogo). El checkout lleva metadata.reference para que el
     webhook `order.paid` pueda correlacionar el pago."""
-    name = (concept or "Prima seguro SegurIA").strip()[:64]
+    name = (concept or "Prima seguro Tequendama").strip()[:64]
     if len(name) < 3:  # Polar exige nombre de 3-64 caracteres
         name = f"Pago {reference}"
     prod = requests.post(f"{POLAR_BASE_URL}/products/", timeout=_TIMEOUT,
@@ -262,7 +262,7 @@ def generar_link_pago(conn: psycopg.Connection, session_key: str,
     if monto <= 0:
         return {"error": "falta el monto en COP; cotiza primero y usa la prima "
                          "mensual de la opción elegida como monto_cop"}
-    concept = (args.get("descripcion") or "").strip() or "Primera mensualidad — Seguro SegurIA"
+    concept = (args.get("descripcion") or "").strip() or "Primera mensualidad — Seguro Tequendama"
 
     # Idempotencia: si ya hay un checkout PENDING por el mismo monto, reutilízalo
     # (el modelo puede reintentar la herramienta en el mismo turno).

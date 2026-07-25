@@ -2,6 +2,11 @@ import { Link } from 'react-router-dom'
 import { Icon } from '../../components/ui/Icon'
 import { Reveal } from '../../components/ui/Reveal'
 import { CountUp } from '../../components/ui/CountUp'
+import { WhatsAppIcon } from '../../components/ui/WhatsAppIcon'
+import {
+  ADVISOR_WHATSAPP_DISPLAY,
+  ADVISOR_WHATSAPP_URL,
+} from '../../lib/contact'
 
 const stats = [
   { end: 12000, prefix: '+', suffix: '', label: 'Personas protegidas' },
@@ -53,6 +58,25 @@ export function CtaBand() {
                 Ver planes
               </a>
             </div>
+            {/* WhatsApp del asesor humano: opción de escribir directamente */}
+            <a
+              href={ADVISOR_WHATSAPP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group mt-8 inline-flex max-w-full items-center gap-3 rounded-full border border-white/25 bg-white/10 py-2 pl-2 pr-6 text-left backdrop-blur-sm transition-all hover:border-[#25d366]/70 hover:bg-[#25d366]/15"
+            >
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-white shadow-md shadow-black/25 transition-transform group-hover:scale-110">
+                <WhatsAppIcon className="size-6" />
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="text-label-sm text-white/70">
+                  ¿Prefieres escribir? Chatea con un asesor
+                </span>
+                <span className="truncate text-body-md font-bold text-white">
+                  {ADVISOR_WHATSAPP_DISPLAY}
+                </span>
+              </span>
+            </a>
             <dl className="mt-12 grid grid-cols-1 gap-6 border-t border-white/15 pt-10 sm:grid-cols-3">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex flex-col items-center gap-1">

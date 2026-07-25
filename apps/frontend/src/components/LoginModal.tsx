@@ -5,6 +5,7 @@
  * (localStorage) para que "se guarde" entre visitas.
  */
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { LS_LAST_EMAIL } from '../contexts/AuthContext'
 import { Button } from './ui/Button'
@@ -48,8 +49,8 @@ export function LoginModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-forest-deep/30 px-4 backdrop-blur-md">
-      <div className="glass-card w-full max-w-md rounded-2xl bg-white/85 p-8 shadow-2xl">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-forest-deep/30 px-4 py-8 backdrop-blur-md">
+      <div className="glass-card my-auto max-h-[calc(100svh-4rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white/85 p-6 shadow-2xl sm:p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
           <img src="/assets/logo.svg" alt="Tequendama" className="h-12 w-auto" />
           <div>
@@ -102,6 +103,16 @@ export function LoginModal() {
             {submitting ? 'Ingresando…' : 'Ingresar'}
           </Button>
         </form>
+
+        {/* Salida sin credenciales: quien no vaya a ingresar puede volver a la
+            landing pública (esta vista es de staff; el cliente no la necesita). */}
+        <Link
+          to="/"
+          className="mt-4 flex items-center justify-center gap-1.5 text-label-md font-semibold text-on-surface-variant transition-colors hover:text-primary"
+        >
+          <Icon name="arrow_back" className="text-[18px]" />
+          Volver al inicio
+        </Link>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-# Agente SegurIA sobre Hermes — configuración real
+# Agente Tequendama sobre Hermes — configuración real
 
 > Válido para Hermes Agent v0.19+. Config global en `~/.hermes/`
 > (`config.yaml` en YAML, secretos en `~/.hermes/.env`).
@@ -26,12 +26,12 @@ hermes --version
 ```bash
 echo "DEEPSEEK_API_KEY=sk-tu-key" >> ~/.hermes/.env
 hermes config set model.provider deepseek
-hermes config set model.default  deepseek-chat   # deepseek-reasoner para análisis gerencial
+hermes config set model.default  deepseek-v4-flash   # deepseek-v4-pro para análisis gerencial
 ```
 Alternativas: `provider: custom` + `base_url: https://api.deepseek.com` (OpenAI-compatible),
 u OpenRouter/Anthropic.
 
-### 3. Cargar la persona y las skills de SegurIA
+### 3. Cargar la persona y las skills de Tequendama
 - **Persona** (SOUL.md es GLOBAL en Hermes, no se lee del CWD):
   ```bash
   cp SOUL.md ~/.hermes/SOUL.md      # respalda antes si ya tenías uno
@@ -49,7 +49,7 @@ cd /home/juan/dev/HackathonColsupcidio/agent && hermes      # TUI interactivo
 # o headless / una sola respuesta:
 hermes -z "Soy de Colombia, 34 años, quiero proteger a mi familia"
 ```
-Verifica en el TUI: `/personality` (SegurIA) y `/skills` (las 7 seguria-*).
+Verifica en el TUI: `/personality` (Tequendama) y `/skills` (las 7 seguria-*).
 
 ### 5. Gateway de WhatsApp
 ```bash

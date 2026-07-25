@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AiVisualizerStub, type AiOrbState } from '../features/call/AiVisualizerStub'
 import { CallControls } from '../features/call/CallControls'
 import { Icon } from '../components/ui/Icon'
@@ -108,10 +109,39 @@ function formatDuration(s: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
+/**
+ * Transcripción en vivo: revela el texto del paso carácter a carácter, como
+ * si la asesora/cliente estuvieran siendo transcritos en tiempo real. La
+ * velocidad se ajusta para terminar dentro del ~55% de la duración del paso.
+ */
+function useTranscript(text: string, active: boolean, stepMs: number) {
+  const [count, setCount] = useState(0)
+
+  useEffect(() => {
+    if (!active || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCount(text.length)
+      return
+    }
+    setCount(0)
+    const perChar = Math.min(36, Math.max(12, (stepMs * 0.55) / Math.max(text.length, 1)))
+    const id = window.setInterval(() => {
+      setCount((c) => {
+        if (c >= text.length) {
+          window.clearInterval(id)
+          return c
+        }
+        return c + 1
+      })
+    }, perChar)
+    return () => window.clearInterval(id)
+  }, [text, active, stepMs])
+
+  return { shown: text.slice(0, count), typing: count < text.length }
+}
+
 export function LiveAiCallPage() {
   const [muted, setMuted] = useState(false)
   const [ended, setEnded] = useState(false)
-  const [sentNote, setSentNote] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
   const [seconds, setSeconds] = useState(0)
   const [cards, setCards] = useState<CallCard[] | null>(null)
@@ -119,6 +149,7 @@ export function LiveAiCallPage() {
 
   const step = STEPS[stepIndex]
   const aiSpeaking = step.speaker === 'ai' && !muted && !ended
+  const transcript = useTranscript(step.text, !muted && !ended, step.dur)
 
   // Avanza el guion demo mientras la llamada esté activa.
   useEffect(() => {
@@ -136,6 +167,15 @@ export function LiveAiCallPage() {
     const id = window.setInterval(() => setSeconds((s) => s + 1), 1000)
     return () => window.clearInterval(id)
   }, [ended])
+
+  // Al colgar, la pantalla se disuelve en la bruma (clase call-leaving) y
+  // ~1s después volvemos al chat (estilo modo voz de Gemini/Claude).
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!ended) return
+    const id = window.setTimeout(() => navigate('/asistente'), 1000)
+    return () => window.clearTimeout(id)
+  }, [ended, navigate])
 
   // Proyección de cards: entran con el paso que las trae y se desvanecen
   // cuando la conversación sigue.
@@ -164,7 +204,11 @@ export function LiveAiCallPage() {
         : 'listening'
 
   return (
-    <div className="relative h-full min-h-[560px] overflow-hidden">
+    <div
+      className={`relative h-full min-h-[560px] overflow-hidden ${
+        ended ? 'call-leaving' : ''
+      }`}
+    >
       {/* Fondo: video de bruma detrás de la animación */}
       <video
         src="/assets/bg-mist.mp4"
@@ -190,22 +234,13 @@ export function LiveAiCallPage() {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="hidden flex-col text-right md:flex">
-            <span className="text-label-sm text-on-surface-variant">
-              Duración
-            </span>
-            <span className="text-label-md font-bold text-primary">
-              {formatDuration(seconds)}
-            </span>
-          </div>
-          <div className="flex size-10 items-center justify-center overflow-hidden rounded-full border-2 border-primary/20 bg-primary-container shadow-sm">
-            <img
-              src="/assets/avatars/call-user.png"
-              alt="Usuario en llamada"
-              className="h-full w-full object-cover"
-            />
-          </div>
+        <div className="flex flex-col text-right">
+          <span className="text-label-sm text-on-surface-variant">
+            Duración
+          </span>
+          <span className="text-label-md font-bold text-primary">
+            {formatDuration(seconds)}
+          </span>
         </div>
       </div>
 
@@ -235,13 +270,12 @@ export function LiveAiCallPage() {
                 }`}
               />
               {ended
-                ? 'Llamada finalizada'
+                ? 'Llamada finalizada · volviendo al chat…'
                 : muted
                   ? 'Silenciado'
                   : aiSpeaking
                     ? 'Hablando...'
                     : 'Escuchando...'}
-              {sentNote ? ' · Correo marcado' : ''}
             </p>
           </div>
         </div>
@@ -249,7 +283,7 @@ export function LiveAiCallPage() {
         {/* Cards proyectadas por la asesora */}
         {cards && (
           <div
-            className={`absolute inset-x-4 bottom-28 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
+            className={`absolute inset-x-4 bottom-40 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
               cardsLeaving ? 'call-cards-leaving' : ''
             }`}
           >
@@ -294,7 +328,7 @@ export function LiveAiCallPage() {
       {/* Subtítulo en vivo de la conversación */}
       {!ended && (
         <div
-          className={`pointer-events-none absolute inset-x-0 bottom-28 z-10 justify-center px-margin-mobile sm:bottom-32 ${
+          className={`pointer-events-none absolute inset-x-0 bottom-40 z-10 justify-center px-margin-mobile sm:bottom-32 ${
             showingCards ? 'hidden sm:flex' : 'flex'
           }`}
         >
@@ -306,7 +340,10 @@ export function LiveAiCallPage() {
                 : 'text-on-surface'
             } ${showingCards ? 'sm:translate-x-[-18%]' : ''}`}
           >
-            {muted ? 'Micrófono silenciado' : step.text}
+            {muted ? 'Micrófono silenciado' : transcript.shown}
+            {!muted && transcript.typing && (
+              <span className="transcript-caret" aria-hidden />
+            )}
           </p>
         </div>
       )}
@@ -315,7 +352,6 @@ export function LiveAiCallPage() {
         muted={muted}
         onMuteToggle={() => setMuted((v) => !v)}
         onEnd={() => setEnded(true)}
-        onSend={() => setSentNote(true)}
       />
     </div>
   )

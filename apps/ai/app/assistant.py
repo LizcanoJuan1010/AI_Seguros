@@ -35,6 +35,9 @@ class StreamChatRequest(BaseModel):
     session_id: str = Field(..., description="Identificador estable de la conversación")
     message: str
     phone: str | None = Field(None, description="WhatsApp del cliente si se conoce")
+    device_id: str | None = Field(
+        None, description="Identidad durable del navegador del cliente anónimo "
+                          "(la 'cuenta' sin registro: ancla memoria y leads entre visitas)")
     manager_key: str | None = Field(None, description="API key para actuar como gerente")
 
 
@@ -228,6 +231,10 @@ async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
     client = AsyncOpenAI(api_key=config.DEEPSEEK_API_KEY,
                          base_url=config.DEEPSEEK_BASE_URL, timeout=60.0, max_retries=1)
     system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_CLIENTE
+    # Mismo bloque de conocimiento de gerencia que inyecta agent_core.run_agent
+    # (los dos runners deben responder con la misma información del negocio).
+    from .knowledge import knowledge_context
+    system += await asyncio.to_thread(knowledge_context, tenant_id)
     if mem_ctx:
         system = f"{system}\n\n{mem_ctx}"
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
@@ -296,7 +303,7 @@ async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
             if (name not in _CHECKOUT_TOOLS and isinstance(result, dict)
                     and result.get("download_url")):
                 yield _frame("document", {"download_url": result["download_url"],
-                                          "title": "Cotización SegurIA"})
+                                          "title": "Cotización Tequendama"})
             tool_msg = {"role": "tool", "tool_call_id": tc["id"] or f"call_{i}",
                         "content": json.dumps(result, ensure_ascii=False, default=str)[:6000]}
             messages.append(tool_msg)
@@ -558,7 +565,7 @@ async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
                 yield _frame("tool_result", {"tool": "generar_documento",
                                              "summary": d_summary, "meta": d_meta})
                 yield _frame("document", {"download_url": doc["download_url"],
-                                          "title": f"Cotización {top.get('producto', 'SegurIA')}"})
+                                          "title": f"Cotización {top.get('producto', 'Tequendama')}"})
             closing = ("\n\nRecuerda que la emisión final de la póliza la realiza un asesor "
                        "licenciado. ¿Quieres que uno te contacte para cerrarla?")
             async for f in _stream_text(closing):
@@ -575,12 +582,12 @@ async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
             out["reply"] = (intro + msg).strip()
     else:
         if tipo:
-            ask = (f"¡Hola! Soy SegurIA, tu asesora digital de seguros. Me encanta que "
+            ask = (f"¡Hola! Soy Tequendama, tu asesora digital de seguros. Me encanta que "
                    f"pienses en un seguro de {tipo}. Para cotizarte a tu medida, cuéntame: "
                    f"¿en qué país estás y qué edad tienes?")
             qr = ["Estoy en Colombia", "Estoy en México", "Tengo 30 años"]
         else:
-            ask = ("¡Hola! Soy SegurIA, tu asesora digital de seguros. Estoy aquí para "
+            ask = ("¡Hola! Soy Tequendama, tu asesora digital de seguros. Estoy aquí para "
                    "ayudarte a proteger lo que más importa. Para empezar, cuéntame: ¿qué te "
                    "gustaría asegurar y en qué país estás?")
             qr = ["Seguro de vida", "Seguro de salud", "Seguro de auto"]
@@ -622,7 +629,9 @@ async def _run_stream(req: StreamChatRequest, tenant_id: str, role: str) -> Asyn
     # WhatsApp autorizado sigue pudiendo elevar a gerente por compatibilidad.
     if role != "gerente" and phone and phone in MANAGER_PHONES:
         role = "gerente"
-    user_id = phone or f"web:{session_id}"
+    # Identidad del turno: teléfono real > device_id (durable entre visitas y
+    # conversaciones) > session_id (último recurso, muere con la conversación).
+    user_id = phone or f"web:{req.device_id or session_id}"
     out: dict = {"reply": ""}
     try:
         yield _frame("thinking", {"text": "Analizando tu mensaje..."})

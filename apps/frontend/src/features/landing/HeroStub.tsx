@@ -20,7 +20,7 @@ export function HeroStub() {
         </div>
         <h1 className="text-display-lg-mobile leading-tight tracking-tight text-primary md:text-display-lg">
           Tu seguro, <br className="md:hidden" />{' '}
-          <span className="font-hand font-semibold text-secondary">
+          <span className="hand-underline font-hand font-semibold text-secondary">
             a una llamada
           </span>{' '}
           de distancia.
@@ -42,12 +42,17 @@ export function HeroStub() {
             />
             Hablar con un asesor IA
           </Link>
-          <a
-            href="#planes"
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border-2 border-primary px-8 py-4 text-body-lg font-bold text-primary transition-colors hover:bg-primary/5 sm:w-auto md:px-10 md:py-5 md:text-headline-md"
+          <Link
+            to={`/asistente?q=${encodeURIComponent('¡Hola! Quiero asegurarme, ¿me ayudas a empezar?')}`}
+            className="group inline-flex w-full items-center justify-center gap-3 rounded-md border-2 border-primary px-8 py-4 text-body-lg font-bold text-primary transition-all hover:bg-primary hover:text-white sm:w-auto md:px-10 md:py-5 md:text-headline-md"
           >
-            Explorar planes
-          </a>
+            <Icon
+              name="forum"
+              filled
+              className="text-[26px] transition-transform group-hover:-rotate-6 group-hover:scale-110 md:text-[30px]"
+            />
+            Chatear con la IA
+          </Link>
         </div>
         <div className="flex flex-col items-center justify-center gap-3 pt-4 sm:flex-row">
           <div className="flex -space-x-3">

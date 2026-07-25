@@ -1,4 +1,4 @@
-# SegurIA — Asistente de IA para venta de seguros a la medida (LATAM)
+# Tequendama — Asistente de IA para venta de seguros a la medida (LATAM)
 
 > Plan maestro del proyecto. Hackathon Colsubsidio — julio 2026.
 > Objetivo: un asistente tipo **Erica (Bank of America)** que conversa por **WhatsApp**
@@ -48,7 +48,7 @@
 ```
                           ┌─────────────────────────────┐
    Cliente WhatsApp ────► │  Hermes Agent (gateway WA)  │ ◄──── Gerente WhatsApp
-   (texto / nota voz)     │  persona: SOUL.md (SegurIA) │       (rol por allowlist)
+   (texto / nota voz)     │  persona: SOUL.md (Tequendama) │       (rol por allowlist)
                           │  skills/ (6 skills)         │
                           └──────┬──────────┬───────────┘
                                  │ HTTP     │ CLI/MCP
@@ -103,7 +103,7 @@ HackathonColsupcidio/
 2. **F1 — insurance-api**: catálogo (≥12 productos, 6 tipos, 8 países), cotizador con FX, leads/quotes, seeds.
 3. **F2 — Documentos**: cotización DOCX/PDF con marca.
 4. **F3 — Insights**: agregaciones + cliente Metabase opcional.
-5. **F4 — Workspace Hermes**: SOUL.md (persona SegurIA), 6 skills, config DeepSeek, guía de gateway WhatsApp y voz.
+5. **F4 — Workspace Hermes**: SOUL.md (persona Tequendama), 6 skills, config DeepSeek, guía de gateway WhatsApp y voz.
 6. **F5 — Frontend**: SPA chat + panel gerencial (lógica Stitch).
 7. **F6 — Infra**: docker-compose, setup.sh, README, pruebas end-to-end de la API.
 

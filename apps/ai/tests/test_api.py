@@ -1,4 +1,4 @@
-"""Suite de pruebas de la API SegurIA (FastAPI TestClient).
+"""Suite de pruebas de la API Tequendama (FastAPI TestClient).
 
 Cubre: catálogo, cotizador (casos borde), documentos, auth de servicio/gerente,
 path traversal, insights y motor proactivo.
@@ -164,6 +164,52 @@ def test_resolve_identity_jwt_vs_fallback():
     cli_token = _jwt_encode(cli, config.JWT_SECRET)
     assert resolve_identity(f"Bearer {cli_token}", None, None) == \
         ("22222222-2222-2222-2222-222222222222", "cliente")
+
+
+def test_sessions_listing_requires_staff():
+    """El historial GLOBAL de conversaciones es vista de auditoría: sin Bearer de
+    staff responde 403 (el cliente anónimo no debe ver sesiones ajenas)."""
+    import time
+
+    from app import config
+    from app.auth import _jwt_encode, is_staff_token
+
+    assert client.get("/api/assistant/sessions").status_code == 403
+    assert client.get("/api/assistant/sessions",
+                      headers={"Authorization": "Bearer not.a.jwt"}).status_code == 403
+
+    # Un vendedor (AGENTE) sí es staff: puede auditar conversaciones.
+    claims = {"sub": "u2", "email": "v@x", "name": "V", "role": "AGENTE",
+              "teamId": "22222222-2222-2222-2222-222222222222", "type": "access",
+              "exp": int(time.time()) + 3600}
+    token = _jwt_encode(claims, config.JWT_SECRET)
+    assert is_staff_token(f"Bearer {token}") is True
+    r = client.get("/api/assistant/sessions",
+                   headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+
+def test_chat_identity_prefers_device_id():
+    """La identidad del turno ancla al device_id (cuenta anónima durable del
+    navegador) por encima del session_id; el teléfono real sigue mandando."""
+    from app.db import get_conn
+
+    r = client.post("/api/chat", json={"session_id": "sess_efimera",
+                                       "message": "hola",
+                                       "device_id": "dev_abc123"})
+    assert r.status_code == 200
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT phone FROM conversations WHERE phone LIKE 'web:%' "
+            "ORDER BY id DESC LIMIT 5").fetchall()
+    finally:
+        conn.close()
+    users = {row["phone"] for row in rows}
+    assert "web:dev_abc123" in users
+    assert "web:sess_efimera" not in users
 
 
 if __name__ == "__main__":

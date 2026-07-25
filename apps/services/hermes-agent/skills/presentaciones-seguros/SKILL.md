@@ -12,7 +12,7 @@ integrada antes de construir: `officecli help pptx` (y `officecli help pptx slid
 ## Presentación comercial por tipo de seguro
 1. Trae los productos reales: `curl -s "${SEGURIA_API_URL:-http://localhost:8085}/api/products?tipo=vida"`.
 2. Crea la presentación (estructura sugerida de 6 diapositivas):
-   - Portada (SegurIA + tipo de seguro), la necesidad que resuelve, productos y
+   - Portada (Tequendama + tipo de seguro), la necesidad que resuelve, productos y
      coberturas comparadas, ejemplo de cotización real, proceso de contratación, cierre.
 ```bash
 officecli create pptx presentacion_vida.pptx

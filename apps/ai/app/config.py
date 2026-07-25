@@ -1,4 +1,4 @@
-"""Configuración central de SegurIA API (variables de entorno con defaults de demo)."""
+"""Configuración central de Tequendama API (variables de entorno con defaults de demo)."""
 import os
 from pathlib import Path
 
@@ -79,7 +79,7 @@ JWT_SECRET = os.getenv("JWT_SECRET", "demo-secret-seguria-2026")
 # LLM del orquestador web (DeepSeek u otro endpoint OpenAI-compatible)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 # Pasarela de pagos Polar (polar.sh) — SANDBOX por defecto (sandbox-api.polar.sh).
 # Token de organización (polar_oat_...) creado en el dashboard sandbox. Sin
@@ -134,5 +134,26 @@ BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en
 BRAND_COLOR = os.getenv("BRAND_COLOR", "#083911")  # verde primario del frontend
 BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
 BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
+
+# ---------- Verificación de identidad (biometría facial YuNet + SFace) ----------
+# Compara la foto de la cédula ↔ la selfie con modelos ONNX de OpenCV Zoo, en CPU
+# y ligeros (YuNet ~230 KB detecta, SFace ~37 MB reconoce). El módulo app/identity.py
+# degrada limpio si faltan opencv/los modelos (decision="no_disponible", nunca aprueba
+# a ciegas). Para el gate de emisión ver KYC_ENFORCE.
+FACE_MODEL_DIR = Path(os.getenv("SEGURIA_FACE_MODEL_DIR", BASE_DIR / "models" / "face"))
+FACE_DETECT_MODEL = os.getenv("SEGURIA_FACE_DETECT_MODEL", "face_detection_yunet_2023mar.onnx")
+FACE_RECOG_MODEL = os.getenv("SEGURIA_FACE_RECOG_MODEL", "face_recognition_sface_2021dec.onnx")
+# Umbral de coincidencia (coseno) recomendado por OpenCV para SFace: >=0.363 = misma
+# identidad (la selfie de prueba misma-persona da ~0.74; distinta ~0.10).
+FACE_MATCH_THRESHOLD = float(os.getenv("SEGURIA_FACE_MATCH_THRESHOLD", "0.363"))
+# Descarga de respaldo (OpenCV Zoo) si el modelo no está en disco al arrancar.
+FACE_MODEL_BASE_URL = os.getenv(
+    "SEGURIA_FACE_MODEL_BASE_URL",
+    "https://github.com/opencv/opencv_zoo/raw/main/models")
+
+# Gate de cumplimiento en la emisión. true (default) = sin documentos KYC + identidad
+# verificada + datos obligatorios completos NO se emite la póliza. false = solo advierte
+# (modo laxo para pruebas). Ver app/kyc.py y agent_core._emitir_poliza.
+KYC_ENFORCE = os.getenv("SEGURIA_KYC_ENFORCE", "true").lower() not in ("0", "false", "no")
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)

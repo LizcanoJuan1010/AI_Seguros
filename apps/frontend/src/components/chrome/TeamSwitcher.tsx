@@ -3,8 +3,9 @@ import { Icon } from '../ui/Icon'
 import { useTenant } from '../../tenant/TenantContext'
 
 /**
- * Selector de tenant (equipo) del TopNav. Scopea toda la app: dashboard,
- * leads y sesión del asistente. Oculto si el backend no está disponible.
+ * Selector de tenant (equipo). Vive en el encabezado del dashboard del
+ * gerente (no en el TopNav) y scopea toda la app: dashboard, leads y sesión
+ * del asistente. Oculto si el backend no está disponible.
  */
 export function TeamSwitcher() {
   const { teams, teamId, team, setTeamId, offline, loading } = useTenant()
@@ -29,7 +30,7 @@ export function TeamSwitcher() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-full border border-outline-variant bg-surface-container-low px-3 py-2 text-label-md text-on-surface transition-colors hover:bg-surface-variant"
+        className="flex min-h-11 items-center gap-2 rounded-full border border-outline-variant bg-surface-container-low px-3 py-2 text-label-md text-on-surface transition-colors hover:bg-surface-variant"
         aria-haspopup="listbox"
         aria-expanded={open}
       >

@@ -36,6 +36,18 @@ export class CustomersController {
     return this.service.findAll(tenantId, query);
   }
 
+  // Cliente 360: TODO lo que el sistema sabe del cliente (perfil IA, datos
+  // declarados, leads con historial, cotizaciones, pólizas, reclamos y
+  // sesiones IA con transcripción). Lo consume el drawer de detalle del
+  // vendedor. Declarada antes de ':id' por claridad de rutas.
+  @Get(':id/full')
+  findFull(
+    @TenantId() tenantId: string,
+    @Param('id', UuidParamPipe) id: string,
+  ) {
+    return this.service.findFull(tenantId, id);
+  }
+
   @Get(':id')
   findOne(@TenantId() tenantId: string, @Param('id', UuidParamPipe) id: string) {
     return this.service.findOne(tenantId, id);

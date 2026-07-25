@@ -22,7 +22,7 @@ Las 7 features están implementadas según este diseño, con estos ajustes:
 
 ## Qué ya cubre el sistema vs. el paper
 
-| Tesis del paper | Estado en SegurIA |
+| Tesis del paper | Estado en Tequendama |
 |---|---|
 | Distribución conversacional hiperpersonalizada | 🟢 Chat SSE + WhatsApp + perfilado (`profiling.py`) + memoria multi-tenant |
 | Cierre autónomo (quote → bind) | 🟢 `emitir_poliza` → `POST /api/v1/checkout` + pago Polar + PDF de póliza |
