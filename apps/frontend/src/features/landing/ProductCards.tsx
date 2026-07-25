@@ -1,5 +1,5 @@
+import { Link } from 'react-router-dom'
 import { Icon } from '../../components/ui/Icon'
-import { Button } from '../../components/ui/Button'
 import { Reveal } from '../../components/ui/Reveal'
 
 const products = [
@@ -9,6 +9,8 @@ const products = [
     body: 'Asegura el bienestar de los que más amas con una póliza flexible que crece con tu familia.',
     points: ['Cobertura global', 'Sin exámenes tediosos'],
     cta: 'Cotizar Vida',
+    prompt:
+      'Quiero cotizar un seguro de vida. Hazme una por una las preguntas que necesites (edad, si fumo, cobertura que busco) y dame una cotización real.',
   },
   {
     icon: 'directions_car',
@@ -16,6 +18,8 @@ const products = [
     body: 'Protección total en la vía con asistencia IA inmediata para accidentes y grúas.',
     points: ['Asistencia 24/7', 'Chofer de reemplazo'],
     cta: 'Cotizar Auto',
+    prompt:
+      'Quiero cotizar un seguro de auto. Pregúntame una por una los datos de mi carro (marca, modelo, año, ciudad) y dame una cotización real.',
   },
   {
     icon: 'health_and_safety',
@@ -23,6 +27,8 @@ const products = [
     body: 'Acceso a las mejores clínicas y especialistas con reembolso asistido por inteligencia artificial.',
     points: ['Telemedicina incluida', 'Amplia red nacional'],
     cta: 'Cotizar Salud',
+    prompt:
+      'Quiero cotizar un seguro de salud. Hazme una por una las preguntas que necesites (edad, ciudad, cobertura que busco) y dame una cotización real.',
   },
 ]
 
@@ -80,9 +86,13 @@ export function ProductCards() {
                   </li>
                 ))}
               </ul>
-              <Button className="w-full rounded-md bg-surface-container-high text-primary hover:bg-primary hover:text-white">
+              <Link
+                to={`/asistente?q=${encodeURIComponent(product.prompt)}`}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-surface-container-high px-4 py-2.5 text-label-md text-primary transition-all hover:bg-primary hover:text-white"
+              >
                 {product.cta}
-              </Button>
+                <Icon name="arrow_forward" className="text-[18px]" />
+              </Link>
             </article>
             </Reveal>
           ))}
