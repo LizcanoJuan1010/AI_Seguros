@@ -1,6 +1,6 @@
 {
   "_status": "draft — redactado por el asistente, pendiente de tu revisión antes de confiar en estos puntajes",
-  "_comment": "Rubric del juez (base 03) para SegurIA en modo cliente (venta de seguros, cierre autónomo). Adaptado del template de docket-motor — no es la rúbrica de cobranza (MITI/kept-PTP) del repo original, esa no aplica a venta de seguros.",
+  "_comment": "Rubric del juez (base 03) para Tequendama en modo cliente (venta de seguros, cierre autónomo). Adaptado del template de docket-motor — no es la rúbrica de cobranza (MITI/kept-PTP) del repo original, esa no aplica a venta de seguros.",
   "criteria": [
     {
       "key": "claridad_cobertura",

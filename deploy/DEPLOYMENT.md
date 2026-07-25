@@ -1,8 +1,8 @@
-# Despliegue de SegurIA (Docker)
+# Despliegue de Tequendama (Docker)
 
 > **Estado verificado (2026-07-21):** stack construido y probado end-to-end en esta
 > máquina. `seguria-api` (healthy), `seguria-tts` (Kokoro genera MP3 en español) y
-> `hermes-agent` (7 skills SegurIA cargadas, alcanza API y TTS por la red interna,
+> `hermes-agent` (7 skills Tequendama cargadas, alcanza API y TTS por la red interna,
 > OfficeCLI incluido) arriba con `docker compose up -d`. Falta solo aportar la
 > `DEEPSEEK_API_KEY` (cerebro conversacional) y escanear el QR de WhatsApp.
 

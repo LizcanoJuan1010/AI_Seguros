@@ -1,4 +1,4 @@
-# DDL — toda la data del sistema SegurIA × Tequendama
+# DDL — toda la data del sistema Tequendama
 
 > **UNA sola base: PostgreSQL** (unificado — ya no hay SQLite). Dos esquemas:
 > - **`public`** — dominio del negocio (NestJS/Prisma): 12 tablas, 3 vistas, 10 enums.

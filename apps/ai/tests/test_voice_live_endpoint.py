@@ -89,10 +89,17 @@ def test_voice_live_endpoint_auth_and_audio_forwarding(monkeypatch):
                 audio_received.set()
 
     stt_connection = RecordingConnection()
+    tts_connection = FakeDeepgramConnection()
 
     async def fake_connect(url, **kwargs):
-        assert url == voice_live.DEEPGRAM_LISTEN_URL
-        return stt_connection
+        # `run()` ahora conecta STT y TTS (persistente para toda la
+        # llamada) — distingue por URL cuál stub devolver.
+        if url == voice_live._deepgram_listen_url():
+            assert "language=" in url
+            assert "model=" in url
+            return stt_connection
+        assert url == voice_live._deepgram_speak_url()
+        return tts_connection
 
     monkeypatch.setattr(voice_live.websockets, "connect", fake_connect)
 

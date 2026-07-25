@@ -1,4 +1,4 @@
-"""Configuración central de SegurIA API (variables de entorno con defaults de demo)."""
+"""Configuración central de Tequendama API (variables de entorno con defaults de demo)."""
 import os
 from pathlib import Path
 
@@ -82,14 +82,9 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# Pasarela de pagos Polar (polar.sh) — SANDBOX por defecto (sandbox-api.polar.sh).
-# Token de organización (polar_oat_...) creado en el dashboard sandbox. Sin
-# POLAR_ACCESS_TOKEN el flujo de pago corre en modo demo/simulado (igual que el
-# resto del stack sin API keys). El backend valida el webhook con
-# POLAR_WEBHOOK_SECRET (ver apps/backend). Nunca uses tokens prod en el hackathon.
-POLAR_BASE_URL = os.getenv("POLAR_BASE_URL", "https://sandbox-api.polar.sh/v1")
-POLAR_ACCESS_TOKEN = os.getenv("POLAR_ACCESS_TOKEN", "")
-POLAR_SUCCESS_URL = os.getenv("POLAR_SUCCESS_URL", "")
+# Pasarela de pagos Polar: el access token vive SOLO en Nest
+# (`POLAR_ACCESS_TOKEN` en apps/backend). Este proceso IA es cliente delgado
+# de `POST /api/v1/payments/checkout` — no lee POLAR_* (deprecado en AI).
 
 # Motor de llamadas telefónicas — ElevenLabs Conversational AI (Agents Platform).
 # Sin ELEVENLABS_API_KEY el motor corre en modo demo (igual que Wompi/DeepSeek):
@@ -146,12 +141,21 @@ KYC_LINK_TTL_MINUTES = int(os.getenv("KYC_LINK_TTL_MINUTES", "60"))
 # la llamada en vivo /ws/voice/live (voice_live.py). Sin DEEPGRAM_API_KEY corre
 # en modo demo (mismo criterio que el resto).
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+# `nova-3` (default, /v1/listen) vs `flux-general-multi` (/v2/listen,
+# detección de turno SEMÁNTICA en vez de silencio — ver
+# voice_live.DeepgramSTT.transcripts()). Cambiar de uno a otro es solo esta
+# env var, sin tocar código — dejamos `nova-3` por defecto porque el
+# comportamiento exacto de `transcript` en los eventos de Flux (¿acumulado
+# por turno o incremental?) no se pudo verificar contra una llamada real en
+# esta sesión; probarlo primero en un tenant/subset antes de activarlo global.
 DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
 # Preferí es-419 (LATAM) para la llamada en vivo; DEEPGRAM_LANGUAGE es el
 # alias que usa voice_live.py (cae a DEEPGRAM_STT_LANGUAGE si no se setea).
+# Con modelos flux-* se manda como `language_hint` (multilenguaje).
 DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es-419")
 DEEPGRAM_LANGUAGE = os.getenv("DEEPGRAM_LANGUAGE", DEEPGRAM_STT_LANGUAGE)
-# Silencio (ms) para cerrar la frase del usuario en /ws/voice/live.
+# Silencio (ms) para cerrar la frase del usuario en /ws/voice/live con
+# modelos nova-*; sin efecto con flux-* (la detección de turno es semántica).
 # Más bajo = responde antes; demasiado bajo corta a mitad de frase.
 DEEPGRAM_ENDPOINTING_MS = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "200"))
 DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")

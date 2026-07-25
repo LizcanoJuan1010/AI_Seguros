@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react'
 import { AiVisualizerStub, type AiOrbState } from '../features/call/AiVisualizerStub'
 import { CallControls } from '../features/call/CallControls'
 import { Icon } from '../components/ui/Icon'
+import { PaymentCard } from '../features/assistant/PolicyCard'
 import { useLiveVoiceCall, type CallCard } from '../features/assistant/useLiveVoiceCall'
 
 function formatDuration(s: number): string {
@@ -9,23 +10,37 @@ function formatDuration(s: number): string {
 }
 
 export function LiveAiCallPage() {
-  const { status, muted, aiSpeaking, caption, cards, error, start, toggleMute, endCall } =
-    useLiveVoiceCall()
+  const {
+    status,
+    muted,
+    aiSpeaking,
+    caption,
+    cards,
+    payment,
+    error,
+    start,
+    toggleMute,
+    endCall,
+  } = useLiveVoiceCall()
   const [sentNote, setSentNote] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [displayCards, setDisplayCards] = useState<CallCard[] | null>(null)
   const [cardsLeaving, setCardsLeaving] = useState(false)
 
   const ended = status === 'ended' || status === 'error'
+  const showingPayment = Boolean(payment?.reference)
 
-  // Arranca la llamada real al entrar a la pantalla. `startedRef`-like guard
-  // vía `status !== 'idle'` evita un segundo intento si React StrictMode
-  // (activo en este proyecto) vuelve a montar el efecto en dev — igual, en
-  // dev vas a ver un mic-permission/reconexión de más una sola vez al
-  // cargar la página; no pasa en producción (StrictMode no duplica ahí).
+  // Arranca la llamada al entrar. StrictMode en dev monta/desmonta el efecto
+  // dos veces: el cleanup invalida el start en vuelo (startGenRef) y el
+  // remount abre una sola conexión estable.
   useEffect(() => {
     void start()
-  }, [start])
+    return () => {
+      endCall()
+    }
+    // Solo al montar la pantalla — start/endCall son estables (useCallback).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Cronómetro real: solo corre mientras la llamada está activa de verdad.
   useEffect(() => {
@@ -51,7 +66,8 @@ export function LiveAiCallPage() {
     return () => window.clearTimeout(id)
   }, [cards])
 
-  const showingCards = displayCards !== null && !cardsLeaving
+  const showingCards =
+    (displayCards !== null && !cardsLeaving) || showingPayment
   const orbState: AiOrbState = ended
     ? 'ended'
     : muted
@@ -157,14 +173,14 @@ export function LiveAiCallPage() {
           </div>
         </div>
 
-        {/* Cards proyectadas por la asesora (mapeadas desde tool_result) */}
-        {displayCards && (
+        {/* Cards proyectadas por la asesora (tool_result + payment_link CTA) */}
+        {(displayCards || showingPayment) && (
           <div
             className={`absolute inset-x-4 bottom-28 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
-              cardsLeaving ? 'call-cards-leaving' : ''
+              cardsLeaving && !showingPayment ? 'call-cards-leaving' : ''
             }`}
           >
-            {displayCards.map((card, i) => (
+            {displayCards?.map((card, i) => (
               <div
                 key={`${card.label}-${i}`}
                 className={`call-card glass-card rounded-2xl p-5 shadow-lg ${
@@ -198,6 +214,11 @@ export function LiveAiCallPage() {
                 </div>
               </div>
             ))}
+            {payment ? (
+              <div className="call-card glass-card overflow-hidden rounded-2xl shadow-lg">
+                <PaymentCard payment={payment} />
+              </div>
+            ) : null}
           </div>
         )}
       </div>

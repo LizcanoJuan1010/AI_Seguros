@@ -43,6 +43,24 @@ export class CreatePaymentDto {
   sessionKey?: string;
 }
 
+/**
+ * Alta de checkout Polar (o demo): Nest crea producto+checkout y persiste Payment.
+ * Body mínimo: amountCop; concept/sessionKey opcionales.
+ */
+export class CreateCheckoutDto {
+  @IsNumber()
+  @IsPositive()
+  amountCop!: number;
+
+  @IsOptional()
+  @IsString()
+  concept?: string;
+
+  @IsOptional()
+  @IsString()
+  sessionKey?: string;
+}
+
 /** Actualización de estado: polling de verificar_pago y aclaraciones. */
 export class UpdatePaymentDto {
   @IsOptional()

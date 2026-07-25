@@ -192,14 +192,18 @@ export class LiveCallRelay {
   }
 
   private async connectPython(rawToken: string): Promise<void> {
-    // Mismo host que AI_SERVICE_URL (HTTP) — el servicio Python expone el
-    // WS en el mismo puerto, solo cambia el esquema.
+    // Una sola salida a Python por relay. Si se reintenta, cierra la anterior.
+    if (this.pythonSocket) {
+      this.pythonSocket.removeAllListeners();
+      this.pythonSocket.close();
+      this.pythonSocket = null;
+    }
+
     const httpBase =
-      this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
+      this.config.get<string>('AI_SERVICE_URL') ?? 'http://localhost:8085';
     const wsBase = httpBase.replace(/^http/, 'ws');
     const socket = new WebSocket(`${wsBase}/ws/voice/live`);
     this.pythonSocket = socket;
-
     await new Promise<void>((resolve, reject) => {
       socket.once('open', () => resolve());
       socket.once('error', reject);

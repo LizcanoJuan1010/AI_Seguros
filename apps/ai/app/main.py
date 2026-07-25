@@ -1,4 +1,4 @@
-"""SegurIA API — catálogo, cotizador, leads, documentos e insights.
+"""Tequendama API — catálogo, cotizador, leads, documentos e insights.
 
 Consumida por las skills del agente Hermes (vía HTTP) y por la SPA (chat + panel gerencial).
 """
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         await memory.close_pool()
 
 
-app = FastAPI(title="SegurIA API", version="0.1.0", lifespan=lifespan,
+app = FastAPI(title="Tequendama API", version="0.1.0", lifespan=lifespan,
               description="Backend del asistente de venta de seguros LATAM")
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])

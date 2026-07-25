@@ -1,4 +1,4 @@
-"""Orquestador agéntico de SegurIA: loop de function calling multi-ronda con DeepSeek.
+"""Orquestador agéntico de Tequendama: loop de function calling multi-ronda con DeepSeek.
 
 Patrón tomado del orquestador de referencia (Paloma core/agents.py), reducido a lo
 esencial y con sus dos lecciones clave:
@@ -70,7 +70,7 @@ ORDEN DE CIERRE (no lo saltes ni lo cambies — cada paso bloquea al siguiente s
 3. `generar_verificacion_identidad` → cuando confirme que lo hizo, `verificar_identidad` — no le creas de palabra.
 4. `evaluar_riesgo` — AUTO_APPROVE sigue; REFER: no cobres/emitas, un asesor confirma en <24h; DECLINE: sé honesto, ofrece alternativa.
 5. `generar_firma_poliza` — dile que revise WhatsApp/correo y haga clic en "Acepto".
-6. Pago: `generar_link_pago` (o payment_method="simulado" si prefiere); cuando diga que pagó, `verificar_pago` y solo sigue con APPROVED. Nunca pidas tarjeta/CVV/clave en el chat.
+6. Pago: `generar_link_pago` (o payment_method="simulado" si prefiere). En chat/voz NUNCA leas ni dictes la URL completa del checkout — el cliente paga con el botón en pantalla (o el link de WhatsApp si se envió). Cuando diga que pagó, `verificar_pago` y solo sigue con APPROVED. Nunca pidas tarjeta/CVV/clave en el chat.
 7. `emitir_poliza` — si falta un paso previo, el error te dice cuál; complétalo y reintenta. Al emitir: "¡Ya quedaste asegurada! Tu póliza es N.º...", entrega el link y menciona el retracto (5 días hábiles, Ley 1480/2011).
 
 POSVENTA: cobro errado, reembolso o retracto → `solicitar_aclaracion`, explica el resultado con transparencia.
@@ -142,13 +142,25 @@ actual — la llamada la hace Martín, el asesor telefónico, reservada para
 leads con intención real de compra."""
 
 
+_CAMILO_VOICE_FRAMING = """
+
+CANAL: llamada de voz en vivo. Respuestas de 1-3 oraciones claras, sin
+listas largas — esto se ESCUCHA, no se lee. Nunca leas ni dictes una URL
+completa de checkout: dile que use el botón de pago en pantalla. Revisa el
+historial de esta llamada antes de responder: si ya hay turnos previos, NO
+te vuelvas a presentar ni repitas el saludo inicial — continúa la
+conversación donde quedó, directo a la siguiente pregunta o paso."""
+
+
 SYSTEM_PROMPT_WEB_DEFAULT = f"{SOFIA_INTRO}\n\n{_NUCLEO_CIERRE}{_web_framing()}"
 SYSTEM_PROMPT_WHATSAPP_DEFAULT = f"{CAMILO_INTRO}\n\n{_NUCLEO_CIERRE}{_CAMILO_FRAMING}"
+SYSTEM_PROMPT_VOICE_DEFAULT = f"{CAMILO_INTRO}\n\n{_NUCLEO_CIERRE}{_CAMILO_VOICE_FRAMING}"
 if _CONOCIMIENTO_COLSUBSIDIO:
     SYSTEM_PROMPT_WEB_DEFAULT = f"{SYSTEM_PROMPT_WEB_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
     SYSTEM_PROMPT_WHATSAPP_DEFAULT = f"{SYSTEM_PROMPT_WHATSAPP_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
+    SYSTEM_PROMPT_VOICE_DEFAULT = f"{SYSTEM_PROMPT_VOICE_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
 
-SYSTEM_PROMPT_GERENTE_DEFAULT = """Eres SegurIA en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
+SYSTEM_PROMPT_GERENTE_DEFAULT = """Eres Tequendama en modo analista para un GERENTE verificado del negocio de seguros. Estilo: analista de negocio senior, directo y accionable.
 
 - Usa la herramienta `obtener_insights` para toda cifra (KPIs, funnel, países, productos, serie temporal). Nunca inventes datos.
 - No vuelques JSON: responde la pregunta con 3-5 datos clave, una comparación relevante y UNA recomendación accionable.
@@ -185,6 +197,7 @@ def _load_active_prompt(campaign_slug: str, default_text: str) -> str:
 SYSTEM_PROMPT_WEB = _load_active_prompt("tequendama-cliente", SYSTEM_PROMPT_WEB_DEFAULT)
 SYSTEM_PROMPT_WHATSAPP = _load_active_prompt("tequendama-whatsapp", SYSTEM_PROMPT_WHATSAPP_DEFAULT)
 SYSTEM_PROMPT_GERENTE = _load_active_prompt("tequendama-gerente", SYSTEM_PROMPT_GERENTE_DEFAULT)
+SYSTEM_PROMPT_VOICE = _load_active_prompt("tequendama-voz", SYSTEM_PROMPT_VOICE_DEFAULT)
 
 TOOLS_SCHEMA = [
     {"type": "function", "function": {
@@ -268,14 +281,14 @@ TOOLS_SCHEMA = [
         }}}},
     {"type": "function", "function": {
         "name": "generar_link_pago",
-        "description": "Genera el link de pago REAL (Polar: tarjeta débito/crédito, cobro en COP) por la prima de la póliza y devuelve reference + checkout_url para entregar al cliente. El pago ocurre en la página segura de la pasarela: NUNCA pidas datos de tarjeta en el chat.",
+        "description": "Genera el link de pago REAL (Nest→Polar: tarjeta débito/crédito, cobro en COP) por la prima y devuelve reference + checkout_url. En voz/chat NUNCA leas la URL completa: el cliente usa el botón en pantalla o WhatsApp. NUNCA pidas datos de tarjeta en el chat.",
         "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
             "monto_cop": {"type": "number", "description": "Monto a cobrar en COP (normalmente la prima mensual de la opción elegida)"},
             "descripcion": {"type": "string", "description": "Concepto del cobro, ej. 'Primera mensualidad — Seguro de Vida'"},
         }}}},
     {"type": "function", "function": {
         "name": "verificar_pago",
-        "description": "Consulta el estado real del pago (webhook del backend + API de Polar). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
+        "description": "Consulta el estado del pago en Nest (ledger webhook-driven). Úsala cuando el cliente diga que ya pagó y SIEMPRE antes de emitir_poliza con método distinto de 'simulado'. Solo APPROVED permite emitir.",
         "parameters": {"type": "object", "properties": {
             "reference": {"type": "string", "description": "Referencia SEG-... (opcional: por defecto el último pago de la sesión)"},
             "transaction_id": {"type": "string", "description": "ID de la orden de Polar del comprobante, si el cliente lo tiene"},
@@ -958,13 +971,35 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                                 "prima actual y ofrece cerrar la renovación aquí mismo "
                                 "(mismo flujo: consentimiento → pago → emitir_poliza).")}
 
-        # ---------- Pagos reales (Polar sandbox / modo demo) ----------
+        # ---------- Pagos reales (Nest Polar / modo demo) ----------
         if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
             from . import payments
             fn = {"generar_link_pago": payments.generar_link_pago,
                   "verificar_pago": payments.verificar_pago,
                   "solicitar_aclaracion": payments.solicitar_aclaracion}[name]
-            return fn(conn, session_key, tenant_id, args)
+            result = fn(conn, session_key, tenant_id, args)
+            # WhatsApp opcional del link (mismo patrón KYC/esign): no falla create.
+            if name == "generar_link_pago" and isinstance(result, dict):
+                checkout_url = result.get("checkout_url")
+                if checkout_url:
+                    sess = _get_checkout(conn, session_key)
+                    real_phone = (sess.get("phone") if sess else None) or (
+                        phone if phone and not phone.startswith("web:") else None)
+                    if real_phone:
+                        try:
+                            from . import whatsapp_gateway
+                            texto = (
+                                "Tequendama Seguros: aquí tienes el link seguro "
+                                f"para pagar tu prima ({result.get('concept') or 'seguro'}). "
+                                "La tarjeta se digita solo en la pasarela:\n"
+                                f"{checkout_url}\n\nRef. {result.get('reference')}"
+                            )
+                            whatsapp_gateway.enviar_whatsapp(real_phone, texto)
+                        except Exception:
+                            log.warning(
+                                "no se pudo enviar el link de pago por WhatsApp",
+                                exc_info=True)
+            return result
 
         if name == "obtener_insights":
             if role != "gerente":
@@ -1075,7 +1110,7 @@ def _history_table(conn: psycopg.Connection) -> None:
         PRIMARY KEY (session_id, seq))""")
 
 
-def _load_history(session_id: str, limit: int = 30) -> list[dict]:
+def _load_history(session_id: str, limit: int = 120) -> list[dict]:
     conn = get_conn()
     _history_table(conn)
     rows = conn.execute(
@@ -1085,9 +1120,14 @@ def _load_history(session_id: str, limit: int = 30) -> list[dict]:
     msgs = [json.loads(r["message"]) for r in reversed(rows)]
     # La ventana no debe empezar con un 'tool' huérfano ni con un 'assistant' con
     # tool_calls cuyos 'tool' quedaron fuera: la API exige que cada 'tool' siga a su
-    # 'assistant'+tool_calls. Recorta el prefijo hasta el primer 'user'.
+    # 'assistant'+tool_calls. Recorta el prefijo hasta la primera ancla segura:
+    # un 'user', o un 'assistant' YA CERRADO (sin tool_calls) — todo turno normal
+    # termina en uno de estos dos, así que un historial largo con muchas
+    # tool-calls encadenadas casi nunca degrada a ventana vacía (antes solo
+    # 'user' contaba, y una secuencia larga de herramientas podía empujarlo
+    # fuera de la ventana sin dejar ningún ancla válida).
     for i, m in enumerate(msgs):
-        if m.get("role") == "user":
+        if m.get("role") == "user" or (m.get("role") == "assistant" and not m.get("tool_calls")):
             return msgs[i:]
     return []
 
@@ -1239,7 +1279,7 @@ def _sync_turn_to_docket(role: str, user_message: str, reply: str) -> None:
         from .docket_engine import store as _docket_store
         campaign_slug = "tequendama-gerente" if role == "gerente" else "tequendama-cliente"
         turns = [{"role": "customer", "text": user_message}, {"role": "agent", "text": reply}]
-        transcript = f"Cliente: {user_message}\nSegurIA: {reply}"
+        transcript = f"Cliente: {user_message}\nTequendama: {reply}"
         c = _docket_store.conn()
         try:
             _docket_store.insert_call(c, campaign_slug, str(uuid.uuid4()), transcript, turns)
