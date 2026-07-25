@@ -64,6 +64,15 @@ export type CustomerInput = {
   department?: string
   consentData?: boolean
   notes?: string
+  referralSource?: string
+  referralLink?: string
+}
+
+/** Adquisición por red social / canal de origen. */
+export type AcquisitionSource = {
+  source: string
+  count: number
+  pct: number
 }
 
 /** Archivo adjunto a un cliente (metadata; el binario vive en el backend). */
@@ -338,6 +347,8 @@ export type CustomerFull = {
     consentData: boolean
     consentAt: string | null
     notes?: string | null
+    referralSource?: string | null
+    referralLink?: string | null
     createdAt: string
   }
   documents?: CustomerAttachment[]
@@ -465,6 +476,10 @@ export const api = {
   },
   dashboardAlerts: () =>
     get<{ data: DashboardAlertItem[] }>('/dashboard/alerts'),
+  acquisitionBySource: () =>
+    get<{ total: number; data: AcquisitionSource[] }>(
+      '/dashboard/acquisition-by-source',
+    ),
   alerts: (teamId?: string) =>
     get<Paginated<ApiAlert>>('/alerts', { teamId, limit: '20' }),
   agentPerformance: (teamId?: string) =>

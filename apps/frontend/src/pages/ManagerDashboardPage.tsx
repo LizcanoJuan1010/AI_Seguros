@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../components/ui/Icon'
 import { KpiCards } from '../features/manager/KpiCards'
 import { AlertsPanel } from '../features/manager/AlertsPanel'
+import { AcquisitionCard } from '../features/manager/AcquisitionCard'
 import { ReportsCard } from '../features/manager/ReportsCard'
 import { AiPrediction } from '../features/manager/AiPrediction'
 import { AiImpactCard } from '../features/manager/AiImpactCard'
@@ -208,15 +209,17 @@ export function ManagerDashboardPage() {
           <KpiCards items={kpis} />
           {impact && <AiImpactCard data={impact} />}
           <div className="flex flex-col gap-6 lg:flex-row">
-            <div className="flex-1">
+            <div className="flex flex-1 flex-col gap-6">
               <AiPrediction />
+              <AcquisitionCard />
             </div>
             <aside className="flex w-full flex-col gap-6 lg:w-80">
-              {alertItems.length > 0 && <AlertsPanel items={alertItems} />}
               <ReportsCard />
             </aside>
           </div>
           <ProductIdeasWall />
+          {/* Alertas críticas al final, en una caja de ancho completo. */}
+          {alertItems.length > 0 && <AlertsPanel items={alertItems} />}
         </div>
       )}
 

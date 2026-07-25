@@ -85,6 +85,13 @@ export interface PortfolioCustomer {
   risk: { level: RiskLevel; factors: string[] };
 }
 
+/** Adquisición de clientes por red social / canal de origen. */
+export interface AcquisitionSource {
+  source: string;
+  count: number;
+  pct: number;
+}
+
 /** Alerta crítica derivada del riesgo de un cliente (calculada, no persistida). */
 export interface DashboardAlert {
   id: string;
@@ -605,6 +612,30 @@ export class DashboardService {
       a.severity === b.severity ? 0 : a.severity === 'alta' ? -1 : 1,
     );
     return { data: alerts.slice(0, 12) };
+  }
+
+  /**
+   * Adquisición por red social / canal de origen: cuántos clientes llegaron
+   * por cada `referralSource`, ordenado de mayor a menor. Responde "¿qué redes
+   * traen más clientes?" para los KPIs del gerente.
+   */
+  async acquisitionBySource(
+    tenantId: string,
+  ): Promise<{ total: number; data: AcquisitionSource[] }> {
+    const groups = await this.prisma.customer.groupBy({
+      by: ['referralSource'],
+      where: { teamId: tenantId },
+      _count: true,
+    });
+    const total = groups.reduce((sum, g) => sum + g._count, 0);
+    const data: AcquisitionSource[] = groups
+      .map((g) => ({
+        source: g.referralSource ?? 'Sin registrar',
+        count: g._count,
+        pct: total ? g._count / total : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+    return { total, data };
   }
 
   private toPortfolioCustomer(row: PortfolioSqlRow): PortfolioCustomer {

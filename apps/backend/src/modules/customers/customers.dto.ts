@@ -52,6 +52,14 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  referralSource?: string;
+
+  @IsOptional()
+  @IsString()
+  referralLink?: string;
 }
 
 export class UpdateCustomerDto extends PartialType(CreateCustomerDto) {}
