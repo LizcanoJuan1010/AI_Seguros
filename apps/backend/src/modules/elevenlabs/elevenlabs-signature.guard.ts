@@ -16,9 +16,11 @@ const TOLERANCE_SECONDS = 30 * 60;
  * Verifica `ElevenLabs-Signature: t=<unix>,v0=<hex hmac-sha256>` sobre el
  * cuerpo CRUDO (`req.rawBody`, habilitado en main.ts con `rawBody: true`).
  * El hash firmado es `${t}.${rawBody}` con el secreto compartido
- * `ELEVENLABS_WEBHOOK_SECRET`. Primer guard "de terceros" del backend (los
- * demás son JWT propio); análogo conceptual al `require_service` de la API
- * Python, pero criptográfico porque quien llama es un tercero real.
+ * `ELEVENLABS_POSTCALL_SECRET` — distinto del `ELEVENLABS_WEBHOOK_SECRET`
+ * usado por el webhook de inicio (`ElevenLabsInitGuard`), cada webhook con
+ * su propio secreto. Primer guard "de terceros" del backend (los demás son
+ * JWT propio); análogo conceptual al `require_service` de la API Python,
+ * pero criptográfico porque quien llama es un tercero real.
  */
 @Injectable()
 export class ElevenLabsSignatureGuard implements CanActivate {
@@ -55,10 +57,10 @@ export class ElevenLabsSignatureGuard implements CanActivate {
       throw new UnauthorizedException('Firma de ElevenLabs expirada');
     }
 
-    const secret = this.config.get<string>('ELEVENLABS_WEBHOOK_SECRET');
+    const secret = this.config.get<string>('ELEVENLABS_POSTCALL_SECRET');
     if (!secret) {
       throw new UnauthorizedException(
-        'ELEVENLABS_WEBHOOK_SECRET no está configurado',
+        'ELEVENLABS_POSTCALL_SECRET no está configurado',
       );
     }
 
