@@ -17,6 +17,18 @@ const inputClass =
   'w-full rounded-md border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-body-md text-on-surface placeholder:text-on-surface-variant/60 outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20'
 
 const DOC_TYPES = ['CC', 'CE', 'TI', 'NIT', 'PP', 'PA']
+/** Redes / canales de origen (controlado para que el KPI agrupe limpio). */
+const REFERRAL_SOURCES = [
+  'Instagram',
+  'Facebook',
+  'TikTok',
+  'WhatsApp',
+  'Google',
+  'YouTube',
+  'LinkedIn',
+  'Referido',
+  'Otro',
+]
 const UPLOAD_ACCEPT =
   '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt'
 
@@ -65,6 +77,8 @@ export function CustomerFormModal({ mode, customerId, onClose, onSaved }: Props)
           department: c.department ?? '',
           consentData: c.consentData,
           notes: c.notes ?? '',
+          referralSource: c.referralSource ?? '',
+          referralLink: c.referralLink ?? '',
         })
         setDocs(full.documents ?? [])
       })
@@ -258,6 +272,38 @@ export function CustomerFormModal({ mode, customerId, onClose, onSaved }: Props)
                   value={form.department ?? ''}
                   onChange={(e) => set('department', e.target.value)}
                   placeholder="Cundinamarca"
+                />
+              </label>
+            </div>
+
+            {/* Adquisición: por dónde llegó el cliente (alimenta el KPI). */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[180px_1fr]">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-label-md text-on-surface">
+                  Red social / origen
+                </span>
+                <select
+                  className={inputClass}
+                  value={form.referralSource ?? ''}
+                  onChange={(e) => set('referralSource', e.target.value)}
+                >
+                  <option value="">Sin registrar</option>
+                  {REFERRAL_SOURCES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-label-md text-on-surface">
+                  Link por el que llegó
+                </span>
+                <input
+                  className={inputClass}
+                  value={form.referralLink ?? ''}
+                  onChange={(e) => set('referralLink', e.target.value)}
+                  placeholder="https://instagram.com/p/…"
                 />
               </label>
             </div>

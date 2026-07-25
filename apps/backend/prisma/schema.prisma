@@ -193,10 +193,13 @@ model Customer {
   birthDate     DateTime? @map("birth_date") @db.Date
   city          String?
   department    String?
-  consentData   Boolean   @default(false) @map("consent_data")
-  consentAt     DateTime? @map("consent_at") @db.Timestamptz(6)
-  notes         String?
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  consentData    Boolean   @default(false) @map("consent_data")
+  consentAt      DateTime? @map("consent_at") @db.Timestamptz(6)
+  notes          String?
+  // Adquisición: por qué red social / canal llegó el cliente y con qué link.
+  referralSource String?   @map("referral_source")
+  referralLink   String?   @map("referral_link")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   team      Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")

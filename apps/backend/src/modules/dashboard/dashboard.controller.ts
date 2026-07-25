@@ -31,6 +31,11 @@ export class DashboardController {
     return this.dashboardService.getAlerts(tenantId);
   }
 
+  @Get('acquisition-by-source')
+  acquisitionBySource(@TenantId() tenantId: string) {
+    return this.dashboardService.acquisitionBySource(tenantId);
+  }
+
   @Get('ai-impact')
   aiImpact(@TenantId() tenantId: string) {
     return this.dashboardService.aiImpact(tenantId);
