@@ -26,6 +26,11 @@ export class DashboardController {
     return this.dashboardService.dailyKpis(tenantId);
   }
 
+  @Get('alerts')
+  alerts(@TenantId() tenantId: string) {
+    return this.dashboardService.getAlerts(tenantId);
+  }
+
   @Get('ai-impact')
   aiImpact(@TenantId() tenantId: string) {
     return this.dashboardService.aiImpact(tenantId);

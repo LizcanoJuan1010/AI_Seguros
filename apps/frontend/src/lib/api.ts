@@ -3,6 +3,7 @@
  * Todas las lecturas aceptan scoping multitenant vía `teamId` donde el
  * backend lo soporta (users, alerts, dashboard/agent-performance).
  */
+import { authHeaders } from './authFetch'
 
 const BASE = '/api/v1'
 
@@ -48,6 +49,42 @@ export type ApiCustomer = {
   phone: string | null
   email: string | null
   city: string | null
+  notes?: string | null
+}
+
+/** Payload de crear/editar cliente (coincide con CreateCustomerDto del backend). */
+export type CustomerInput = {
+  fullName?: string
+  documentType?: string
+  documentId?: string
+  email?: string
+  phone?: string
+  birthDate?: string
+  city?: string
+  department?: string
+  consentData?: boolean
+  notes?: string
+}
+
+/** Archivo adjunto a un cliente (metadata; el binario vive en el backend). */
+export type CustomerAttachment = {
+  id: string
+  customerId: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  kind: string | null
+  createdAt: string
+}
+
+/** Alerta crítica computada en vivo desde el riesgo del cliente. */
+export type DashboardAlertItem = {
+  id: string
+  severity: 'alta' | 'media'
+  title: string
+  message: string
+  customerId: string
+  kind: string
 }
 
 export type ApiAlert = {
@@ -300,8 +337,10 @@ export type CustomerFull = {
     department: string | null
     consentData: boolean
     consentAt: string | null
+    notes?: string | null
     createdAt: string
   }
+  documents?: CustomerAttachment[]
   aiProfile: { perfil: AiPerfil; fuente: string | null; updatedAt: string } | null
   intake: { datos: Record<string, unknown>; updatedAt: string } | null
   conversation: ConversationTurn[]
@@ -330,11 +369,63 @@ async function get<T>(
     if (v) qs.set(k, v)
   }
   const suffix = qs.size ? `?${qs}` : ''
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const res = await fetch(`${BASE}${path}${suffix}`, { headers: baseHeaders() })
+  if (!res.ok) throw new Error(`API ${path} → HTTP ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+/** Headers comunes: tenant activo + Bearer si hay sesión. */
+function baseHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...authHeaders(),
+  }
   const tenant = getStoredTenantId()
   if (tenant) headers['X-Tenant-Id'] = tenant
-  const res = await fetch(`${BASE}${path}${suffix}`, { headers })
-  if (!res.ok) throw new Error(`API ${path} → HTTP ${res.status}`)
+  return headers
+}
+
+/** Extrae el mensaje de error del backend (Nest: { message }) para la UI. */
+async function toError(res: Response, path: string): Promise<Error> {
+  try {
+    const body = (await res.json()) as { message?: string | string[] }
+    const msg = Array.isArray(body.message)
+      ? body.message.join(', ')
+      : body.message
+    if (msg) return new Error(msg)
+  } catch {
+    /* cuerpo no-JSON */
+  }
+  return new Error(`API ${path} → HTTP ${res.status}`)
+}
+
+async function send<T>(
+  method: 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: { ...baseHeaders(), 'Content-Type': 'application/json' },
+    ...(body !== undefined && { body: JSON.stringify(body) }),
+  })
+  if (!res.ok) throw await toError(res, path)
+  if (res.status === 204) return undefined as T
+  return res.json() as Promise<T>
+}
+
+const post = <T>(path: string, body?: unknown) => send<T>('POST', path, body)
+const patch = <T>(path: string, body?: unknown) => send<T>('PATCH', path, body)
+const del = (path: string) => send<void>('DELETE', path)
+
+/** Envío multipart (sin Content-Type: el navegador pone el boundary). */
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: baseHeaders(),
+    body: form,
+  })
+  if (!res.ok) throw await toError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -345,6 +436,35 @@ export const api = {
   leads: () => get<Paginated<ApiLead>>('/leads', { limit: '100' }),
   customers: () => get<Paginated<ApiCustomer>>('/customers', { limit: '100' }),
   customerFull: (id: string) => get<CustomerFull>(`/customers/${id}/full`),
+  createCustomer: (input: CustomerInput) =>
+    post<ApiCustomer>('/customers', input),
+  updateCustomer: (id: string, input: CustomerInput) =>
+    patch<ApiCustomer>(`/customers/${id}`, input),
+  deleteCustomer: (id: string) => del(`/customers/${id}`),
+  uploadCustomerDocuments: (id: string, files: File[]) => {
+    const form = new FormData()
+    for (const f of files) form.append('files', f)
+    return postForm<CustomerAttachment[]>(`/customers/${id}/documents`, form)
+  },
+  deleteCustomerDocument: (docId: string) =>
+    del(`/customers/documents/${docId}`),
+  /** Descarga autenticada (lleva X-Tenant-Id/Bearer, que un <a> no enviaría). */
+  downloadCustomerDocument: async (docId: string, filename: string) => {
+    const res = await fetch(`${BASE}/customers/documents/${docId}/download`, {
+      headers: baseHeaders(),
+    })
+    if (!res.ok) throw await toError(res, `/customers/documents/${docId}`)
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
+  dashboardAlerts: () =>
+    get<{ data: DashboardAlertItem[] }>('/dashboard/alerts'),
   alerts: (teamId?: string) =>
     get<Paginated<ApiAlert>>('/alerts', { teamId, limit: '20' }),
   agentPerformance: (teamId?: string) =>

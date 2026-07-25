@@ -17,6 +17,7 @@ import {
 } from '../../lib/api'
 import { useTenant } from '../../tenant/TenantContext'
 import { CustomerDetailDrawer } from '../agent/CustomerDetailDrawer'
+import { CustomerFormModal } from './CustomerFormModal'
 
 const STATUS_LABEL: Record<string, string> = {
   NUEVO: 'Nuevo',
@@ -140,9 +141,11 @@ function PriorityBar({ score }: { score: number }) {
 function CustomerRow({
   c,
   onSelect,
+  onEdit,
 }: {
   c: PortfolioCustomer
   onSelect: (c: PortfolioCustomer) => void
+  onEdit: (c: PortfolioCustomer) => void
 }) {
   const intent = c.lead ? INTENT_META[c.lead.intent] : null
   const risk = RISK_META[c.risk.level]
@@ -155,18 +158,34 @@ function CustomerRow({
       className="cursor-pointer align-top transition-colors hover:bg-mist-white"
     >
       <td className="px-4 py-3">
-        <p className="text-sm font-bold text-on-surface">
-          {c.fullName ?? 'Sin nombre'}
-        </p>
-        <p className="text-[11px] text-on-surface-variant">
-          {[c.phone, c.city].filter(Boolean).join(' · ') || c.email || '—'}
-        </p>
-        {c.lead?.agentName && (
-          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-outline">
-            <Icon name="badge" className="text-[12px]" />
-            {c.lead.agentName}
-          </p>
-        )}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-on-surface">
+              {c.fullName ?? 'Sin nombre'}
+            </p>
+            <p className="text-[11px] text-on-surface-variant">
+              {[c.phone, c.city].filter(Boolean).join(' · ') || c.email || '—'}
+            </p>
+            {c.lead?.agentName && (
+              <p className="mt-0.5 flex items-center gap-1 text-[10px] text-outline">
+                <Icon name="badge" className="text-[12px]" />
+                {c.lead.agentName}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Editar cliente"
+            title="Editar cliente"
+            onClick={(e) => {
+              e.stopPropagation()
+              onEdit(c)
+            }}
+            className="shrink-0 rounded-md p-1 text-outline transition-colors hover:bg-primary/10 hover:text-primary"
+          >
+            <Icon name="edit" className="text-[16px]" />
+          </button>
+        </div>
       </td>
       <td className="px-4 py-3">
         {c.lead ? (
@@ -276,9 +295,11 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function CustomerCard({
   c,
   onSelect,
+  onEdit,
 }: {
   c: PortfolioCustomer
   onSelect: (c: PortfolioCustomer) => void
+  onEdit: (c: PortfolioCustomer) => void
 }) {
   const intent = c.lead ? INTENT_META[c.lead.intent] : null
   const risk = RISK_META[c.risk.level]
@@ -305,13 +326,26 @@ function CustomerCard({
             </p>
           )}
         </div>
-        <span
-          title={c.risk.factors.join('\n')}
-          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-label-sm font-bold ${risk.chip}`}
-        >
-          <Icon name={risk.icon} className="text-[13px]" />
-          {risk.label}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span
+            title={c.risk.factors.join('\n')}
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-label-sm font-bold ${risk.chip}`}
+          >
+            <Icon name={risk.icon} className="text-[13px]" />
+            {risk.label}
+          </span>
+          <button
+            type="button"
+            aria-label="Editar cliente"
+            onClick={(e) => {
+              e.stopPropagation()
+              onEdit(c)
+            }}
+            className="rounded-md p-1 text-outline transition-colors hover:bg-primary/10 hover:text-primary"
+          >
+            <Icon name="edit" className="text-[16px]" />
+          </button>
+        </div>
       </div>
       {c.risk.factors[0] && (
         <p className="mt-1.5 text-[10px] leading-tight text-outline">
@@ -401,6 +435,11 @@ export function CustomerPortfolio() {
   const [data, setData] = useState<PortfolioData | null>(null)
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<PortfolioCustomer | null>(null)
+  const [formState, setFormState] = useState<{
+    mode: 'create' | 'edit'
+    id?: string
+  } | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   // La búsqueda escribe con debounce sobre los filtros reales.
   useEffect(() => {
@@ -428,7 +467,9 @@ export function CustomerPortfolio() {
     return () => {
       alive = false
     }
-  }, [filters, teamId])
+  }, [filters, teamId, reloadKey])
+
+  const refetch = () => setReloadKey((k) => k + 1)
 
   const summary = data?.summary
   const hasActiveFilters = useMemo(
@@ -451,13 +492,23 @@ export function CustomerPortfolio() {
             pólizas, reclamos y riesgo
           </p>
         </div>
-        {summary && (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
-            <Chip tone="hot">{summary.byRisk.alto} riesgo alto</Chip>
-            <Chip tone="amber">{summary.byRisk.medio} medio</Chip>
-            <Chip tone="success">{summary.byRisk.bajo} bajo</Chip>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
+          {summary && (
+            <>
+              <Chip tone="hot">{summary.byRisk.alto} riesgo alto</Chip>
+              <Chip tone="amber">{summary.byRisk.medio} medio</Chip>
+              <Chip tone="success">{summary.byRisk.bajo} bajo</Chip>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setFormState({ mode: 'create' })}
+            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-2 text-label-md font-semibold text-on-primary shadow-sm transition-transform hover:scale-[1.03]"
+          >
+            <Icon name="person_add" filled className="text-[18px]" />
+            Nuevo cliente
+          </button>
+        </div>
       </div>
 
       {summary && (
@@ -611,7 +662,14 @@ export function CustomerPortfolio() {
           </thead>
           <tbody className="divide-y divide-outline-variant">
             {(data?.data ?? []).map((c) => (
-              <CustomerRow key={c.customerId} c={c} onSelect={setSelected} />
+              <CustomerRow
+                key={c.customerId}
+                c={c}
+                onSelect={setSelected}
+                onEdit={(cust) =>
+                  setFormState({ mode: 'edit', id: cust.customerId })
+                }
+              />
             ))}
           </tbody>
         </table>
@@ -620,7 +678,12 @@ export function CustomerPortfolio() {
       {/* Móvil (<md): cada cliente como tarjeta apilada, sin scroll lateral */}
       <div className="flex flex-col gap-3 p-4 md:hidden">
         {(data?.data ?? []).map((c) => (
-          <CustomerCard key={c.customerId} c={c} onSelect={setSelected} />
+          <CustomerCard
+            key={c.customerId}
+            c={c}
+            onSelect={setSelected}
+            onEdit={(cust) => setFormState({ mode: 'edit', id: cust.customerId })}
+          />
         ))}
       </div>
 
@@ -653,6 +716,15 @@ export function CustomerPortfolio() {
         open={selected != null}
         onClose={() => setSelected(null)}
       />
+
+      {formState && (
+        <CustomerFormModal
+          mode={formState.mode}
+          customerId={formState.id}
+          onClose={() => setFormState(null)}
+          onSaved={refetch}
+        />
+      )}
     </Card>
   )
 }

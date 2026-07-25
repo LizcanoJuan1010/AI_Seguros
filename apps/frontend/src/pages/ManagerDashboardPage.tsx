@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../components/ui/Icon'
 import { KpiCards } from '../features/manager/KpiCards'
@@ -12,9 +12,16 @@ import { FunnelHealthCard } from '../features/manager/FunnelHealthCard'
 import { ProductIdeasWall } from '../features/manager/ProductIdeasWall'
 import { AgentKnowledgePanel } from '../features/manager/AgentKnowledgePanel'
 import { HotLeadsCard } from '../features/manager/HotLeadsCard'
-import { alerts as mockAlerts, kpis as mockKpis } from '../data/mock/manager'
+import { kpis as mockKpis } from '../data/mock/manager'
 import type { Alert, Kpi } from '../data/mock/types'
-import { api, formatCop, type AiImpact, type ApiAlert, type ApiClaim, type DailyKpis } from '../lib/api'
+import {
+  api,
+  formatCop,
+  type AiImpact,
+  type ApiClaim,
+  type DailyKpis,
+  type DashboardAlertItem,
+} from '../lib/api'
 import { useTenant } from '../tenant/TenantContext'
 
 
@@ -73,18 +80,6 @@ function toKpis(k: DailyKpis): Kpi[] {
 }
 
 
-function toAlerts(rows: ApiAlert[]): Alert[] {
-  return rows
-    .filter((a) => !a.resolved)
-    .map((a) => ({
-      id: a.id,
-      title: a.severity === 'alta' ? 'Atención inmediata' : 'Aviso del equipo',
-      body: a.message,
-      tone: a.severity === 'alta' ? 'amber' : 'error',
-      ...(a.severity === 'alta' ? { cta: 'ASIGNAR AHORA' } : {}),
-    }))
-}
-
 export function ManagerDashboardPage() {
   const { teamId, team, offline } = useTenant()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -94,23 +89,19 @@ export function ManagerDashboardPage() {
     : 'resumen'
 
   const [kpis, setKpis] = useState<Kpi[]>(mockKpis)
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts)
   const [impact, setImpact] = useState<AiImpact | null>(null)
   const [claims, setClaims] = useState<ApiClaim[]>([])
+  const [alerts, setAlerts] = useState<DashboardAlertItem[]>([])
   const [live, setLive] = useState(false)
 
   useEffect(() => {
     if (offline) return
     let alive = true
-    Promise.all([
-      api.dailyKpis(),
-      api.alerts(teamId || undefined),
-    ])
-      .then(([k, al]) => {
+    api
+      .dailyKpis()
+      .then((k) => {
         if (!alive) return
         setKpis(toKpis(k))
-        const mapped = toAlerts(al.data)
-        setAlerts(mapped.length ? mapped : [])
         setLive(true)
       })
       .catch(() => {
@@ -126,10 +117,23 @@ export function ManagerDashboardPage() {
       .claims(teamId || undefined)
       .then((c) => alive && setClaims(c.data))
       .catch(() => alive && setClaims([]))
+    // Alertas críticas: derivadas EN VIVO del riesgo de los clientes.
+    api
+      .dashboardAlerts()
+      .then((r) => alive && setAlerts(r.data))
+      .catch(() => alive && setAlerts([]))
     return () => {
       alive = false
     }
   }, [teamId, offline])
+
+  /** Alertas del backend → forma que renderiza AlertsPanel. */
+  const alertItems: Alert[] = alerts.map((a) => ({
+    id: a.id,
+    title: a.title,
+    body: a.message,
+    tone: a.severity === 'alta' ? 'error' : 'amber',
+  }))
 
   const setTab = (id: TabId) => {
     const next = new URLSearchParams(searchParams)
@@ -138,7 +142,6 @@ export function ManagerDashboardPage() {
     setSearchParams(next, { replace: true })
   }
 
-  const activeAlerts = useMemo(() => alerts.length, [alerts])
   const openClaims = claims.length
 
   return (
@@ -171,8 +174,8 @@ export function ManagerDashboardPage() {
         {TABS.map((t) => {
           const isActive = t.id === activeTab
           const badge =
-            t.id === 'resumen' && activeAlerts > 0
-              ? activeAlerts
+            t.id === 'resumen' && alerts.length > 0
+              ? alerts.length
               : t.id === 'reclamos' && openClaims > 0
                 ? openClaims
                 : null
@@ -201,18 +204,19 @@ export function ManagerDashboardPage() {
 
       {activeTab === 'resumen' && (
         <div className="flex flex-col gap-6">
+          {/* Pulso del día → impacto de la IA → mirada a futuro → oportunidades */}
           <KpiCards items={kpis} />
           {impact && <AiImpactCard data={impact} />}
-          <ProductIdeasWall />
           <div className="flex flex-col gap-6 lg:flex-row">
             <div className="flex-1">
               <AiPrediction />
             </div>
             <aside className="flex w-full flex-col gap-6 lg:w-80">
-              {alerts.length > 0 && <AlertsPanel items={alerts} />}
+              {alertItems.length > 0 && <AlertsPanel items={alertItems} />}
               <ReportsCard />
             </aside>
           </div>
+          <ProductIdeasWall />
         </div>
       )}
 

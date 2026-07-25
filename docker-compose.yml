@@ -56,8 +56,12 @@ services:
       # (primera llamada NestJS->Python del sistema; hasta ahora todo iba al revés).
       - AI_SERVICE_URL=${AI_SERVICE_URL:-http://seguria-ai:8085}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
+      # Documentos adjuntos a clientes (binarios en disco; metadata en BD).
+      - CUSTOMER_UPLOADS_DIR=${CUSTOMER_UPLOADS_DIR:-/app/uploads/customers}
     ports:
       - "3001:3000"   # 3000 del host lo ocupa metabase-local de otro proyecto
+    volumes:
+      - backend-uploads:/app/uploads
     restart: unless-stopped
 
   # ---------- Cerebro IA: chat SSE, cotizador, memoria, PDF (Python) ----------
@@ -189,6 +193,7 @@ services:
 volumes:
   pg-data:
   redis-data:
+  backend-uploads:
   seguria-state:
   kokoro-cache:
   hermes-sessions:
