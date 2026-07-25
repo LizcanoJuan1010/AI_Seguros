@@ -17,12 +17,7 @@ from pydantic import BaseModel, Field
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
-# TEMPORAL: campaign_broadcast.py vive solo en la rama feat/campanas-marketing-gemini
-# (PR #8, sin mergear a main) — ese import rompería el arranque acá. Comentado,
-# no borrado; se restaura en cuanto se mergee esa rama (ver §2.4/§5.4 del plan
-# de corretaje). marketing_studio.py sí existe en este branch y es autocontenido
-# (no depende de campaign_broadcast), así que su router va conectado abajo.
-# from .campaign_broadcast import router as campaign_broadcast_router
+from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
 from .marketing_studio import router as marketing_router
 from .auth import resolve_identity
@@ -61,7 +56,7 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
 app.include_router(marketing_router)  # POST /api/marketing/banner (Gemini, requiere gerente)
-# app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
+app.include_router(campaign_broadcast_router)  # POST /api/marketing/campaigns/broadcast (servicio-a-servicio)
 
 
 class ChatRequest(BaseModel):
