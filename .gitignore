@@ -27,3 +27,6 @@ docker-compose.override.yml
 # Datos reales de afiliados (PII: nombre completo, género, edad, ciudad) —
 # nunca debe llegar a git. 1.5M filas, sin llave de cruce estable todavía.
 data/market/Usos_Productos_Afiliados_SIN_ID.csv
+
+# Sesion temporal del emparejamiento de WhatsApp (credenciales)
+.wa-pairing/

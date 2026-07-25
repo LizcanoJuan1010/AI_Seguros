@@ -162,6 +162,16 @@ services:
       - MANAGER_API_KEY=${MANAGER_API_KEY:-demo-gerente-2026}
       - SERVICE_API_KEY=${SERVICE_API_KEY:-demo-service-2026}
       - HERMES_MODE=${HERMES_MODE:-idle}
+      # Gateway WhatsApp: habilita la plataforma; el emparejamiento QR se hace
+      # con `docker compose exec hermes-agent hermes whatsapp` (persiste en volumen)
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
+      # Atiende a CUALQUIER remitente (demo hackathon): modo bot (no self-chat),
+      # DMs abiertos y opt-in explícito que exige Hermes para política abierta.
+      - WHATSAPP_MODE=${WHATSAPP_MODE:-bot}
+      - WHATSAPP_DM_POLICY=${WHATSAPP_DM_POLICY:-open}
+      - GATEWAY_ALLOW_ALL_USERS=${GATEWAY_ALLOW_ALL_USERS:-true}
+      # El bridge Node exige su propio allowlist; * = bot abierto a cualquiera
+      - WHATSAPP_ALLOWED_USERS=${WHATSAPP_ALLOWED_USERS:-*}
     volumes:
       - ./apps/services/hermes-agent:/workspace:ro
       - hermes-sessions:/root/.hermes/sessions
