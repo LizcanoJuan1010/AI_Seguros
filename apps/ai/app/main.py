@@ -17,13 +17,14 @@ from pydantic import BaseModel, Field
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
-# TEMPORAL: campaign_broadcast.py/marketing_studio.py no existen en disco
-# ahora mismo (otro trabajo en curso, no de esta sesión) — sin esto el import
-# rompe el arranque para cualquiera. Comentado, no borrado; se puede
-# restaurar en cuanto esos archivos vuelvan a existir.
+# TEMPORAL: campaign_broadcast.py vive solo en la rama feat/campanas-marketing-gemini
+# (PR #8, sin mergear a main) — ese import rompería el arranque acá. Comentado,
+# no borrado; se restaura en cuanto se mergee esa rama (ver §2.4/§5.4 del plan
+# de corretaje). marketing_studio.py sí existe en este branch y es autocontenido
+# (no depende de campaign_broadcast), así que su router va conectado abajo.
 # from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
-# from .marketing_studio import router as marketing_router
+from .marketing_studio import router as marketing_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
@@ -59,7 +60,7 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
-# app.include_router(marketing_router)  # ver nota TEMPORAL arriba
+app.include_router(marketing_router)  # POST /api/marketing/banner (Gemini, requiere gerente)
 # app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
 
 
@@ -401,9 +402,14 @@ _STAGE_TO_LEAD_STATUS = {
     "nuevo": "NUEVO", "descubrimiento": "CONTACTADO", "cotizado": "COTIZADO",
     "documento": "NEGOCIACION", "cerrado": "CERRADO_GANADO", "perdido": "CERRADO_PERDIDO",
 }
-# El catálogo LATAM de Python tiene más tipos (hogar, viaje, pyme...) que el
-# InsuranceType de Prisma (solo VIDA/AUTO/SALUD) — se omite si no mapea 1:1.
-_INSURANCE_TYPE_TO_PRISMA = {"vida": "VIDA", "auto": "AUTO", "salud": "SALUD"}
+# Los 10 tipos del catálogo LATAM ya tienen equivalente 1:1 en el
+# InsuranceType de Prisma (antes solo tenía VIDA/AUTO/SALUD y los otros 7 se
+# sincronizaban sin tipo — ver migración 20260725120000_insurers).
+_INSURANCE_TYPE_TO_PRISMA = {
+    "vida": "VIDA", "auto": "AUTO", "salud": "SALUD", "hogar": "HOGAR",
+    "viaje": "VIAJE", "pyme": "PYME", "accidentes": "ACCIDENTES",
+    "exequial": "EXEQUIAL", "mascotas": "MASCOTAS", "movilidad": "MOVILIDAD",
+}
 
 
 def _sync_lead_to_backend(local_lead_id: int, tenant_id: str, phone: str,

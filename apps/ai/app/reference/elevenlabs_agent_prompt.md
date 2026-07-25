@@ -16,22 +16,26 @@ antes de disparar la llamada (`iniciar_llamada`) y las manda en
 | `{{phone}}`, `{{tenant_id}}` | sí | siempre, por diseño |
 | `{{nombre_cliente}}`, `{{ciudad}}` | no siempre | checkout/intake |
 | `{{tipo_seguro}}`, `{{producto}}`, `{{aseguradora}}`, `{{prima_mensual_local}}`, `{{moneda}}`, `{{quote_id}}` | no siempre | última cotización |
-| `{{edad}}`, `{{afiliacion}}`, `{{dependientes}}`, `{{vivienda}}`, `{{vehiculo}}`, `{{tipo_ingreso}}`, `{{productos_vigentes}}` | **NO todavía** | ver gap abajo |
+| `{{edad}}`, `{{afiliacion}}`, `{{dependientes}}`, `{{vivienda}}`, `{{vehiculo}}`, `{{tipo_ingreso}}`, `{{productos_vigentes}}` | no siempre | perfil (`calls.py::_sale_context`), ver abajo |
 
 Declara TODAS como Dynamic Variables en el agente de ElevenLabs con default
 vacío — el prompt nunca debe romper si faltan (por diseño, DESCUBRIMIENTO
 las vuelve a preguntar si llegan vacías).
 
-## Gap pendiente: perfil rico aún no llega a la llamada saliente
+## Perfil rico ya espejado entre entrante y saliente
 
 `apps/backend/src/modules/elevenlabs/elevenlabs.service.ts::handleInitWebhook`
-YA arma exactamente `edad/afiliacion/dependientes/vivienda/vehiculo/
-tipo_ingreso/productos_vigentes` para llamadas **entrantes** (lee
-`Customer` + `seguria.intake_session` + pólizas vigentes). Para que la
-llamada **saliente** (`calls.py::_sale_context`) tenga lo mismo, hay que
-espejar esa misma lógica del lado Python. No lo hice en este cambio porque
-toca `agent_core.py`/`calls.py`, que ahora mismo están en edición activa en
-otra sesión (KYC/Didit) — es el siguiente paso natural, por separado.
+arma `edad/afiliacion/dependientes/vivienda/vehiculo/tipo_ingreso/
+productos_vigentes` para llamadas **entrantes** (lee `Customer` +
+`seguria.intake_session` + pólizas vigentes); `calls.py::_sale_context`
+(`_edad_desde_fecha`, `_productos_vigentes`) espeja la misma lógica del lado
+Python para las **salientes** — mismos campos, misma derivación
+(intake.tenencia -> vivienda, intake.placa+marca+modelo_anio -> vehiculo,
+etc.). Las keys de ambos lados deben calzar EXACTO con los `{{...}}` de este
+prompt porque es el mismo `ELEVENLABS_AGENT_ID` en las dos direcciones —
+si un lado renombra una key (pasó con `nombre` vs `nombre_cliente`, ya
+corregido en el webhook de entrada), ese placeholder queda vacío solo para
+esa dirección de llamada sin que nada lo marque como error.
 
 ## Otros dos "agentes" de la misma familia (no tocados acá)
 

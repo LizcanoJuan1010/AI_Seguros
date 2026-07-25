@@ -12,6 +12,7 @@ Sin ELEVENLABS_API_KEY/AGENT_ID/AGENT_PHONE_NUMBER_ID corre en modo demo
 limpio con `{"demo": True}` en vez de romper el flujo.
 """
 import logging
+from typing import Any
 
 import requests
 
@@ -29,14 +30,51 @@ def enabled() -> bool:
                 and ELEVENLABS_AGENT_PHONE_NUMBER_ID)
 
 
+def _edad_desde_fecha(fecha: str | None) -> int | None:
+    if not fecha:
+        return None
+    try:
+        from datetime import date, datetime
+        nacimiento = datetime.strptime(str(fecha)[:10], "%Y-%m-%d").date()
+        hoy = date.today()
+        return hoy.year - nacimiento.year - ((hoy.month, hoy.day) < (nacimiento.month, nacimiento.day))
+    except (ValueError, TypeError):
+        return None
+
+
+def _productos_vigentes(phone: str) -> str:
+    """Pólizas VIGENTES del cliente (dominio Prisma, `public.*`) — mismo query
+    que `elevenlabs.service.ts::handleInitWebhook` hace del lado NestJS para
+    llamadas ENTRANTES; esto es el espejo para que las SALIENTES tengan lo
+    mismo. Vacío si no hay cliente/pólizas o la consulta falla."""
+    from .db import get_conn
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT pr.name AS nombre
+               FROM public.policies p
+               JOIN public.customers c ON c.id = p.customer_id
+               JOIN public.quotes q ON q.id = p.quote_id
+               JOIN public.products pr ON pr.id = q.product_id
+               WHERE c.phone = %s AND p.status = 'VIGENTE'""", (phone,)).fetchall()
+        return ", ".join(r["nombre"] for r in rows)
+    except Exception:
+        conn.rollback()
+        return ""
+    finally:
+        conn.close()
+
+
 def _sale_context(phone: str, tenant_id: str) -> dict[str, Any]:
     """Contexto real de venta para las `dynamic_variables` de la llamada:
-    nombre y datos ya capturados en el chat (checkout/intake) + última
-    cotización (producto, aseguradora, prima). Mismo criterio fail-open que
-    el resto del stack: si la BD no responde o no hay nada todavía (lead
-    frío que nunca cotizó), degrada a {} — nunca rompe el disparo de la
-    llamada. Ver `reference/elevenlabs_agent_prompt.md` para el prompt del
-    agente de voz que consume estas variables vía `{{...}}`."""
+    nombre, perfil (edad/afiliación/dependientes/vivienda/vehículo/tipo de
+    ingreso/productos vigentes — mismos campos que ya arma
+    `elevenlabs.service.ts::handleInitWebhook` para llamadas entrantes) +
+    última cotización. Mismo criterio fail-open que el resto del stack: si la
+    BD no responde o no hay nada todavía (lead frío que nunca cotizó), degrada
+    a {} — nunca rompe el disparo de la llamada. Ver
+    `reference/elevenlabs_agent_prompt.md` para el prompt del agente de voz
+    que consume estas variables vía `{{...}}`."""
     ctx: dict[str, Any] = {}
     try:
         from .agent_core import _get_checkout, _get_intake
@@ -54,6 +92,16 @@ def _sale_context(phone: str, tenant_id: str) -> dict[str, Any]:
 
         ctx["nombre_cliente"] = checkout.get("full_name") or intake.get("nombre_completo") or ""
         ctx["ciudad"] = checkout.get("city") or intake.get("ciudad") or ""
+        ctx["edad"] = (_edad_desde_fecha(checkout.get("birth_date"))
+                      or _edad_desde_fecha(intake.get("fecha_nacimiento")) or "")
+        afiliado = intake.get("afiliado_colsubsidio")
+        ctx["afiliacion"] = "afiliado" if afiliado is True else "no afiliado" if afiliado is False else ""
+        ctx["dependientes"] = intake.get("dependientes") or ""
+        ctx["vivienda"] = intake.get("tenencia") or ""
+        if intake.get("placa"):
+            ctx["vehiculo"] = f"{intake.get('marca', '')} {intake.get('modelo_anio', '')}".strip()
+        ctx["tipo_ingreso"] = intake.get("actividad_economica") or ""
+        ctx["productos_vigentes"] = _productos_vigentes(phone)
         if quote:
             ctx["tipo_seguro"] = quote.get("tipo") or ""
             ctx["producto"] = quote.get("producto") or ""

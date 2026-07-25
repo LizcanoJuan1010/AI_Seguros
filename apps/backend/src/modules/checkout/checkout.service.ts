@@ -128,6 +128,7 @@ export class CheckoutService {
           teamId: tenantId,
           quoteId: quote.id,
           customerId: customer.id,
+          insurerId: product.insurerId,
           policyNumber,
           status: PolicyStatus.VIGENTE,
           startDate: now,

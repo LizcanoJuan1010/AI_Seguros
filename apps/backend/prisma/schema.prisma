@@ -25,10 +25,21 @@ enum UserStatus {
   @@map("user_status")
 }
 
+// Los 10 tipos reales del catálogo LATAM (ver data/market/catalogo_productos.json
+// y agent_core.py) — antes solo estaban VIDA/AUTO/SALUD, así que cualquier lead
+// de los otros 7 tipos se sincronizaba al backend sin tipo (ver
+// apps/ai/app/main.py::_INSURANCE_TYPE_TO_PRISMA, ya corregido junto con esto).
 enum InsuranceType {
   VIDA @map("vida")
   AUTO @map("auto")
   SALUD @map("salud")
+  HOGAR @map("hogar")
+  VIAJE @map("viaje")
+  PYME @map("pyme")
+  ACCIDENTES @map("accidentes")
+  EXEQUIAL @map("exequial")
+  MASCOTAS @map("mascotas")
+  MOVILIDAD @map("movilidad")
 
   @@map("insurance_type")
 }
@@ -210,6 +221,27 @@ model Customer {
   @@map("customers")
 }
 
+// Aseguradora real que emite/responde por la póliza (Colsubsidio/Tequendama
+// distribuyen, nunca emiten — ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.4).
+// `tipoIntegracion` describe CÓMO se le entrega el expediente al cerrar la
+// venta: hoy ninguna tiene una integración real conectada, es solo el campo
+// para cuando se decida (api/email/portal/manual, ver §3.4 y §5.2 del plan).
+model Insurer {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nombre          String   @unique
+  nit             String?
+  tipoIntegracion String?  @map("tipo_integracion")
+  contactEmail    String?  @map("contact_email")
+  apiConfig       Json?    @map("api_config") @db.JsonB
+  activa          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  productos Product[]
+  policies  Policy[]
+
+  @@map("insurers")
+}
+
 model Product {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   insuranceType  InsuranceType @map("insurance_type")
@@ -218,10 +250,13 @@ model Product {
   basePremiumCop Decimal?      @map("base_premium_cop") @db.Decimal(14, 2)
   coverageSchema Json?         @map("coverage_schema") @db.JsonB
   isActive       Boolean       @default(true) @map("is_active")
+  insurerId      String?       @map("insurer_id") @db.Uuid
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  quotes Quote[]
+  insurer Insurer? @relation(fields: [insurerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "products_insurer_id_fkey")
+  quotes  Quote[]
 
+  @@index([insurerId], map: "idx_products_insurer")
   @@map("products")
 }
 
@@ -360,6 +395,9 @@ model Policy {
   quoteId           String       @unique @map("quote_id") @db.Uuid
   customerId        String       @map("customer_id") @db.Uuid
   agentId           String?      @map("agent_id") @db.Uuid
+  // Aseguradora real que emitió ESTA póliza puntual — snapshot al emitir, no
+  // depende de si el producto cambia de aseguradora después (ver Insurer arriba).
+  insurerId         String?      @map("insurer_id") @db.Uuid
   policyNumber      String       @unique @map("policy_number")
   status            PolicyStatus @default(VIGENTE)
   startDate         DateTime     @map("start_date") @db.Date
@@ -371,10 +409,12 @@ model Policy {
   quote    Quote    @relation(fields: [quoteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_quote_id_fkey")
   customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_customer_id_fkey")
   agent    User?    @relation(fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_agent_id_fkey")
+  insurer  Insurer? @relation(fields: [insurerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "policies_insurer_id_fkey")
   claims   Claim[]
 
   @@index([agentId], map: "idx_policies_agent")
   @@index([teamId], map: "idx_policies_team")
+  @@index([insurerId], map: "idx_policies_insurer")
   @@map("policies")
 }
 
