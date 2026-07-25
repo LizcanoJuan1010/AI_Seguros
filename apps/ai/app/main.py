@@ -499,6 +499,46 @@ def download_document(filename: str) -> FileResponse:
     return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
+# ---------- Voz (Deepgram): dos tools, transcribir/generar, ver voice_deepgram.py ----------
+
+@app.post("/api/voice/transcribe", dependencies=[Depends(require_service)])
+async def voice_transcribe(file: UploadFile | None = File(default=None),
+                          audio_url: str = "") -> dict:
+    """Tool STT: nota de voz -> texto. Pasa un archivo (multipart, ej. la nota
+    de voz que Hermes ya descargó de WhatsApp) o `audio_url` si es accesible
+    por Deepgram directo. Siempre devuelve JSON, nunca lanza excepción."""
+    from . import voice_deepgram
+    if file is not None:
+        content = await file.read()
+        return voice_deepgram.transcribir(
+            audio_bytes=content,
+            content_type=file.content_type or "audio/ogg")
+    if audio_url:
+        return voice_deepgram.transcribir(audio_url=audio_url)
+    raise HTTPException(400, "Falta 'file' (multipart) o 'audio_url'")
+
+
+class VoiceGenerateRequest(BaseModel):
+    texto: str = Field(..., description="Texto a convertir en nota de voz")
+
+
+@app.post("/api/voice/generar", dependencies=[Depends(require_service)])
+def voice_generar(req: VoiceGenerateRequest) -> dict:
+    """Tool TTS: texto -> nota de voz (mp3). Devuelve {"audio_url": "/api/voice/audio/..."}
+    para que quien lo llama (Hermes) la descargue y la mande por WhatsApp."""
+    from . import voice_deepgram
+    return voice_deepgram.generar_audio(req.texto)
+
+
+@app.get("/api/voice/audio/{filename}")
+def voice_audio(filename: str) -> FileResponse:
+    from .config import AUDIO_DIR
+    path = (AUDIO_DIR / filename).resolve()
+    if not path.is_file() or path.parent != AUDIO_DIR.resolve():
+        raise HTTPException(404, "Audio no encontrado")
+    return FileResponse(path, media_type="audio/mpeg", filename=filename)
+
+
 def _clickwrap_html(token: str, sig: dict) -> str:
     """Página pública (sin auth: el magic-link ES la credencial) que muestra
     los términos exactos y captura el clic. Ver apps/ai/app/esign.py."""

@@ -21,8 +21,8 @@ from pydantic import BaseModel, Field
 
 from . import backend_client, config, memory
 from .auth import resolve_identity
-from .agent_core import (MAX_TOOL_ROUNDS, SUGERENCIAS_RE, SYSTEM_PROMPT_CLIENTE,
-                         SYSTEM_PROMPT_GERENTE, TOOLS_SCHEMA, WEB_HANDOFF_SUFFIX,
+from .agent_core import (MAX_TOOL_ROUNDS, SUGERENCIAS_RE, SYSTEM_PROMPT_GERENTE,
+                         SYSTEM_PROMPT_WEB, TOOLS_SCHEMA,
                          _append_history, _exec_tool, _load_history)
 from .config import MANAGER_PHONES
 from .db import COUNTRY_NAMES, get_conn, log_conversation
@@ -227,12 +227,10 @@ async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=config.DEEPSEEK_API_KEY,
                          base_url=config.DEEPSEEK_BASE_URL, timeout=60.0, max_retries=1)
-    system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_CLIENTE
-    if role == "cliente":
-        # Este endpoint SSE es exclusivamente el canal web (WhatsApp entra por
-        # agent_core.run_agent) — acá el chat es más informativo y no insiste,
-        # ver agent_core.WEB_HANDOFF_SUFFIX.
-        system = f"{system}{WEB_HANDOFF_SUFFIX}"
+    # Este endpoint SSE es exclusivamente el canal web (WhatsApp entra por
+    # agent_core.run_agent) — la identidad de Sofía ya trae la framing "más
+    # informativa, no insiste" incluida (ver agent_core.SYSTEM_PROMPT_WEB).
+    system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_WEB
     if mem_ctx:
         system = f"{system}\n\n{mem_ctx}"
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)

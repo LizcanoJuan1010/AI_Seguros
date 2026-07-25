@@ -104,6 +104,12 @@ services:
       - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
       - ELEVENLABS_AGENT_PHONE_NUMBER_ID=${ELEVENLABS_AGENT_PHONE_NUMBER_ID:-}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-}
+      # Voz (Deepgram STT+TTS como tools, ver app/voice_deepgram.py). Mismo
+      # proveedor/modelos que deepgram-outbound, reusado acá. Sin API key = demo.
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - DEEPGRAM_STT_MODEL=${DEEPGRAM_STT_MODEL:-nova-3}
+      - DEEPGRAM_STT_LANGUAGE=${DEEPGRAM_STT_LANGUAGE:-es}
+      - DEEPGRAM_VOICE_MODEL=${DEEPGRAM_VOICE_MODEL:-aura-2-celeste-es}
       # Canal WhatsApp (gateway Baileys multi-tenant reusado). Vacío = demo.
       - WA_GATEWAY_URL=${WA_GATEWAY_URL:-}
       - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}

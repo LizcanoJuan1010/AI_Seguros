@@ -1,11 +1,14 @@
 """Base 04 (siembra) — puerto de `seed_versions.py` de docket-motor.
 
-Siembra los prompts actuales de SegurIA (`agent_core.SYSTEM_PROMPT_CLIENTE_DEFAULT`/
-`_GERENTE_DEFAULT`) como `version_number=1, source='seed'` en dos campañas:
-`tequendama-cliente`, `tequendama-gerente`. Idempotente — no reinserta si la
-v1 ya existe. Importa `agent_core` de forma perezosa (dentro de la función,
-no a nivel de módulo) para evitar un import circular: `agent_core` lee de
-vuelta `docket_engine.store`, no `docket_engine.seed`.
+Siembra los prompts actuales de las 3 identidades cliente-facing que viven en
+código (`agent_core.SYSTEM_PROMPT_WEB_DEFAULT`/`_WHATSAPP_DEFAULT`/
+`_GERENTE_DEFAULT` — Sofía, Camilo y el analista gerencial; Martín, la llamada
+saliente, vive aparte en `apps/ai/app/reference/elevenlabs_agent_prompt.md`,
+fuera de este motor) como `version_number=1, source='seed'`, una campaña por
+identidad. Idempotente — no reinserta si la v1 ya existe. Importa
+`agent_core` de forma perezosa (dentro de la función, no a nivel de módulo)
+para evitar un import circular: `agent_core` lee de vuelta
+`docket_engine.store`, no `docket_engine.seed`.
 """
 import logging
 
@@ -13,14 +16,16 @@ from . import store
 
 log = logging.getLogger("seguria.docket_engine.seed")
 
-CAMPAIGNS = ("tequendama-cliente", "tequendama-gerente")
+CAMPAIGNS = ("tequendama-cliente", "tequendama-whatsapp", "tequendama-gerente")
 
 
 def _default_prompt(client_slug: str) -> str:
     from .. import agent_core
     if client_slug == "tequendama-gerente":
         return agent_core.SYSTEM_PROMPT_GERENTE_DEFAULT
-    return agent_core.SYSTEM_PROMPT_CLIENTE_DEFAULT
+    if client_slug == "tequendama-whatsapp":
+        return agent_core.SYSTEM_PROMPT_WHATSAPP_DEFAULT
+    return agent_core.SYSTEM_PROMPT_WEB_DEFAULT
 
 
 def run_all() -> dict[str, str]:

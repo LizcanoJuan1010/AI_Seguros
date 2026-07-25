@@ -64,12 +64,11 @@ def _sintetizar(text: str) -> bytes | None:
 
 def enviar_nota_voz(phone: str, text: str) -> bool:
     """Sintetiza `text` con Kokoro y lo envía como nota de voz por WhatsApp
-    vía `POST {WA_GATEWAY_URL}/send-audio` (audio en base64, mp3). Este
-    endpoint es NUEVO: hoy solo `/send` (texto) existe confirmado en el
-    gateway Baileys reusado — antes de depender de esta función en
-    producción, hay que agregar `/send-audio` en ESE gateway (ver nota en
-    docs/AUDITORIA.md). Degrada limpio a False (nunca rompe el turno) si el
-    TTS o el gateway no responden — el texto ya se manda aparte."""
+    vía `POST {WA_GATEWAY_URL}/send-audio` (audio en base64, mp3). El
+    endpoint YA existe en `apps/services/baileys-bridge/index.js` (`ptt:
+    true`, transcodifica a ogg/opus con ffmpeg — ver su Dockerfile). Degrada
+    limpio a False (nunca rompe el turno) si el TTS o el gateway no
+    responden — el texto ya se manda aparte."""
     if not enabled():
         log.info("WA_GATEWAY no configurado: no se envía nota de voz a %s (demo)", phone)
         return False
@@ -89,5 +88,5 @@ def enviar_nota_voz(phone: str, text: str) -> bool:
         resp.raise_for_status()
         return True
     except Exception as exc:
-        log.info("gateway sin /send-audio todavía (o falló) para %s: %s", phone, exc)
+        log.info("no se pudo enviar la nota de voz a %s: %s", phone, exc)
         return False
