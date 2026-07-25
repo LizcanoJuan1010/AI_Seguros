@@ -303,11 +303,15 @@ class ConversationLog(BaseModel):
 
 
 class WaGatewayMessage(BaseModel):
-    """Shape exacto que ya manda apps/services (Diache) wa-gateway/server.js:
-    {"messages":[{"from","text","id"}]} — no inventado, verificado contra el código."""
+    """Shape que manda apps/services/baileys-bridge/index.js::forwardToTequendama.
+    `text` viene vacío cuando el mensaje es una nota de voz — en ese caso trae
+    `audio_base64`/`audio_mimetype` en su lugar (ver whatsapp_inbound, que la
+    transcribe con Deepgram antes de pasarla al agente)."""
     from_: str = Field(..., alias="from")
     text: str = ""
     id: str | None = None
+    audio_base64: str | None = None
+    audio_mimetype: str | None = None
 
 
 class WaGatewayInbound(BaseModel):
@@ -825,6 +829,24 @@ def whatsapp_inbound(req: WaGatewayInbound,
     for m in req.messages:
         phone = m.from_ if m.from_.startswith("+") else f"+{m.from_}"
         text = (m.text or "").strip()
+
+        if not text and m.audio_base64:
+            from . import voice_deepgram
+            import base64
+            audio_bytes = base64.b64decode(m.audio_base64)
+            transcripcion = voice_deepgram.transcribir(
+                audio_bytes=audio_bytes, content_type=m.audio_mimetype or "audio/ogg")
+            text = (transcripcion.get("texto") or "").strip()
+            if not text:
+                # Sin DEEPGRAM_API_KEY (demo), falla o silencio real: no hay
+                # texto que darle al agente — se lo decimos y seguimos con el
+                # siguiente mensaje, nunca rompe el webhook.
+                from . import whatsapp_gateway
+                background_tasks.add_task(
+                    whatsapp_gateway.enviar_whatsapp, phone,
+                    "No pude escuchar bien tu nota de voz — ¿me la escribes?")
+                continue
+
         if not text:
             continue
         accepted += 1

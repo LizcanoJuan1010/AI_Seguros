@@ -356,6 +356,17 @@ TOOLS_SCHEMA = [
         }}}},
 ]
 
+# Solo WhatsApp (Camilo): Sofía (web) no tiene número real al que mandar
+# audio, y assistant.py (SSE, siempre web) sigue usando TOOLS_SCHEMA a secas.
+_TOOL_ENVIAR_NOTA_VOZ = {"type": "function", "function": {
+    "name": "enviar_nota_voz",
+    "description": "Envía una nota de voz corta por WhatsApp (texto a audio con Deepgram) ADEMÁS del mensaje de texto que ya escribiste — nunca en su lugar. Úsala cuando el cliente te escribió por audio, lo pidió explícitamente, o para una explicación breve y cálida. NUNCA la uses para cifras, coberturas o condiciones exactas — esas van siempre en el texto, nunca solo en el audio.",
+    "parameters": {"type": "object", "required": ["texto"], "properties": {
+        "texto": {"type": "string", "description": "Lo que se dice en la nota de voz (corto: 1-2 frases)"},
+    }}}}
+
+TOOLS_SCHEMA_WHATSAPP = TOOLS_SCHEMA + [_TOOL_ENVIAR_NOTA_VOZ]
+
 
 # ---------- Store de sesión de cierre (checkout) ----------
 
@@ -1034,6 +1045,23 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             return {**out, "mensaje": ("Suscripción registrada. Confírmale al cliente "
                                        "que recibirá su informe y con qué frecuencia.")}
 
+        if name == "enviar_nota_voz":
+            if not phone or phone.startswith("web:"):
+                return {"error": "nota de voz no disponible en este canal (solo WhatsApp)"}
+            texto = str(args.get("texto") or "").strip()
+            if not texto:
+                return {"error": "falta el texto de la nota de voz"}
+            from . import voice_deepgram, whatsapp_gateway
+            from .config import AUDIO_DIR
+            audio = voice_deepgram.generar_audio(texto)
+            if not audio.get("ok"):
+                return {"error": audio.get("error") or "no se pudo generar el audio"}
+            filename = audio["audio_url"].rsplit("/", 1)[-1]
+            audio_bytes = (AUDIO_DIR / filename).read_bytes()
+            if not whatsapp_gateway.enviar_audio(phone, audio_bytes, mimetype="audio/mpeg"):
+                return {"error": "no se pudo enviar la nota de voz (gateway de WhatsApp no disponible)"}
+            return {"ok": True, "mensaje": "Nota de voz enviada — no la describas, el cliente ya la escuchó."}
+
         return {"error": f"herramienta desconocida: {name}"}
     finally:
         conn.close()
@@ -1103,11 +1131,15 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
         phone = f"web:{session_id}"
     if role != "gerente" and phone in MANAGER_PHONES:
         role = "gerente"
+    es_whatsapp = role != "gerente" and not phone.startswith("web:")
     if role == "gerente":
         system = SYSTEM_PROMPT_GERENTE
     else:
         # web: -> Sofía (informativa); número real -> Camilo (WhatsApp, cierra).
         system = SYSTEM_PROMPT_WEB if phone.startswith("web:") else SYSTEM_PROMPT_WHATSAPP
+    # enviar_nota_voz (Deepgram) solo tiene sentido con un número real de
+    # WhatsApp al que mandar el audio — Sofía/gerente se quedan con el set base.
+    tools = TOOLS_SCHEMA_WHATSAPP if es_whatsapp else TOOLS_SCHEMA
 
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
     history = _load_history(hist_key)
@@ -1122,7 +1154,7 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     try:
         for _round in range(MAX_TOOL_ROUNDS):
             resp = client.chat.completions.create(
-                model=DEEPSEEK_MODEL, messages=messages, tools=TOOLS_SCHEMA,
+                model=DEEPSEEK_MODEL, messages=messages, tools=tools,
                 temperature=0.6, max_tokens=900)
             msg = resp.choices[0].message
             if msg.tool_calls:

@@ -9,6 +9,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  downloadMediaMessage,
 } = require("baileys");
 const QRCode = require("qrcode");
 const pino = require("pino");
@@ -102,24 +103,49 @@ function _textoDe(msg) {
     m.videoMessage?.caption ||
     ""
   );
-  // Notas de voz (audioMessage): sin STT en este bridge todavía — llegan sin
-  // texto y este forwarder las ignora (mismo criterio que Hermes documentaba,
-  // pero acá no hay transcripción real conectada; ver docs/AUDITORIA.md).
 }
 
-async function forwardToTequendama(msg) {
+// Notas de voz (audioMessage/ptt): se descargan y desencriptan con Baileys
+// (downloadMediaMessage pide un re-upload solo si el link original ya
+// expiró, por eso necesita `sock.updateMediaMessage`) y se mandan en base64.
+// `apps/ai/app/main.py::whatsapp_inbound` las transcribe con Deepgram antes
+// de pasarlas al agente — sin transcodificar acá: Deepgram soporta ogg/opus
+// directo, que es el formato nativo de las notas de voz de WhatsApp.
+async function _audioDe(sock, msg) {
+  const audioMsg = msg.message?.audioMessage;
+  if (!audioMsg) return null;
+  try {
+    const buffer = await downloadMediaMessage(
+      msg, "buffer", {}, { logger, reuploadRequest: sock.updateMediaMessage }
+    );
+    return { base64: buffer.toString("base64"), mimetype: audioMsg.mimetype || "audio/ogg" };
+  } catch (err) {
+    logger.warn({ err: err.message }, "no se pudo descargar la nota de voz");
+    return null;
+  }
+}
+
+async function forwardToTequendama(sock, msg) {
   if (!TEQUENDAMA_INBOUND_URL) return;          // sin configurar = no reenvía (demo)
   if (msg.key?.fromMe) return;                  // eco de nuestros propios envíos
   const jid = msg.key?.remoteJid || "";
   if (jid.endsWith("@g.us") || jid === "status@broadcast") return;  // grupos/estados, no clientes
   const texto = _textoDe(msg).trim();
-  if (!texto) return;                            // reacciones/protocolo/audio sin texto
+  const audio = texto ? null : await _audioDe(sock, msg);
+  if (!texto && !audio) return;                  // reacciones/protocolo/otros tipos sin texto ni audio
   const from = jid.split("@")[0];
+  const payload = { from, text: texto, id: msg.key?.id || null };
+  if (audio) {
+    payload.audio_base64 = audio.base64;
+    payload.audio_mimetype = audio.mimetype;
+  }
   try {
     await axios.post(
       TEQUENDAMA_INBOUND_URL,
-      { messages: [{ from, text: texto, id: msg.key?.id || null }] },
-      { headers: { "Content-Type": "application/json", "x-webhook-secret": API_KEY }, timeout: 10000 }
+      { messages: [payload] },
+      // timeout más largo que el de texto: audio pesa más y Tequendama
+      // transcribe (llamada real a Deepgram) antes de responder al webhook.
+      { headers: { "Content-Type": "application/json", "x-webhook-secret": API_KEY }, timeout: 20000 }
     );
   } catch (err) {
     logger.warn({ from, err: err.message }, "no se pudo reenviar el mensaje a Tequendama");
@@ -211,7 +237,7 @@ async function createBaileysConnection(instanceName) {
     if (type !== "notify") return;
     for (const msg of messages) {
       sendWebhook("messages.upsert", instanceName, msg);
-      forwardToTequendama(msg);
+      forwardToTequendama(sock, msg);
     }
   });
 

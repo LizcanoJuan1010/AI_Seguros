@@ -62,18 +62,15 @@ def _sintetizar(text: str) -> bytes | None:
         return None
 
 
-def enviar_nota_voz(phone: str, text: str) -> bool:
-    """Sintetiza `text` con Kokoro y lo envía como nota de voz por WhatsApp
-    vía `POST {WA_GATEWAY_URL}/send-audio` (audio en base64, mp3). El
-    endpoint YA existe en `apps/services/baileys-bridge/index.js` (`ptt:
-    true`, transcodifica a ogg/opus con ffmpeg — ver su Dockerfile). Degrada
-    limpio a False (nunca rompe el turno) si el TTS o el gateway no
-    responden — el texto ya se manda aparte."""
+def enviar_audio(phone: str, audio: bytes, mimetype: str = "audio/mpeg") -> bool:
+    """Envía un buffer de audio YA SINTETIZADO (no importa si vino de Kokoro
+    o de Deepgram) como nota de voz por WhatsApp vía `POST
+    {WA_GATEWAY_URL}/send-audio` (base64). El endpoint vive en
+    `apps/services/baileys-bridge/index.js` (`ptt: true`, transcodifica a
+    ogg/opus con ffmpeg). Degrada limpio a False (nunca rompe el turno) si
+    el gateway no responde."""
     if not enabled():
         log.info("WA_GATEWAY no configurado: no se envía nota de voz a %s (demo)", phone)
-        return False
-    audio = _sintetizar(text)
-    if audio is None:
         return False
     import base64
     digits = phone.lstrip("+")
@@ -81,7 +78,7 @@ def enviar_nota_voz(phone: str, text: str) -> bool:
         resp = requests.post(
             f"{WA_GATEWAY_URL}/send-audio",
             json={"tenant": WA_GATEWAY_TENANT, "to": digits,
-                 "audio_base64": base64.b64encode(audio).decode(), "mimetype": "audio/mpeg"},
+                 "audio_base64": base64.b64encode(audio).decode(), "mimetype": mimetype},
             timeout=_TIMEOUT,
             headers={"x-webhook-secret": WA_GATEWAY_WEBHOOK_SECRET},
         )
@@ -90,3 +87,18 @@ def enviar_nota_voz(phone: str, text: str) -> bool:
     except Exception as exc:
         log.info("no se pudo enviar la nota de voz a %s: %s", phone, exc)
         return False
+
+
+def enviar_nota_voz(phone: str, text: str) -> bool:
+    """Sintetiza `text` con Kokoro (nota de voz corta y determinista — ver
+    `_EDUCACION_VOZ` en main.py, dispara sola tras ciertas tools sensibles)
+    y la envía. Para que el AGENTE elija responder con voz como parte de la
+    conversación (Deepgram, más natural), ver la tool `enviar_nota_voz` en
+    `agent_core.py`, que llama a `enviar_audio` directo."""
+    if not enabled():
+        log.info("WA_GATEWAY no configurado: no se envía nota de voz a %s (demo)", phone)
+        return False
+    audio = _sintetizar(text)
+    if audio is None:
+        return False
+    return enviar_audio(phone, audio, mimetype="audio/mpeg")
