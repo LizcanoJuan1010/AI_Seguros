@@ -1,10 +1,5 @@
 import { PartialType } from '@nestjs/mapped-types';
-import {
-  IsEnum,
-  IsOptional,
-  IsString,
-  MinLength,
-} from 'class-validator';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 import {
   CampaignChannel,
@@ -66,4 +61,19 @@ export class UpdateCampaignSendDto {
   @IsOptional()
   @IsString()
   error?: string;
+}
+
+// Interacción con la publicación de esta Campaign (like/comentario/clic) ANTES
+// de cualquier conversación real — ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+// Quien identifica al interesado (aún no resuelto, ver §5.3 del plan) manda el
+// teléfono que haya podido capturar; el resto (crear/resolver Lead, marcar
+// `interesInicial`, loguear el evento) lo hace `CampaignsService.registerInterest`.
+export class RegisterInterestDto {
+  @IsString()
+  @MinLength(1)
+  phone!: string;
+
+  @IsOptional()
+  @IsString()
+  fullName?: string;
 }

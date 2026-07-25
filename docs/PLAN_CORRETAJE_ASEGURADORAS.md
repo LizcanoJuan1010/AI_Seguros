@@ -121,10 +121,21 @@ red social" (`apps/backend/prisma/schema.prisma::EventType` solo tiene
 un campo para "categoría de interés" en `Lead` (lo más cercano es
 `insuranceType`, pero ese es el tipo YA cotizado, no el interés inicial).
 
-**Sugerido**: agregar `EventType.INTERES_SOCIAL` (o similar) + un campo
-`Lead.interesInicial` (string libre o el mismo enum `InsuranceType`) que se
-llene cuando llega el primer contacto vía red social, ANTES de que haya
-conversación — depende de §3.5 para tener de dónde sacar ese evento.
+**✅ Modelo + conexión ya resueltos (25 jul)**: `EventType.INTERES_SOCIAL`,
+`Lead.interesInicial` (reusa `InsuranceType`) y `LeadEvent.campaignId` (FK a
+`Campaign`, el modelo que trajo el merge de PR #8 — ver §2.4) ya existen
+(migración `20260725130000_social_interest`). `CampaignsService.registerInterest`
+(`POST /campaigns/:id/interest`, `OptionalJwtAuthGuard`) resuelve/crea el
+Customer por teléfono, reusa `LeadsService.findOrCreateOpenLead` con canal
+`WEB_INTEREST`, marca `interesInicial` con el `insuranceType` de la campaña
+si el lead no tenía uno, deja el `LeadEvent` y dispara el recompute de
+scoring — mismo motor que ya usan WhatsApp/llamada.
+
+**Sigue pendiente**: quién LLAMA a ese endpoint. El método resuelve la parte
+de "tools"/datos; identificar al interesado real desde Instagram/LinkedIn
+(o desde donde sea que llegue el teléfono) sigue bloqueado en §3.5/§5.3 —
+no se asumió ninguna respuesta a esa pregunta, solo se dejó el enganche
+listo para cuando la haya.
 
 ### 3.3 Vista de "checklist" asíncrona (KYC + firma + pago, sin depender de la llamada)
 **Objetivo del usuario, textual**: "la vista del checklist es para que la

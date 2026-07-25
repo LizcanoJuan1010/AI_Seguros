@@ -149,6 +149,9 @@ enum EventType {
   NOTA @map("nota")
   CAMBIO_ESTADO @map("cambio_estado")
   REASIGNACION @map("reasignacion")
+  // Interacción con una publicación/Campaign (like/comentario/clic) ANTES de
+  // cualquier conversación real — ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  INTERES_SOCIAL @map("interes_social")
 
   @@map("event_type")
 }
@@ -330,6 +333,10 @@ model Lead {
   aiCallId       String?       @unique @map("ai_call_id") @db.Uuid
   agentId        String?       @map("agent_id") @db.Uuid
   insuranceType  InsuranceType? @map("insurance_type")
+  // Categoría de interés capturada en el primer contacto (ej. red social,
+  // antes de cualquier conversación) — distinto de `insuranceType`, que es
+  // lo YA cotizado. Ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  interesInicial InsuranceType? @map("interes_inicial")
   status         LeadStatus    @default(NUEVO)
   intent         LeadIntent    @default(TIBIO)
   assignedAt     DateTime?     @map("assigned_at") @db.Timestamptz(6)
@@ -373,18 +380,23 @@ model Lead {
 }
 
 model LeadEvent {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  leadId    String    @map("lead_id") @db.Uuid
-  agentId   String?   @map("agent_id") @db.Uuid
-  eventType EventType @map("event_type")
-  notes     String?
-  payload   Json?     @default("{}") @db.JsonB
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId     String    @map("lead_id") @db.Uuid
+  agentId    String?   @map("agent_id") @db.Uuid
+  eventType  EventType @map("event_type")
+  notes      String?
+  payload    Json?     @default("{}") @db.JsonB
+  // Qué Campaign disparó el evento (solo aplica a INTERES_SOCIAL por ahora) —
+  // ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  campaignId String?   @map("campaign_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  lead  Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
-  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
+  agent    User?     @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_campaign_id_fkey")
 
   @@index([leadId, createdAt], map: "idx_lead_events_lead")
+  @@index([campaignId], map: "idx_lead_events_campaign")
   @@map("lead_events")
 }
 
@@ -487,8 +499,9 @@ model Campaign {
   createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  team  Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaigns_team_id_fkey")
-  sends CampaignSend[]
+  team       Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaigns_team_id_fkey")
+  sends      CampaignSend[]
+  leadEvents LeadEvent[]
 
   @@index([teamId], map: "idx_campaigns_team")
   @@map("campaigns")
