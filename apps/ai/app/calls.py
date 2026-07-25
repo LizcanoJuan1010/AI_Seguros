@@ -29,6 +29,43 @@ def enabled() -> bool:
                 and ELEVENLABS_AGENT_PHONE_NUMBER_ID)
 
 
+def _sale_context(phone: str, tenant_id: str) -> dict[str, Any]:
+    """Contexto real de venta para las `dynamic_variables` de la llamada:
+    nombre y datos ya capturados en el chat (checkout/intake) + última
+    cotización (producto, aseguradora, prima). Mismo criterio fail-open que
+    el resto del stack: si la BD no responde o no hay nada todavía (lead
+    frío que nunca cotizó), degrada a {} — nunca rompe el disparo de la
+    llamada. Ver `reference/elevenlabs_agent_prompt.md` para el prompt del
+    agente de voz que consume estas variables vía `{{...}}`."""
+    ctx: dict[str, Any] = {}
+    try:
+        from .agent_core import _get_checkout, _get_intake
+        from .assistant import _latest_quote_for
+        from .db import get_conn
+
+        session_key = f"{tenant_id}:{phone}"
+        conn = get_conn()
+        try:
+            checkout = _get_checkout(conn, session_key)
+            intake = _get_intake(conn, session_key)
+        finally:
+            conn.close()
+        quote = _latest_quote_for(phone)
+
+        ctx["nombre_cliente"] = checkout.get("full_name") or intake.get("nombre_completo") or ""
+        ctx["ciudad"] = checkout.get("city") or intake.get("ciudad") or ""
+        if quote:
+            ctx["tipo_seguro"] = quote.get("tipo") or ""
+            ctx["producto"] = quote.get("producto") or ""
+            ctx["aseguradora"] = quote.get("aseguradora") or ""
+            ctx["prima_mensual_local"] = quote.get("premium_monthly_local") or ""
+            ctx["moneda"] = quote.get("currency") or ""
+            ctx["quote_id"] = quote.get("id") or ""
+    except Exception:
+        log.debug("no se pudo construir el contexto de venta para la llamada", exc_info=True)
+    return {k: v for k, v in ctx.items() if v not in (None, "")}
+
+
 def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = None,
                     dynamic_variables: dict | None = None) -> dict:
     """Dispara una llamada saliente al `phone` indicado con el agente de voz.
@@ -37,8 +74,13 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
     no los pase): es la correlación que el webhook post-call usa para resolver
     el Customer/Team correctos — sin esto la llamada quedaría huérfana en el
     CRM, igual que pasaba con `conversations` antes de alinear el canal.
+    También trae `_sale_context` (nombre, cotización, prima...) para que el
+    agente de ElevenLabs tenga la MISMA información que ya tiene el chat de
+    WhatsApp/web sin tener que preguntarla de nuevo; lo que pase explícito en
+    `dynamic_variables` gana sobre lo auto-completado.
     """
-    variables = {"phone": phone, "tenant_id": tenant_id, **(dynamic_variables or {})}
+    variables = {"phone": phone, "tenant_id": tenant_id,
+                 **_sale_context(phone, tenant_id), **(dynamic_variables or {})}
 
     if not enabled():
         log.info("modo demo: simula llamada a %s (tenant=%s)", phone, tenant_id)

@@ -16,6 +16,7 @@ except ImportError:
     pass
 DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", PROJECT_ROOT / "data" / "market"))
 DOCS_DIR = Path(os.getenv("SEGURIA_DOCS_DIR", BASE_DIR.parent / "generated_docs"))
+AUDIO_DIR = Path(os.getenv("SEGURIA_AUDIO_DIR", BASE_DIR.parent / "generated_audio"))
 
 # NOTA: el servicio IA usa PostgreSQL EXCLUSIVAMENTE (cero SQLite). Todo el
 # data-layer vive en el esquema `seguria` de la misma base que la memoria
@@ -112,6 +113,56 @@ WA_GATEWAY_URL = os.getenv("WA_GATEWAY_URL", "")
 WA_GATEWAY_WEBHOOK_SECRET = os.getenv("WA_GATEWAY_WEBHOOK_SECRET", "")
 WA_GATEWAY_TENANT = os.getenv("WA_GATEWAY_TENANT", "tequendama")
 
+# Número de WhatsApp del negocio (el ya emparejado con el gateway Baileys) que
+# el chat WEB (Sofía) le ofrece al cliente cuando prefiere continuar por ahí
+# con Camilo (ver agent_core._web_framing). Solo texto para mostrar, ej.
+# "+57 300 000 0000".
+WHATSAPP_BUSINESS_NUMBER = os.getenv("WHATSAPP_BUSINESS_NUMBER", "")
+
+# URL pública donde vive ESTE servicio (seguria-ai), para construir links que
+# el cliente pueda abrir de verdad fuera de la red interna: descarga de
+# documentos por WhatsApp y el link de firma electrónica (ver esign.py). Sin
+# esto configurado, esos links quedan como ruta relativa (rota fuera de la SPA).
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
+# Firma electrónica in-house (clickwrap): TTL del magic link.
+ESIGN_LINK_TTL_MINUTES = int(os.getenv("ESIGN_LINK_TTL_MINUTES", "60"))
+
+# KYC (Didit — verification.didit.me): documento de identidad + liveness +
+# face match, capturados con cámara en vivo del navegador (link enviado por
+# WhatsApp/correo, NUNCA fotos reenviadas del chat — ver investigación de esta
+# sesión). Sin DIDIT_API_KEY corre en modo demo (mismo criterio que Polar/
+# ElevenLabs): aprueba automático con datos simulados, para poder probar todo
+# el flujo sin la key real.
+DIDIT_API_KEY = os.getenv("DIDIT_API_KEY", "")
+DIDIT_BASE_URL = os.getenv("DIDIT_BASE_URL", "https://verification.didit.me")
+# Umbrales de decisión (0-100, ver docs.didit.me): por debajo de esto el caso
+# pasa a revisión manual de un gerente en vez de aprobar automático.
+DIDIT_LIVENESS_MIN_SCORE = int(os.getenv("DIDIT_LIVENESS_MIN_SCORE", "70"))
+DIDIT_FACE_MATCH_MIN_SCORE = int(os.getenv("DIDIT_FACE_MATCH_MIN_SCORE", "70"))
+KYC_LINK_TTL_MINUTES = int(os.getenv("KYC_LINK_TTL_MINUTES", "60"))
+
+# Voz (Deepgram): tools de STT/TTS (voice_deepgram.py / deepgram-outbound) y
+# la llamada en vivo /ws/voice/live (voice_live.py). Sin DEEPGRAM_API_KEY corre
+# en modo demo (mismo criterio que el resto).
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
+# Preferí es-419 (LATAM) para la llamada en vivo; DEEPGRAM_LANGUAGE es el
+# alias que usa voice_live.py (cae a DEEPGRAM_STT_LANGUAGE si no se setea).
+DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es-419")
+DEEPGRAM_LANGUAGE = os.getenv("DEEPGRAM_LANGUAGE", DEEPGRAM_STT_LANGUAGE)
+# Silencio (ms) para cerrar la frase del usuario en /ws/voice/live.
+# Más bajo = responde antes; demasiado bajo corta a mitad de frase.
+DEEPGRAM_ENDPOINTING_MS = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "200"))
+DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")
+
+# Motor de versionado/QA de prompts (docket-motor, adaptado — ver
+# app/docket_engine/). Sin monitoreo en vivo (esa pieza del repo original es
+# enterprise-only en ElevenLabs, descartada). Default False: sin esto, el
+# proyecto sigue leyendo los prompts hardcodeados de agent_core.py, igual
+# que siempre — cero riesgo para quien no lo active.
+DOCKET_ENGINE_ENABLED = os.getenv("DOCKET_ENGINE_ENABLED", "false").lower() == "true"
+
 # Backend NestJS (sistema de registro del dominio): expone POST /api/v1/checkout
 # que crea Customer -> Lead -> Quote -> Policy y emite la póliza. El cierre autónomo
 # del asistente llama a este servicio. Default apto para docker-compose.
@@ -128,14 +179,6 @@ PARTNER_API_KEYS = {k.strip() for k in
 TTS_URL = os.getenv("TTS_URL", "http://seguria-tts:8880")
 TTS_VOICE = os.getenv("TTS_VOICE", "ef_dora")
 
-# Deepgram: STT/TTS en tiempo real para /ws/voice/live (LiveAiCallPage). Solo
-# genera/transcribe voz — el agente sigue siendo agent_core.py (DeepSeek), no
-# el Voice Agent de Deepgram. Sin DEEPGRAM_API_KEY el endpoint no puede abrir
-# las conexiones a Deepgram (sin modo demo todavía, ver riesgos del diseño).
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-# Voz Aura-2 en español colombiano (acento del mercado de Tequendama).
-DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")
-
 # Marca de los documentos generados (cotización / certificado de póliza)
 BRAND_NAME = os.getenv("BRAND_NAME", "Tequendama")
 BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en la naturaleza")
@@ -144,3 +187,39 @@ BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
 BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+# Estudio de banners de marketing (correo / Instagram / LinkedIn) generados con
+# Gemini (familia "Nano Banana"). Default gemini-3.1-flash-image: mejor
+# renderizado de texto que el 2.5 (pionero, ya legacy) — crítico porque el
+# titular se escribe DENTRO de la imagen. gemini-3-pro-image es la opción
+# premium (más lenta/cara) para banners con más texto o más detalle.
+# Sin GEMINI_API_KEY el endpoint corre en modo demo (no genera nada, igual
+# que el resto del stack sin keys).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+BANNERS_DIR = Path(os.getenv("SEGURIA_BANNERS_DIR", BASE_DIR.parent / "generated_banners"))
+BANNERS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Paleta de marca de Colsubsidio (distribuidor), tomada de sus design tokens
+# públicos (--color-blue/--color-yellow del CSS de colsubsidio.com) — para que
+# los banners de campaña combinen con su sitio, no con el verde de Tequendama.
+COLSUBSIDIO_PALETTE = {
+    "azul": "#0067B1",
+    "azul_fondo": "#F0F9F7",
+    "amarillo": "#FFD000",
+    "amarillo_claro": "#FFEC99",
+    "amarillo_fondo": "#FFFDF4",
+    "gris_texto": "#333333",
+    "blanco": "#FFFFFF",
+}
+
+# Envío masivo de WhatsApp por campaña (ver campaign_broadcast.py). 8s fijos
+# entre envíos: el gateway Baileys reusado NO es oficial (riesgo real de ban
+# por detección de bulk, no un rate-limit de API como el de Resend en
+# email_service.py) — ver docs/PLAN.md sobre "Baileys solo para demo".
+CAMPAIGN_SEND_DELAY_SECONDS = int(os.getenv("CAMPAIGN_SEND_DELAY_SECONDS", "8"))
+# Tope por llamada a /api/marketing/campaigns/broadcast (el backend NestJS ya
+# rechaza segmentos más grandes antes de llegar acá; esto es una segunda
+# barrera del lado del servicio que de verdad envía).
+CAMPAIGN_BROADCAST_MAX = int(os.getenv("CAMPAIGN_BROADCAST_MAX", "300"))
