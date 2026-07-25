@@ -7,6 +7,7 @@ import { AiCallsModule } from './modules/ai-calls/ai-calls.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CallMessagesModule } from './modules/call-messages/call-messages.module';
+import { CampaignsModule } from './modules/campaigns/campaigns.module';
 import { CheckoutModule } from './modules/checkout/checkout.module';
 import { ClaimsModule } from './modules/claims/claims.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -39,6 +40,7 @@ import { PrismaModule } from './prisma/prisma.module';
     CallMessagesModule,
     LeadsModule,
     LeadEventsModule,
+    CampaignsModule,
     QuotesModule,
     PoliciesModule,
     ClaimsModule,

@@ -25,6 +25,7 @@ const appLinks = [
   { to: '/llamada', label: 'Llamada IA', icon: 'support_agent', end: false },
   { to: '/vendedor', label: 'Vendedor', icon: 'badge', end: false },
   { to: '/gerente', label: 'Gerente', icon: 'monitoring', end: false },
+  { to: '/campanas', label: 'Campañas', icon: 'campaign', end: false },
 ]
 
 const appLinkClass = ({ isActive }: { isActive: boolean }) =>

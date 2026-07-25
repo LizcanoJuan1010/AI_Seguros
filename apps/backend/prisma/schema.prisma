@@ -110,6 +110,26 @@ enum ClaimStatus {
   @@map("claim_status")
 }
 
+// Canal de publicación del banner de campaña (genera Gemini en el servicio
+// IA, ver apps/ai/app/marketing_studio.py CHANNEL_SPECS — mismos 4 valores).
+enum CampaignChannel {
+  INSTAGRAM_POST @map("instagram_post")
+  INSTAGRAM_STORY @map("instagram_story")
+  LINKEDIN @map("linkedin")
+  EMAIL @map("email")
+
+  @@map("campaign_channel")
+}
+
+enum CampaignSendStatus {
+  PENDIENTE @map("pendiente")
+  ENVIADO @map("enviado")
+  FALLIDO @map("fallido")
+  OMITIDO @map("omitido")
+
+  @@map("campaign_send_status")
+}
+
 enum EventType {
   LLAMADA_SALIENTE @map("llamada_saliente")
   WHATSAPP @map("whatsapp")
@@ -154,6 +174,7 @@ model Team {
   payments  Payment[]
   aiCalls   AiCall[]
   claims    Claim[]
+  campaigns Campaign[]
 
   @@map("teams")
 }
@@ -203,6 +224,7 @@ model Customer {
   leads    Lead[]
   policies Policy[]
   claims   Claim[]
+  campaignSends CampaignSend[]
 
   @@unique([documentType, documentId])
   @@index([teamId], map: "idx_customers_team")
@@ -306,6 +328,7 @@ model Lead {
   events   LeadEvent[]
   quotes   Quote[]
   alerts   Alert[]
+  campaignSends CampaignSend[]
 
   @@index([agentId, status], map: "idx_leads_agent_status")
   @@index([createdAt(sort: Desc)], map: "idx_leads_created_at")
@@ -406,6 +429,54 @@ model Claim {
   @@index([teamId], map: "idx_claims_team")
   @@index([policyId], map: "idx_claims_policy")
   @@map("claims")
+}
+
+// Banner de campaña generado con Gemini (ver apps/ai/app/marketing_studio.py)
+// más su metadata administrativa. La imagen vive en disco del servicio IA
+// (bannerUrl apunta a GET /api/marketing/banners/{filename}); acá solo se
+// persisten los parámetros de generación y el rastro de envíos.
+model Campaign {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?         @map("team_id") @db.Uuid
+  phrase        String
+  subtitle      String?
+  cta           String?
+  insuranceType InsuranceType?  @map("insurance_type")
+  channel       CampaignChannel
+  bannerUrl     String?         @map("banner_url")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team  Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaigns_team_id_fkey")
+  sends CampaignSend[]
+
+  @@index([teamId], map: "idx_campaigns_team")
+  @@map("campaigns")
+}
+
+// Envío individual de una Campaign a un Lead (segmentado por intent al
+// momento de disparar el envío — ver CampaignsService.send). Sin teamId
+// propio: el scoping multitenant va vía relación al Campaign padre (mismo
+// patrón que CallMessage -> AiCall).
+model CampaignSend {
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId String             @map("campaign_id") @db.Uuid
+  leadId     String?            @map("lead_id") @db.Uuid
+  customerId String?            @map("customer_id") @db.Uuid
+  intent     LeadIntent?
+  status     CampaignSendStatus @default(PENDIENTE)
+  error      String?
+  sentAt     DateTime?          @map("sent_at") @db.Timestamptz(6)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "campaign_sends_campaign_id_fkey")
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaign_sends_lead_id_fkey")
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaign_sends_customer_id_fkey")
+
+  @@unique([campaignId, leadId])
+  @@index([campaignId], map: "idx_campaign_sends_campaign")
+  @@index([status, createdAt], map: "idx_campaign_sends_status")
+  @@map("campaign_sends")
 }
 
 // Pago de una póliza vía pasarela (Polar sandbox) o simulado (provider "demo").

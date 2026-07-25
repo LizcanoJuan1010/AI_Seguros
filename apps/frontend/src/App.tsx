@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { RequireAuth } from './components/RequireAuth'
+import { RequireRole } from './components/RequireRole'
 import { TenantProvider } from './tenant/TenantContext'
 import { MarketingLayout } from './layouts/MarketingLayout'
 import { AppShellLayout } from './layouts/AppShellLayout'
@@ -11,6 +12,7 @@ import { AgentLeadsPage } from './pages/AgentLeadsPage'
 import { ManagerDashboardPage } from './pages/ManagerDashboardPage'
 import { AssistantPage } from './pages/AssistantPage'
 import { EmbedQuotePage } from './pages/EmbedQuotePage'
+import { CampaignsPage } from './pages/CampaignsPage'
 
 export default function App() {
   return (
@@ -33,6 +35,9 @@ export default function App() {
                 <Route path="/vendedor" element={<AgentLeadsPage />} />
                 <Route path="/gerente" element={<ManagerDashboardPage />} />
                 <Route path="/asistente" element={<AssistantPage />} />
+                <Route element={<RequireRole roles={['GERENTE', 'ADMIN']} />}>
+                  <Route path="/campanas" element={<CampaignsPage />} />
+                </Route>
               </Route>
             </Route>
 
