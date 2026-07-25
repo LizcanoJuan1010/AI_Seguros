@@ -108,6 +108,17 @@ services:
       - WA_GATEWAY_URL=${WA_GATEWAY_URL:-}
       - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}
       - WA_GATEWAY_TENANT=${WA_GATEWAY_TENANT:-tequendama}
+      - WHATSAPP_BUSINESS_NUMBER=${WHATSAPP_BUSINESS_NUMBER:-}
+      # URL pública de este servicio (links de firma/KYC/documentos). Vacío =
+      # rutas relativas, no abren bien fuera de la SPA (ver esign.py/kyc.py).
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - ESIGN_LINK_TTL_MINUTES=${ESIGN_LINK_TTL_MINUTES:-60}
+      # KYC (Didit). Sin DIDIT_API_KEY corre en modo demo (ver kyc.py).
+      - DIDIT_API_KEY=${DIDIT_API_KEY:-}
+      - DIDIT_BASE_URL=${DIDIT_BASE_URL:-https://verification.didit.me}
+      - DIDIT_LIVENESS_MIN_SCORE=${DIDIT_LIVENESS_MIN_SCORE:-70}
+      - DIDIT_FACE_MATCH_MIN_SCORE=${DIDIT_FACE_MATCH_MIN_SCORE:-70}
+      - KYC_LINK_TTL_MINUTES=${KYC_LINK_TTL_MINUTES:-60}
       # Motor de versionado/QA de prompts (docket, ver app/docket_engine/). false = demo.
       - DOCKET_ENGINE_ENABLED=${DOCKET_ENGINE_ENABLED:-false}
       - SEGURIA_DATA_DIR=/data/market

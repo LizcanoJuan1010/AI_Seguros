@@ -16,6 +16,7 @@ except ImportError:
     pass
 DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", PROJECT_ROOT / "data" / "market"))
 DOCS_DIR = Path(os.getenv("SEGURIA_DOCS_DIR", BASE_DIR.parent / "generated_docs"))
+AUDIO_DIR = Path(os.getenv("SEGURIA_AUDIO_DIR", BASE_DIR.parent / "generated_audio"))
 
 # NOTA: el servicio IA usa PostgreSQL EXCLUSIVAMENTE (cero SQLite). Todo el
 # data-layer vive en el esquema `seguria` de la misma base que la memoria
@@ -113,8 +114,9 @@ WA_GATEWAY_WEBHOOK_SECRET = os.getenv("WA_GATEWAY_WEBHOOK_SECRET", "")
 WA_GATEWAY_TENANT = os.getenv("WA_GATEWAY_TENANT", "tequendama")
 
 # Número de WhatsApp del negocio (el ya emparejado con el gateway Baileys) que
-# el chat WEB le ofrece al cliente cuando prefiere continuar por ahí (ver
-# agent_core.WEB_HANDOFF_SUFFIX). Solo texto para mostrar, ej. "+57 300 000 0000".
+# el chat WEB (Sofía) le ofrece al cliente cuando prefiere continuar por ahí
+# con Camilo (ver agent_core._web_framing). Solo texto para mostrar, ej.
+# "+57 300 000 0000".
 WHATSAPP_BUSINESS_NUMBER = os.getenv("WHATSAPP_BUSINESS_NUMBER", "")
 
 # URL pública donde vive ESTE servicio (seguria-ai), para construir links que
@@ -125,6 +127,29 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 # Firma electrónica in-house (clickwrap): TTL del magic link.
 ESIGN_LINK_TTL_MINUTES = int(os.getenv("ESIGN_LINK_TTL_MINUTES", "60"))
+
+# KYC (Didit — verification.didit.me): documento de identidad + liveness +
+# face match, capturados con cámara en vivo del navegador (link enviado por
+# WhatsApp/correo, NUNCA fotos reenviadas del chat — ver investigación de esta
+# sesión). Sin DIDIT_API_KEY corre en modo demo (mismo criterio que Polar/
+# ElevenLabs): aprueba automático con datos simulados, para poder probar todo
+# el flujo sin la key real.
+DIDIT_API_KEY = os.getenv("DIDIT_API_KEY", "")
+DIDIT_BASE_URL = os.getenv("DIDIT_BASE_URL", "https://verification.didit.me")
+# Umbrales de decisión (0-100, ver docs.didit.me): por debajo de esto el caso
+# pasa a revisión manual de un gerente en vez de aprobar automático.
+DIDIT_LIVENESS_MIN_SCORE = int(os.getenv("DIDIT_LIVENESS_MIN_SCORE", "70"))
+DIDIT_FACE_MATCH_MIN_SCORE = int(os.getenv("DIDIT_FACE_MATCH_MIN_SCORE", "70"))
+KYC_LINK_TTL_MINUTES = int(os.getenv("KYC_LINK_TTL_MINUTES", "60"))
+
+# Voz (Deepgram, STT + TTS como tools — ver app/voice_deepgram.py). Mismas
+# variables que ya usa apps/services/deepgram-outbound (mismo proveedor,
+# mismo catálogo de modelos/voces), reusadas acá para no duplicar nombres.
+# Sin DEEPGRAM_API_KEY corre en modo demo (mismo criterio que el resto).
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
+DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es")
+DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")
 
 # Motor de versionado/QA de prompts (docket-motor, adaptado — ver
 # app/docket_engine/). Sin monitoreo en vivo (esa pieza del repo original es
@@ -157,6 +182,7 @@ BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
 BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 # Estudio de banners de marketing (correo / Instagram / LinkedIn) generados con
 # Gemini (familia "Nano Banana"). Default gemini-3.1-flash-image: mejor

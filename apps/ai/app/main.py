@@ -17,9 +17,13 @@ from pydantic import BaseModel, Field
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
-from .campaign_broadcast import router as campaign_broadcast_router
+# TEMPORAL: campaign_broadcast.py/marketing_studio.py no existen en disco
+# ahora mismo (otro trabajo en curso, no de esta sesión) — sin esto el import
+# rompe el arranque para cualquiera. Comentado, no borrado; se puede
+# restaurar en cuanto esos archivos vuelvan a existir.
+# from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
-from .marketing_studio import router as marketing_router
+# from .marketing_studio import router as marketing_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
@@ -55,8 +59,8 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
-app.include_router(marketing_router)  # /api/marketing/* (banners de campaña con Gemini)
-app.include_router(campaign_broadcast_router)  # /api/marketing/campaigns/broadcast (envío masivo)
+# app.include_router(marketing_router)  # ver nota TEMPORAL arriba
+# app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
 
 
 class ChatRequest(BaseModel):
@@ -577,6 +581,141 @@ def sign_decline(token: str, request: Request) -> dict:
     if row is None:
         raise HTTPException(404, "Link de firma inválido o desconocido")
     return esign.public_view(row)
+
+
+def _kyc_html(token: str, row: dict) -> str:
+    """Página de verificación de identidad: consentimiento biométrico (NUESTRO)
+    -> redirige a la sesión hosteada de Didit (captura de cédula + selfie +
+    liveness, interfaz de ellos) -> Didit vuelve a `/kyc/{token}/callback` con
+    el resultado. Ver apps/ai/app/kyc.py para por qué la captura vive en Didit
+    y no en una página propia (tier gratis + mejor liveness que un JS casero)."""
+    import html as _html
+
+    from . import kyc as _kyc_mod
+    tok = _html.escape(token)
+    status = row["status"]
+    consented = bool(row.get("consent_biometrico"))
+    done = status in ("aprobado", "revision_manual", "rechazado", "expirado")
+    redirigiendo = status == "redirigido" and row.get("session_url")
+    resultado_msg = {
+        "aprobado": "✅ Identidad verificada. Puedes cerrar esta ventana y volver al chat.",
+        "revision_manual": "🕐 Tu verificación quedó en revisión de un asesor. Te confirmamos en menos de 24 horas.",
+        "rechazado": "No pudimos verificar tu identidad por este medio. Un asesor te contactará.",
+        "expirado": "Este link venció. Pídele a tu asesora IA que te envíe uno nuevo.",
+    }.get(status, "")
+    consentimiento_txt = _html.escape(_kyc_mod.CONSENTIMIENTO_BIOMETRICO)
+    session_url = _html.escape(row.get("session_url") or "")
+
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verifica tu identidad — Tequendama Seguros</title>
+<style>
+body{{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:24px auto;padding:0 16px;color:#141e17}}
+h2{{color:#083911}}
+.card{{background:#f1fdf0;border:1px solid #c1c9bd;border-radius:12px;padding:16px;margin:12px 0}}
+button,a.btn{{background:#0a7a2f;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-size:16px;
+       margin:6px 6px 6px 0;cursor:pointer;display:inline-block;text-decoration:none}}
+button.secondary{{background:#f1f1f1;color:#333}}
+#estado{{font-weight:bold}}
+.oculto{{display:none}}
+</style></head>
+<body>
+<h2>Verifica tu identidad</h2>
+<div id="paso-consentimiento" class="{'oculto' if consented or done else ''}">
+  <div class="card">{consentimiento_txt}</div>
+  <button id="btn-acepto">Acepto</button>
+  <button id="btn-no-acepto" class="secondary">No acepto</button>
+</div>
+<div id="paso-redirigiendo" class="{'oculto' if not redirigiendo else ''}">
+  <p>Te llevamos a la verificación segura (cédula + selfie)...</p>
+  <a class="btn" id="link-continuar" href="{session_url}">Continuar verificación</a>
+</div>
+<div id="paso-resultado" class="{'oculto' if not done else ''}">
+  <p id="estado">{resultado_msg}</p>
+</div>
+<p id="error" style="color:#a33"></p>
+<script>
+const TOKEN = "{tok}";
+function err(msg) {{ document.getElementById('error').textContent = msg; }}
+
+document.getElementById('btn-acepto')?.addEventListener('click', async () => {{
+  const r = await fetch(`/kyc/${{TOKEN}}/consent`, {{method: 'POST'}});
+  const data = await r.json();
+  if (r.ok && data.session_url) {{
+    window.location.href = data.session_url;   // directo a Didit, sin paso intermedio
+  }} else if (r.ok) {{
+    location.reload();   // modo demo: ya quedó resuelto, muestra el resultado
+  }} else {{
+    err(data.error || 'No se pudo iniciar la verificación.');
+  }}
+}});
+document.getElementById('btn-no-acepto')?.addEventListener('click', () => {{
+  document.getElementById('paso-consentimiento').innerHTML =
+    '<p>Sin tu autorización no podemos verificar tu identidad ni emitir la póliza. ' +
+    'Escríbele a tu asesora IA si cambias de opinión.</p>';
+}});
+{"window.location.href = " + repr(session_url) + ";" if redirigiendo else ""}
+</script>
+</body></html>"""
+
+
+@app.get("/kyc/{token}", response_class=HTMLResponse)
+def kyc_page(token: str) -> str:
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    return _kyc_html(token, row)
+
+
+@app.post("/kyc/{token}/consent")
+def kyc_consent(token: str, request: Request) -> dict:
+    """Registra el consentimiento biométrico y de una vez crea la sesión de
+    Didit — el frontend redirige con la `session_url` que devuelve."""
+    from . import kyc
+    conn = get_conn()
+    row = kyc.record_consent(conn, token, ip=request.client.host if request.client else None,
+                             user_agent=request.headers.get("user-agent"))
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    if row["status"] != "consentido":
+        conn.close()
+        return kyc.public_view(row)
+    result = kyc.create_didit_session(conn, token)
+    conn.close()
+    return result
+
+
+@app.get("/kyc/{token}/callback", response_class=HTMLResponse)
+def kyc_callback(token: str) -> str:
+    """A donde Didit redirige el navegador del cliente al terminar su sesión
+    (captura de cédula/selfie). Refresca el veredicto (`GET .../decision/`,
+    ver kyc.refresh_decision) y muestra el resultado."""
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    row = kyc.refresh_decision(conn, row)
+    conn.close()
+    return _kyc_html(token, row)
+
+
+@app.get("/kyc/{token}/status")
+def kyc_status(token: str) -> dict:
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    row = kyc.refresh_decision(conn, row)
+    conn.close()
+    return kyc.public_view(row)
 
 
 @app.post("/api/leads", dependencies=[Depends(require_service)])
