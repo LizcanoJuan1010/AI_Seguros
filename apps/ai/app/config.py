@@ -14,7 +14,7 @@ try:
     load_dotenv(BACKEND_ENV, override=False)
 except ImportError:
     pass
-DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", PROJECT_ROOT / "data" / "market"))
+DATA_DIR = Path(os.getenv("SEGURIA_DATA_DIR", BASE_DIR.parent / "data" / "market"))
 DOCS_DIR = Path(os.getenv("SEGURIA_DOCS_DIR", BASE_DIR.parent / "generated_docs"))
 AUDIO_DIR = Path(os.getenv("SEGURIA_AUDIO_DIR", BASE_DIR.parent / "generated_audio"))
 

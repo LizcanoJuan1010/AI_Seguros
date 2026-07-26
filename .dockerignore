@@ -13,7 +13,6 @@
 apps/ai/generated_docs
 apps/ai/generated_audio
 apps/ai/generated_banners
-apps/ai/data
 .env
 **/.env
 openspec

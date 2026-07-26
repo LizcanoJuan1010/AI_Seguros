@@ -138,7 +138,7 @@ services:
       # el endpoint no puede abrir las conexiones a Deepgram.
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
     volumes:
-      - ./data/market:/data/market:ro
+      - ./apps/ai/data/market:/data/market:ro
       - seguria-state:/app/state
     ports:
       - "8085:8085"
