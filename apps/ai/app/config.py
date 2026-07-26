@@ -107,6 +107,14 @@ ELEVENLABS_AGENT_PHONE_NUMBER_ID = os.getenv("ELEVENLABS_AGENT_PHONE_NUMBER_ID",
 # por defecto configurada en el agente; no hay una fija todavía.
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 
+# Agente de PRUEBA para "Déjanos tu número y te llamamos" (landing_callback.py):
+# mismo Camila/ElevenLabs, prompt distinto (informativo/venta de primer
+# contacto, ver reference/elevenlabs_landing_test_prompt.md) — para no tocar
+# el agente real de reactivación de checklist mientras se prueba. Vacío =
+# usa ELEVENLABS_AGENT_ID (el mismo agente real) hasta que se configure uno
+# de prueba aparte en el dashboard.
+ELEVENLABS_LANDING_AGENT_ID = os.getenv("ELEVENLABS_LANDING_AGENT_ID", "") or ELEVENLABS_AGENT_ID
+
 # Canal WhatsApp vía el gateway Baileys multi-tenant de Diache (reusado, no
 # uno propio): un tenant nuevo ("tequendama") en ESE MISMO proceso ya
 # desplegado. WA_GATEWAY_WEBHOOK_SECRET debe coincidir con el WEBHOOK_SECRET

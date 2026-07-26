@@ -19,6 +19,7 @@ from . import memory
 from .assistant import router as assistant_router
 from .campaign_broadcast import router as campaign_broadcast_router
 from .checklist import router as checklist_router
+from .landing_callback import router as landing_callback_router
 from .embedded import router as embedded_router
 from .marketing_studio import router as marketing_router
 from .voice_live import router as voice_live_router
@@ -61,6 +62,7 @@ app.include_router(marketing_router)  # POST /api/marketing/banner (Gemini, requ
 app.include_router(campaign_broadcast_router)  # POST /api/marketing/campaigns/broadcast (servicio-a-servicio)
 app.include_router(voice_live_router)  # WS /ws/voice/live (llamada en vivo, Deepgram STT/TTS)
 app.include_router(checklist_router)  # /api/checklist/{token} (público, checklist de activación)
+app.include_router(landing_callback_router)  # POST /api/callback/solicitar ("déjanos tu número")
 
 
 class ChatRequest(BaseModel):

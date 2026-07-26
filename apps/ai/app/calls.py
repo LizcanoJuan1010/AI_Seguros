@@ -153,7 +153,8 @@ def _sale_context(phone: str, tenant_id: str) -> dict[str, Any]:
 
 
 def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = None,
-                    dynamic_variables: dict | None = None) -> dict:
+                    dynamic_variables: dict | None = None,
+                    agent_id: str | None = None) -> dict:
     """Dispara una llamada saliente al `phone` indicado con el agente de voz.
 
     `dynamic_variables` SIEMPRE incluye `phone`/`tenant_id` (aunque quien llama
@@ -164,6 +165,10 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
     agente de ElevenLabs tenga la MISMA información que ya tiene el chat de
     WhatsApp/web sin tener que preguntarla de nuevo; lo que pase explícito en
     `dynamic_variables` gana sobre lo auto-completado.
+
+    `agent_id`: por defecto `ELEVENLABS_AGENT_ID` (Camila, reactivación de
+    checklist). Pasa uno distinto para un flujo con OTRO prompt sin tocar el
+    agente real — ver `ELEVENLABS_LANDING_AGENT_ID` / `landing_callback.py`.
     """
     if not _dentro_ventana_legal():
         log.info("fuera de la ventana legal de contacto (Ley 2300/2023): no se llama a %s", phone)
@@ -189,7 +194,7 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
         client_data["conversation_config_override"] = override
 
     payload = {
-        "agent_id": ELEVENLABS_AGENT_ID,
+        "agent_id": agent_id or ELEVENLABS_AGENT_ID,
         "agent_phone_number_id": ELEVENLABS_AGENT_PHONE_NUMBER_ID,
         "to_number": phone,
         "conversation_initiation_client_data": client_data,
