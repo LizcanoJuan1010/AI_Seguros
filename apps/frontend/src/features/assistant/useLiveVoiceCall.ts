@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAccessToken } from '../../lib/authFetch'
+import { getDeviceId } from '../../lib/clientIdentity'
 import type { AssistantPayment, PaymentStatus } from './useAssistantChat'
 
 /**
@@ -268,8 +269,14 @@ export function useLiveVoiceCall() {
     setStatus('connecting')
     setError(null)
     try {
+      // Staff con sesión -> JWT. Cliente final -> device_id anónimo: la
+      // landing enlaza /llamada directo y un lead no debería tener que
+      // loguearse para hablar (ver live-call.gateway.ts, que valida el
+      // formato y limita las llamadas simultáneas por dispositivo).
       const token = getAccessToken()
-      if (!token) throw new Error('No hay sesión activa')
+      const authFrame = token
+        ? { token }
+        : { device_id: getDeviceId() }
 
       await startPlayback()
       if (gen !== startGenRef.current) return
@@ -283,7 +290,7 @@ export function useLiveVoiceCall() {
           ws.close()
           return
         }
-        ws.send(JSON.stringify({ type: 'auth', data: { token } }))
+        ws.send(JSON.stringify({ type: 'auth', data: authFrame }))
       }
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {

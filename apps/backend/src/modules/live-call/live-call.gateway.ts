@@ -7,10 +7,26 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import WebSocket from 'ws';
+import { DEMO_TENANT_ID } from '../../common/tenant.decorator';
 import { CallStatus } from '../../generated/prisma/enums';
 import { LiveCallService } from './live-call.service';
 
 const AUTH_TIMEOUT_MS = 10_000;
+
+// El cliente final NO tiene usuario: su identidad es el `device_id` anónimo
+// del navegador (lib/clientIdentity.ts), el mismo que ya ancla memoria y leads
+// en el chat web. Se acepta como alternativa al JWT porque la landing enlaza
+// /llamada directo y un lead no debería tener que loguearse para hablar.
+//
+// Eso deja el WS abierto a cualquiera, y cada minuto cuesta Deepgram: el freno
+// es un tope de conexiones SIMULTÁNEAS por dispositivo y global. No sustituye
+// a un rate limit real por ventana de tiempo — un mismo device_id puede abrir
+// y cerrar llamadas en serie sin límite. Endurecer eso es trabajo aparte (el
+// gancho natural es Redis, que ya está en el stack).
+const MAX_ANON_POR_DISPOSITIVO = 1;
+const MAX_ANON_TOTAL = 25;
+// Formato que emite `freshId()` en lib/clientIdentity.ts: `dev_<uuid|rand>`.
+const DEVICE_ID_RE = /^dev_[A-Za-z0-9-]{8,64}$/;
 
 /** Mismo shape que `AccessTokenClaims` de jwt-auth.guard.ts (no se exporta
  * desde ahí — cada consumidor de JwtService declara el suyo, es el patrón
@@ -71,12 +87,31 @@ export class LiveCallGateway
 {
   private readonly logger = new Logger(LiveCallGateway.name);
   private readonly relays = new WeakMap<WebSocket, LiveCallRelay>();
+  /** Llamadas anónimas abiertas ahora mismo, por device_id (ver los topes). */
+  private readonly anonAbiertas = new Map<string, number>();
 
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly liveCallService: LiveCallService,
   ) {}
+
+  /** Reserva un cupo anónimo; false si el dispositivo (o el servicio) topó. */
+  reservarCupoAnon(deviceId: string): boolean {
+    const total = [...this.anonAbiertas.values()].reduce((a, b) => a + b, 0);
+    const delDispositivo = this.anonAbiertas.get(deviceId) ?? 0;
+    if (total >= MAX_ANON_TOTAL || delDispositivo >= MAX_ANON_POR_DISPOSITIVO) {
+      return false;
+    }
+    this.anonAbiertas.set(deviceId, delDispositivo + 1);
+    return true;
+  }
+
+  liberarCupoAnon(deviceId: string): void {
+    const quedan = (this.anonAbiertas.get(deviceId) ?? 1) - 1;
+    if (quedan > 0) this.anonAbiertas.set(deviceId, quedan);
+    else this.anonAbiertas.delete(deviceId);
+  }
 
   handleConnection(client: WebSocket): void {
     const relay = new LiveCallRelay(
@@ -85,6 +120,7 @@ export class LiveCallGateway
       this.config,
       this.liveCallService,
       this.logger,
+      this,
     );
     this.relays.set(client, relay);
     relay.start();
@@ -108,6 +144,8 @@ export class LiveCallRelay {
   private turnsCompleted = 0;
   private authTimer: NodeJS.Timeout | null = null;
   private closed = false;
+  /** device_id si la llamada es anónima (para devolver el cupo al cerrar). */
+  private anonDeviceId: string | null = null;
 
   constructor(
     private readonly client: WebSocket,
@@ -115,6 +153,7 @@ export class LiveCallRelay {
     private readonly config: ConfigService,
     private readonly liveCallService: LiveCallService,
     private readonly logger: Logger,
+    private readonly gateway: LiveCallGateway,
   ) {}
 
   start(): void {
@@ -136,27 +175,59 @@ export class LiveCallRelay {
       return;
     }
 
-    let claims: AccessTokenClaims;
+    // Dos identidades posibles: staff con JWT, o cliente final anónimo con el
+    // `device_id` del navegador. El token gana si viene: un gerente probando
+    // desde el dashboard debe quedar atado a SU tenant, no al demo.
     let rawToken = '';
+    let deviceId = '';
+    let userSub = '';
     try {
       const msg = parseJsonFrame(raw);
       if (msg?.type !== 'auth') {
         throw new Error("se esperaba el frame 'auth' primero");
       }
       rawToken = stringField(msg.data, 'token');
-      claims = await this.jwt.verifyAsync<AccessTokenClaims>(rawToken);
-      if (claims.type !== 'access') {
-        throw new Error('tipo de token inválido');
-      }
     } catch {
-      this.rejectAuth('token inválido o expirado');
-      return;
+      rawToken = '';
     }
 
-    this.tenantId = claims.teamId ?? '';
+    if (rawToken) {
+      let claims: AccessTokenClaims;
+      try {
+        claims = await this.jwt.verifyAsync<AccessTokenClaims>(rawToken);
+        if (claims.type !== 'access') {
+          throw new Error('tipo de token inválido');
+        }
+      } catch {
+        this.rejectAuth('token inválido o expirado');
+        return;
+      }
+      this.tenantId = claims.teamId ?? '';
+      userSub = claims.sub;
+    } else {
+      try {
+        deviceId = stringField(parseJsonFrame(raw)?.data, 'device_id');
+      } catch {
+        deviceId = '';
+      }
+      if (!DEVICE_ID_RE.test(deviceId)) {
+        this.rejectAuth('falta token o device_id válido');
+        return;
+      }
+      if (!this.gateway.reservarCupoAnon(deviceId)) {
+        this.rejectAuth(
+          'ya hay una llamada en curso desde este dispositivo; ' +
+            'ciérrala antes de iniciar otra',
+        );
+        return;
+      }
+      this.anonDeviceId = deviceId;
+      this.tenantId = DEMO_TENANT_ID;
+      userSub = deviceId;
+    }
 
     try {
-      await this.connectPython(rawToken);
+      await this.connectPython(rawToken, deviceId);
     } catch (err) {
       this.logger.warn(
         `no se pudo conectar al servicio de voz: ${String(err)}`,
@@ -169,7 +240,7 @@ export class LiveCallRelay {
     try {
       this.aiCallId = await this.liveCallService.openSession(
         this.tenantId,
-        claims.sub,
+        userSub,
       );
     } catch (err) {
       this.logger.error(
@@ -191,7 +262,10 @@ export class LiveCallRelay {
     this.client.close(4401);
   }
 
-  private async connectPython(rawToken: string): Promise<void> {
+  private async connectPython(
+    rawToken: string,
+    deviceId: string,
+  ): Promise<void> {
     // Una sola salida a Python por relay. Si se reintenta, cierra la anterior.
     if (this.pythonSocket) {
       this.pythonSocket.removeAllListeners();
@@ -209,7 +283,13 @@ export class LiveCallRelay {
       socket.once('error', reject);
     });
 
-    socket.send(JSON.stringify({ type: 'auth', data: { token: rawToken } }));
+    // Python autentica igual que acá: token de staff, o device_id anónimo.
+    socket.send(
+      JSON.stringify({
+        type: 'auth',
+        data: rawToken ? { token: rawToken } : { device_id: deviceId },
+      }),
+    );
     await new Promise<void>((resolve, reject) => {
       socket.once('message', (raw) => {
         const msg = parseJsonFrame(raw);
@@ -297,7 +377,17 @@ export class LiveCallRelay {
 
   /** Cierre del lado navegador (colgó, se cayó la red, cerró la pestaña).
    * Si ya se finalizó por un `end_call` explícito, `finalize` es un no-op. */
+  /** Devuelve el cupo anónimo. Idempotente a propósito: se llama desde TODAS
+   *  las rutas de cierre (cliente, Python, rechazo de auth) y sin esto un
+   *  dispositivo quedaría bloqueado para siempre tras una caída. */
+  private liberarCupo(): void {
+    if (!this.anonDeviceId) return;
+    this.gateway.liberarCupoAnon(this.anonDeviceId);
+    this.anonDeviceId = null;
+  }
+
   handleClientDisconnect(): void {
+    this.liberarCupo();
     if (this.closed) return;
     this.closed = true;
     if (this.authTimer) clearTimeout(this.authTimer);
@@ -308,6 +398,7 @@ export class LiveCallRelay {
   /** Cierre del lado Python/Deepgram (falla interna) — la llamada nunca
    * debería quedar en curso si el motor de voz se cayó a mitad de camino. */
   private handlePythonDisconnect(): void {
+    this.liberarCupo();
     if (this.closed) return;
     this.closed = true;
     this.sendJson('error', {

@@ -214,14 +214,24 @@ class VoiceSession:
         await self.ws.send_json({"type": type_, "data": data})
 
     async def authenticate(self) -> bool:
-        """Primer frame esperado: `{"type":"auth","data":{"token":...}}`."""
+        """Primer frame: `{"type":"auth","data":{...}}` con `token` (staff) o
+        `device_id` (cliente final anónimo).
+
+        El cliente final no tiene usuario — su identidad es el `device_id` del
+        navegador, el mismo que ya ancla memoria y leads en el chat web, así
+        que la llamada continúa la conversación que esa persona ya tuvo. Quien
+        decide si el anónimo puede entrar es el gateway de Nest (valida formato
+        y topes, ver live-call.gateway.ts): aquí solo se confía en lo que llega
+        de él, igual que el resto de rutas servicio-a-servicio del stack."""
         try:
             raw = await asyncio.wait_for(self.ws.receive_json(), timeout=_AUTH_TIMEOUT_S)
             if raw.get("type") != "auth":
                 raise ValueError("se esperaba el frame 'auth' primero")
-            token = (raw.get("data") or {}).get("token", "")
-            claims = auth.decode_token(token)
-            if not claims:
+            data = raw.get("data") or {}
+            token = data.get("token", "")
+            device_id = str(data.get("device_id") or "").strip()
+            claims = auth.decode_token(token) if token else None
+            if not claims and not device_id:
                 raise ValueError("token inválido o expirado")
         except Exception as exc:
             try:
@@ -230,9 +240,14 @@ class VoiceSession:
                 pass
             return False
 
-        self.user_id = f"web:{claims['sub']}"
-        self.tenant_id = claims.get("teamId") or config.DEMO_TENANT_ID
-        self.role = "gerente" if claims.get("role") in {"GERENTE", "ADMIN"} else "cliente"
+        if claims:
+            self.user_id = f"web:{claims['sub']}"
+            self.tenant_id = claims.get("teamId") or config.DEMO_TENANT_ID
+            self.role = "gerente" if claims.get("role") in {"GERENTE", "ADMIN"} else "cliente"
+        else:
+            self.user_id = f"web:{device_id}"
+            self.tenant_id = config.DEMO_TENANT_ID
+            self.role = "cliente"
         await self._send_json("auth_ok", {})
         return True
 
