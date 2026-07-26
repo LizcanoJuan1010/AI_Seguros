@@ -16,10 +16,6 @@ lo escribe; lo único que lo contiene es que la cuenta de Twilio en trial solo
 marca a números verificados a mano en su consola. Al salir de trial hay que
 exigir un código por SMS/WhatsApp antes de llamar (el gancho natural va entre
 `limite_excedido` y el disparo de la llamada en `landing_callback`).
-
-El horario NO se valida acá: `calls.iniciar_llamada` ya aplica la ventana legal
-de contacto comercial (Ley 2300/2023, lunes-viernes 7-19, sábados 8-15, nunca
-domingo), que es más estricta y aplica a TODA llamada saliente.
 """
 from __future__ import annotations
 

@@ -11,6 +11,7 @@ import { ClaimsPanel } from '../features/manager/ClaimsPanel'
 import { CustomerPortfolio } from '../features/manager/CustomerPortfolio'
 import { FunnelHealthCard } from '../features/manager/FunnelHealthCard'
 import { ProductIdeasWall } from '../features/manager/ProductIdeasWall'
+import { ComboRankingCard } from '../features/manager/ComboRankingCard'
 import { AgentKnowledgePanel } from '../features/manager/AgentKnowledgePanel'
 import { HotLeadsCard } from '../features/manager/HotLeadsCard'
 import { kpis as mockKpis } from '../data/mock/manager'
@@ -218,6 +219,7 @@ export function ManagerDashboardPage() {
             </aside>
           </div>
           <ProductIdeasWall />
+          <ComboRankingCard />
           {/* Alertas críticas al final, en una caja de ancho completo. */}
           {alertItems.length > 0 && <AlertsPanel items={alertItems} />}
         </div>

@@ -41,6 +41,7 @@ def summary(conn: psycopg.Connection) -> dict[str, Any]:
                FROM quotes q JOIN products p ON p.id = q.product_id
                GROUP BY p.id ORDER BY n DESC""")
     ]
+    por_combo = by_combo(conn)
     timeseries = [
         {"fecha": r["d"], "cotizaciones": r["n"]}
         for r in conn.execute(
@@ -85,5 +86,36 @@ def summary(conn: psycopg.Connection) -> dict[str, Any]:
         "funnel": [{"etapa": s, "leads": funnel_rows.get(s, 0)} for s in FUNNEL_ORDER],
         "por_pais": by_country,
         "por_producto": by_product,
+        "por_combo": por_combo,
         "cotizaciones_por_dia": timeseries,
     }
+
+
+def by_combo(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Combinaciones de tipos de seguro que un mismo cliente tiene VIGENTES a
+    la vez — cross-sell real (dominio Prisma, public.*), no la simulación de
+    `seguria.quotes` que usa `by_product`. Solo cuenta clientes con 2+ tipos
+    distintos, ordenado por frecuencia. Degrada a [] si `public.*` no está
+    disponible (mismo criterio que el bloque de impacto_ia de arriba)."""
+    try:
+        rows = conn.execute(
+            """SELECT c.id customer_id, pr.insurance_type::text tipo
+               FROM public.policies p
+               JOIN public.customers c ON c.id = p.customer_id
+               JOIN public.quotes q ON q.id = p.quote_id
+               JOIN public.products pr ON pr.id = q.product_id
+               WHERE p.status = 'VIGENTE'""").fetchall()
+    except Exception:
+        conn.rollback()
+        return []
+    por_cliente: dict[str, set[str]] = {}
+    for r in rows:
+        por_cliente.setdefault(r["customer_id"], set()).add(r["tipo"])
+    conteo: dict[tuple[str, ...], int] = {}
+    for tipos in por_cliente.values():
+        if len(tipos) < 2:
+            continue
+        combo = tuple(sorted(tipos))
+        conteo[combo] = conteo.get(combo, 0) + 1
+    ranking = sorted(conteo.items(), key=lambda kv: kv[1], reverse=True)
+    return [{"combo": list(combo), "clientes": n} for combo, n in ranking]

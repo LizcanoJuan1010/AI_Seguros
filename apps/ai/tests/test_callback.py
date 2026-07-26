@@ -5,11 +5,9 @@ consentimiento auditado, topes por hora) en `app/callback.py`. Lo que importa
 cubrir es que esa puerta ANÓNIMA no se pueda abusar: sin consentimiento no
 llama, con un número basura no llama, y hay un tope por hora.
 
-Los tests del endpoint NO pueden asumir que la llamada se dispara: desde el
-merge de jul 2026, `calls.iniciar_llamada` aplica la ventana legal de contacto
-comercial (Ley 2300/2023 — nunca domingo, sáb 8-15, L-V 7-19), así que la suite
-falla o pasa según el día en que corra. Por eso todo lo que se afirma sobre el
-disparo se prueba contra la capa de guardas, no contra el reloj.
+Los tests del endpoint NO pueden asumir que la llamada se dispara de verdad
+(depende de credenciales reales de ElevenLabs) — lo que se prueba es que la
+capa de guardas (consentimiento, validación, topes) corta ANTES de intentarlo.
 """
 import pytest
 from fastapi.testclient import TestClient
