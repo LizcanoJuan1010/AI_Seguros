@@ -92,11 +92,17 @@ dejás en `false` no hace falta tocar nada acá).
 - **Root Directory**: `.` (raíz del repo — el Dockerfile necesita copiar
   tanto `apps/frontend/` como `deploy/`, Docker no deja `COPY` fuera del
   contexto)
-- **Dockerfile Path**: `deploy/frontend.railway.Dockerfile` (configurar a
-  mano en el dashboard — sin `railway.json` en la raíz para no generar
-  ambigüedad con los otros servicios)
+- **Dockerfile**: autodetectado (`railway.json` en la raíz del repo ya
+  apunta a `deploy/frontend.railway.Dockerfile` — cada servicio solo lee el
+  `railway.json` de SU PROPIO Root Directory, no hay conflicto con
+  `apps/backend/railway.json` ni `apps/ai/railway.json`)
+- **Puerto**: fijá `PORT=8080` como variable del servicio (ver sección de
+  Variables abajo) — evita depender del puerto dinámico que Railway
+  asignaría solo, necesario para poder generar el dominio público sin
+  ambigüedad.
 - **Variables**:
   ```
+  PORT=8080
   BACKEND_INTERNAL_URL=http://backend.railway.internal:3000
   AI_INTERNAL_URL=http://ai.railway.internal:8085
   ```
