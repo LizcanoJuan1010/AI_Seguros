@@ -389,9 +389,20 @@ def avanzar(conn: psycopg.Connection, row: dict) -> dict:
     esign.py/payments.py, cada uno gestiona su propia transacción) — un lock
     de TRANSACCIÓN se liberaría en el primero de esos commits y dejaría de
     proteger el resto de la función. El de sesión sobrevive a los commits y se
-    libera explícitamente en el `finally`."""
+    libera explícitamente en el `finally`.
+
+    Re-lee la fila DESPUÉS de tomar el lock (no confía en el `row` que trajo
+    el llamador): si `row` viene de un fetch anterior (ej. el caller lo
+    guardó y llama `avanzar` varias veces con la misma copia), `underwriting_
+    decision` seguiría viéndose NULL para siempre y el guard de
+    `_avanzar_locked` ("solo evalúa/alerta si es None") se re-dispararía en
+    cada llamada — justo el bug que expuso la prueba de "REFER se alerta una
+    sola vez" al reusar la misma copia de `row` en 5 llamadas seguidas."""
     conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (row["session_key"],))
     try:
+        fresh = conn.execute("SELECT * FROM activacion_checklist WHERE checklist_id=%s",
+                             (row["checklist_id"],)).fetchone()
+        row = dict(fresh) if fresh else row
         paso_actual, pasos = _avanzar_locked(conn, row)
     finally:
         # Si _avanzar_locked reventó con un error de BD, la transacción queda
