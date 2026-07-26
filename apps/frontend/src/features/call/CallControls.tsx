@@ -4,9 +4,12 @@ type Props = {
   muted: boolean
   onMuteToggle: () => void
   onEnd: () => void
+  /** Pide el resumen de la llamada por correo. Opcional: sin él no se pinta el
+   *  botón, así que las pantallas que no ofrecen resumen no cambian. */
+  onSend?: () => void
 }
 
-export function CallControls({ muted, onMuteToggle, onEnd }: Props) {
+export function CallControls({ muted, onMuteToggle, onEnd, onSend }: Props) {
   return (
     <nav className="fixed bottom-0 z-50 w-full border-t border-outline-variant/10 bg-surface-container-high/95 backdrop-blur-xl">
       <div className="mx-auto flex max-w-container-max items-center justify-center gap-3 px-margin-mobile pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:gap-4 md:px-margin-desktop md:py-6">
@@ -41,6 +44,20 @@ export function CallControls({ muted, onMuteToggle, onEnd }: Props) {
               Finalizar
             </span>
           </button>
+          {onSend && (
+            <button
+              type="button"
+              className="group flex flex-col items-center gap-1"
+              onClick={onSend}
+            >
+              <div className="flex size-12 items-center justify-center rounded-full border-2 border-outline-variant text-on-surface-variant transition-all group-hover:border-primary group-hover:text-primary">
+                <Icon name="forward_to_inbox" />
+              </div>
+              <span className="text-label-sm text-on-surface-variant">
+                Enviar resumen
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </nav>

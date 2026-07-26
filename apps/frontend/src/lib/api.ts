@@ -542,7 +542,6 @@ export const api = {
     post<ApiCampaign>('/campaigns', input),
   sendCampaign: (id: string, input: SendCampaignInput) =>
     post<SendCampaignResult>(`/campaigns/${id}/send`, input),
-  leadsKpis: () => get<LeadsKpis>('/dashboard/leads-kpis'),
 }
 
 /** Tenant seleccionado, compartido con módulos fuera de React (ej. chat SSE). */
