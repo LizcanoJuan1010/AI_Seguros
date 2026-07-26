@@ -356,13 +356,23 @@ class VoiceSession:
             task.cancel()
         # Espera la cancelación de verdad: sin esto, _cleanup cerraba el WS
         # con la task aún en vuelo ("Task was destroyed but it is pending").
-        await asyncio.gather(*pending, return_exceptions=True)
+        # SHIELDED por una trampa de CPython: si nos cancelan a NOSOTROS
+        # mientras esperamos un gather de hijos ya cancelados (uvicorn en
+        # shutdown, o el CancelScope del TestClient de Starlette al salir del
+        # `with`), gather re-lanza la CancelledError "lavada" del hijo (sin
+        # mensaje ni __context__) en vez de la nuestra — y anyio solo absorbe
+        # cancelaciones que llevan su marca, así que esa excepción anónima
+        # escapaba del scope y hacía flaky el test del endpoint. Con shield,
+        # la cancelación externa nos llega intacta (se cancela el future
+        # exterior, que sí conserva el mensaje) y los hijos terminan de
+        # cancelarse igual; sin cancelación externa, se comporta idéntico.
+        await asyncio.shield(asyncio.gather(*pending, return_exceptions=True))
         for task in list(self._bg_tasks):
             task.cancel()
         # Mismo criterio que arriba: esperar la cancelación de verdad para no
         # cerrar el WS con tasks en vuelo. OJO: cancelar un to_thread NO
         # aborta el hilo — una emitir_poliza en curso termina y comitea igual.
-        await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+        await asyncio.shield(asyncio.gather(*self._bg_tasks, return_exceptions=True))
         await self._cleanup()
 
     async def _client_loop(self) -> None:
