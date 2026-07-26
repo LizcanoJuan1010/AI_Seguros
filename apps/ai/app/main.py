@@ -42,6 +42,17 @@ from .quoting import quote_product, recommend
 async def lifespan(app: FastAPI):
     init_db()
     await memory.init_pool()  # Postgres si está disponible; si no, memoria en dict
+    # Guardrail de correo (la causa nº1 de "los correos no llegan" en Railway):
+    # con RESEND_API_KEY pero SIN RESEND_FROM_EMAIL se usa el remitente de
+    # prueba onboarding@resend.dev, que SOLO entrega al dueño de la cuenta —
+    # a los clientes nunca les llega y nada falla en apariencia.
+    import os as _os
+    if _os.getenv("RESEND_API_KEY") and not _os.getenv("RESEND_FROM_EMAIL"):
+        import logging as _logging
+        _logging.getLogger("seguria.email").error(
+            "RESEND_API_KEY configurada SIN RESEND_FROM_EMAIL: los correos a "
+            "clientes NO llegarán (remitente de prueba de Resend). Configura "
+            "RESEND_FROM_EMAIL con un dominio verificado en resend.com/domains.")
     # Informes periódicos por correo (patrón Paloma): loop en segundo plano.
     from . import reports as reports_mod
     import asyncio as _asyncio

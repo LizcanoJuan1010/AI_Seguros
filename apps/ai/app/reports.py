@@ -217,15 +217,30 @@ async def send_subscription_now(sub: dict[str, Any]) -> dict[str, Any]:
 
     result = await send_email(sub["email"], subject, html)
 
-    delta = FRECUENCIAS.get(sub["frecuencia"], FRECUENCIAS["mensual"])
     now = datetime.now(timezone.utc)
+    if result.get("status") == "sent":
+        delta = FRECUENCIAS.get(sub["frecuencia"], FRECUENCIAS["mensual"])
+    else:
+        # NO marcar como enviado lo que no salió: un informe mensual que caía
+        # en la hora del circuito abierto de Resend quedaba "enviado" y no se
+        # reintentaba en 30 días. Reintento en 15 min (el scheduler lo
+        # recoge); last_sent_at solo avanza con envíos reales.
+        log.warning("informe a %s no salió (%s: %s); reintento en 15 min",
+                    sub["email"], result.get("status"), result.get("reason"))
+        delta = timedelta(minutes=15)
     conn = get_conn()
     try:
         _ensure_table(conn)
-        conn.execute(
-            """UPDATE report_subscriptions
-               SET last_sent_at=%s, next_send_at=%s WHERE id=%s""",
-            (now, now + delta, sub["id"]))
+        if result.get("status") == "sent":
+            conn.execute(
+                """UPDATE report_subscriptions
+                   SET last_sent_at=%s, next_send_at=%s WHERE id=%s""",
+                (now, now + delta, sub["id"]))
+        else:
+            conn.execute(
+                """UPDATE report_subscriptions
+                   SET next_send_at=%s WHERE id=%s""",
+                (now + delta, sub["id"]))
         conn.commit()
     finally:
         conn.close()

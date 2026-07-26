@@ -59,9 +59,21 @@ def email_configured() -> bool:
 async def send_email(to: str | list[str], subject: str, html: str,
                      attachments: list[dict] | None = None,
                      text: str | None = None) -> dict:
-    """Envía por SMTP (primario) o Resend (fallback)."""
+    """Envía por SMTP (primario) o Resend (fallback).
+
+    Fallback DE VERDAD: si SMTP está configurado pero el envío FALLA (en
+    Railway los puertos SMTP salientes están bloqueados y el intento muere
+    por timeout), se reintenta por Resend antes de rendirse. Antes, un SMTP
+    a medias en el entorno dejaba a Resend en la sombra y el correo se
+    perdía sin que nadie lo notara. En producción (solo RESEND_API_KEY, sin
+    SMTP_USER/PASSWORD) va directo por Resend, como siempre."""
     if SMTP_USER and SMTP_PASSWORD:
-        return await _send_via_smtp(to, subject, html, attachments, text)
+        result = await _send_via_smtp(to, subject, html, attachments, text)
+        if result.get("status") == "sent" or not RESEND_API_KEY:
+            return result
+        log.warning("SMTP falló (%s); reintentando por Resend",
+                    result.get("reason", ""))
+        return await _send_via_resend(to, subject, html, attachments, text)
     if RESEND_API_KEY:
         return await _send_via_resend(to, subject, html, attachments, text)
     log.info("sin proveedor de email configurado; correo a %s no enviado", to)
@@ -114,6 +126,11 @@ def _smtp_send_sync(from_email: str, recipients: list[str], msg_string: str) -> 
 async def _send_via_resend(to, subject, html, attachments=None, text=None) -> dict:
     global _resend_last_send_ts
     if time.time() < _resend_circuit_open_until:
+        # Con log SIEMPRE: era el único fallo 100 % mudo — un dominio sin
+        # verificar a las 10:00 descartaba TODO el correo hasta las 11:00
+        # con un solo warning suelto al abrir el circuito.
+        log.warning("Resend circuit abierto (%s): correo a %s descartado",
+                    _resend_circuit_reason, to)
         return {"status": "skipped",
                 "reason": f"resend_circuit_open: {_resend_circuit_reason}"}
     delta = time.time() - _resend_last_send_ts

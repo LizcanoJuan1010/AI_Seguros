@@ -86,6 +86,12 @@ def _deliver(url: str | None, texto: str, asunto: str, *, phone: str | None,
             result = asyncio.run(send_email(email, asunto, html, text=texto))
             if result.get("status") == "sent":
                 sent_via.append("email")
+            else:
+                # skipped/error NO son excepciones: sin este log el motivo
+                # real (circuito abierto, dominio sin verificar, 403 de
+                # Resend) se perdía y "los correos no llegan" quedaba mudo.
+                log.warning("correo del checklist a %s no salió: %s (%s)", email,
+                            result.get("status"), result.get("reason"))
         except Exception:
             log.warning("no se pudo enviar el link del checklist por correo", exc_info=True)
     return {"sent_via": sent_via}
@@ -185,8 +191,16 @@ def get_or_create(conn: psycopg.Connection, session_key: str, tenant_id: str, *,
     ficha = _quote_info(conn, quote_id)
     if ficha and ficha.get("pdf_url"):
         texto += f"\n\nTambién puedes revisar la ficha de tu seguro aquí: {ficha['pdf_url']}"
-    _deliver(url, texto, "Activa tu póliza — Tequendama Seguros", phone=phone, email=email)
-    return {"created": True, "checklist_id": checklist_id}
+    entrega = _deliver(url, texto, "Activa tu póliza — Tequendama Seguros",
+                       phone=phone, email=email)
+    if not entrega.get("sent_via"):
+        # El link existe pero NO le llegó por ningún canal (correo caído,
+        # WhatsApp sin gateway…). Devolverlo permite al agente entregar la
+        # URL en pantalla en vez de mentirle al cliente con "ya te lo envié".
+        log.warning("checklist %s creado pero sin entrega (phone=%s email=%s)",
+                    checklist_id, bool(phone), bool(email))
+    return {"created": True, "checklist_id": checklist_id,
+            "sent_via": entrega.get("sent_via", []), "url": url}
 
 
 def by_token(conn: psycopg.Connection, token: str) -> dict | None:

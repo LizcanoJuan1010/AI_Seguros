@@ -180,6 +180,46 @@ export function useLiveVoiceCall() {
         setCards((prev) => [...prev, toolResultToCard(tool, summary)])
         break
       }
+      // Frames del cierre que antes se DESCARTABAN en voz: el agente tiene
+      // prohibido dictar URLs, así que sin esta card el link de descarga de
+      // la póliza se perdía del todo, y un REFER/DECLINE del underwriting no
+      // se veía en pantalla.
+      case 'policy': {
+        const numero = String(data.policyNumber ?? '').trim()
+        if (!numero) break
+        setCards((prev) => [
+          ...prev,
+          {
+            icon: 'verified',
+            label: 'Póliza emitida',
+            value: numero,
+            hint:
+              typeof data.download_url === 'string' && data.download_url
+                ? 'Tu póliza quedó activa — descárgala desde el chat al colgar'
+                : 'Tu póliza quedó activa',
+            tone: 'amber',
+          },
+        ])
+        break
+      }
+      case 'underwriting': {
+        const decision = String(data.decision ?? '').toUpperCase()
+        if (!decision) break
+        setCards((prev) => [
+          ...prev,
+          {
+            icon: decision === 'AUTO_APPROVE' ? 'task_alt' : 'schedule',
+            label: 'Evaluación de riesgo',
+            value:
+              decision === 'AUTO_APPROVE'
+                ? 'Aprobada automáticamente'
+                : decision === 'REFER'
+                  ? 'Un asesor la revisa (<24h)'
+                  : 'No asegurable por este canal',
+          },
+        ])
+        break
+      }
       case 'payment_link': {
         const reference = String(data.reference ?? '').trim()
         if (!reference) break

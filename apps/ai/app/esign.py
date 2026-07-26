@@ -148,6 +148,9 @@ def _deliver(sign_url: str, *, phone: str | None, email: str | None) -> dict:
                                             html, text=texto))
             if result.get("status") == "sent":
                 sent_via.append("email")
+            else:
+                log.warning("correo de firma a %s no salió: %s (%s)", email,
+                            result.get("status"), result.get("reason"))
         except Exception:
             log.warning("no se pudo enviar el link de firma por correo", exc_info=True)
     return {"sent_via": sent_via}

@@ -196,6 +196,13 @@ class DeepgramVoiceAgent:
     async def respond_function_call(self, call_id: str, name: str, result) -> None:
         if self._ws is None:
             return
+        # El truncado a 6000 corta la COLA del JSON, y varios handlers ponen
+        # `mensaje`/`error` (las instrucciones de comportamiento del agente)
+        # al final del dict — con un payload grande (buscar_productos ≈ 6.7k)
+        # el agente perdía justo su instrucción. Se reordenan al frente.
+        if isinstance(result, dict):
+            primero = {k: result[k] for k in ("error", "mensaje") if k in result}
+            result = {**primero, **{k: v for k, v in result.items() if k not in primero}}
         try:
             await self._ws.send(json.dumps({
                 "type": "FunctionCallResponse", "id": call_id, "name": name,
@@ -266,6 +273,9 @@ class VoiceSession:
         # Refs de tasks fire-and-forget (_remember, tools): sin referencia
         # fuerte, el GC puede matarlas a mitad de camino.
         self._bg_tasks: set[asyncio.Task] = set()
+        # Serializa la EJECUCIÓN de tools de esta sesión (no el relay de
+        # audio) — ver _handle_function_call para el porqué.
+        self._tool_lock = asyncio.Lock()
 
     def _spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
@@ -349,6 +359,10 @@ class VoiceSession:
         await asyncio.gather(*pending, return_exceptions=True)
         for task in list(self._bg_tasks):
             task.cancel()
+        # Mismo criterio que arriba: esperar la cancelación de verdad para no
+        # cerrar el WS con tasks en vuelo. OJO: cancelar un to_thread NO
+        # aborta el hilo — una emitir_poliza en curso termina y comitea igual.
+        await asyncio.gather(*self._bg_tasks, return_exceptions=True)
         await self._cleanup()
 
     async def _client_loop(self) -> None:
@@ -430,7 +444,10 @@ class VoiceSession:
             await self._send_json("assistant_speaking_end", {})
             # Nest espía `turn_end` para persistir el turno de la IA
             # (recordAssistantTurn) — sin esto el transcript quedaba a medias.
-            await self._send_json("turn_end", {"reply": self._reply_text})
+            # OJO: el campo se llama `reply_text` — Nest (live-call.gateway.ts,
+            # stringField(msg.data,'reply_text')) y el frontend leen ESE nombre.
+            # Con "reply" el turno de la IA jamás se persistía en CallMessage.
+            await self._send_json("turn_end", {"reply_text": self._reply_text})
             self._reply_text = ""
             return
         if kind == "FunctionCallRequest":
@@ -459,25 +476,52 @@ class VoiceSession:
 
         name = call.get("name")
         call_id = call.get("id")
+        if not name or not call_id:
+            # Sin id, Deepgram no puede aparear la respuesta y el agente se
+            # quedaría esperando en silencio — mejor no ejecutar nada.
+            log.warning("FunctionCallRequest sin name/id, ignorado: %s", call)
+            return
         try:
             args = json.loads(call.get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
-        await self._send_json("tool_start", {"tool": name, "args": args})
+        result: dict = {"error": "la herramienta no llegó a ejecutarse"}
         try:
-            result = await asyncio.to_thread(
-                _exec_tool, name, args, phone=self.user_id, role=self.role,
-                tenant_id=self.tenant_id)
-        except Exception as exc:
-            log.exception("tool %s falló", name)
-            result = {"error": f"la herramienta falló: {exc}"}
-        summary, meta = _summarize_tool(name, result)
-        await self._send_json("tool_result", {"tool": name, "summary": summary, "meta": meta})
-        for frame in _checkout_frames(name, result):
-            parsed = _parse_sse_frame(frame)
-            if parsed:
-                await self._send_json(*parsed)
-        await self._agent.respond_function_call(call_id, name, result)
+            await self._send_json("tool_start", {"tool": name, "args": args})
+            # SERIALIZADAS por sesión: correr en task aparte existe para no
+            # congelar el relay de audio, pero dos _exec_tool en paralelo de
+            # la MISMA sesión corrompían checkout_session (read-modify-write
+            # sin lock: capturar_datos + consentimiento concurrentes se
+            # pisaban la fila o chocaban en el INSERT) y rompían las guardas
+            # de idempotencia (doble link de KYC/checklist). El lock preserva
+            # además el orden en que el LLM emitió las llamadas.
+            async with self._tool_lock:
+                try:
+                    result = await asyncio.to_thread(
+                        _exec_tool, name, args, phone=self.user_id, role=self.role,
+                        tenant_id=self.tenant_id)
+                except Exception as exc:
+                    log.exception("tool %s falló", name)
+                    result = {"error": f"la herramienta falló: {exc}"}
+            summary, meta = _summarize_tool(name, result)
+            await self._send_json("tool_result", {"tool": name, "summary": summary, "meta": meta})
+            for frame in _checkout_frames(name, result):
+                parsed = _parse_sse_frame(frame)
+                if parsed:
+                    await self._send_json(*parsed)
+        except Exception:
+            # P. ej. _send_json con el navegador ya colgado. No dejar que la
+            # excepción escape de la task (quedaba como "Task exception was
+            # never retrieved") ni que se salte la respuesta a Deepgram.
+            log.warning("fallo emitiendo eventos de la tool %s", name, exc_info=True)
+        finally:
+            # SIEMPRE responder a Deepgram: sin FunctionCallResponse el agente
+            # se queda mudo esperando hasta su timeout.
+            try:
+                await self._agent.respond_function_call(call_id, name, result)
+            except Exception:
+                log.warning("no se pudo responder la tool %s a Deepgram", name,
+                            exc_info=True)
 
     async def _barge_in(self) -> None:
         """El usuario empezó a hablar mientras la IA sonaba: avisa al

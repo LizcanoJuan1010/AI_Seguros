@@ -195,6 +195,9 @@ def _deliver(link_url: str, *, phone: str | None, email: str | None) -> dict:
                                             html, text=texto))
             if result.get("status") == "sent":
                 sent_via.append("email")
+            else:
+                log.warning("correo de KYC a %s no salió: %s (%s)", email,
+                            result.get("status"), result.get("reason"))
         except Exception:
             log.warning("no se pudo enviar el link de KYC por correo", exc_info=True)
     return {"sent_via": sent_via}

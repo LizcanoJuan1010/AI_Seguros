@@ -90,6 +90,15 @@ dejás en `false` no hace falta tocar nada acá).
   DEEPGRAM_API_KEY=<tu key real>
   DEEPGRAM_VOICE_MODEL=aura-2-celeste-es
   PUBLIC_BASE_URL=https://<dominio-publico-de-este-servicio-ai>
+  # Correo (informes, links de firma/KYC): usar RESEND, no SMTP — Railway
+  # bloquea los puertos SMTP salientes. RESEND_FROM_EMAIL es OBLIGATORIA y su
+  # dominio debe estar VERIFICADO en resend.com/domains: sin ella cae al
+  # remitente de prueba onboarding@resend.dev, que SOLO entrega al correo del
+  # dueño de la cuenta (a los clientes nunca les llega); con dominio sin
+  # verificar, el circuit breaker descarta TODOS los envíos por 1 hora.
+  # Dejá SMTP_USER/SMTP_PASSWORD vacías acá.
+  RESEND_API_KEY=<re_... de resend.com/api-keys>
+  RESEND_FROM_EMAIL=Tequendama Seguros <hola@tu-dominio-verificado.co>
   ```
   Fijá `PORT=8085` a mano (no lo dejes que Railway lo asigne solo) — el
   `backend` de arriba apunta a `ai.railway.internal:8085`, y si Railway le

@@ -151,7 +151,11 @@ listas largas — esto se ESCUCHA, no se lee. Nunca leas ni dictes una URL
 completa de checkout: dile que use el botón de pago en pantalla. Revisa el
 historial de esta llamada antes de responder: si ya hay turnos previos, NO
 te vuelvas a presentar ni repitas el saludo inicial — continúa la
-conversación donde quedó, directo a la siguiente pregunta o paso. Siempre debes tratar los precios como pesos colombianos."""
+conversación donde quedó, directo a la siguiente pregunta o paso. Siempre debes tratar los precios como pesos colombianos.
+
+EXCEPCIÓN DE ESTE CANAL: en voz NO existe pantalla de sugerencias — NUNCA
+termines con la línea "SUGERENCIAS: ..." (el sintetizador la leería en voz
+alta). Termina tus turnos con la pregunta o el paso siguiente, nada más."""
 
 
 SYSTEM_PROMPT_WEB_DEFAULT = f"{SOFIA_INTRO}\n\n{_NUCLEO_CIERRE}{_web_framing()}"
@@ -971,7 +975,13 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
         if name == "generar_checklist_activacion":
             from . import checklist
             from .assistant import _latest_quote_for
-            quote = _latest_quote_for(phone) if phone and not phone.startswith("web:") else None
+            # SIN filtro `web:`: cotizar crea el lead con phone="web:..." y
+            # _latest_quote_for busca por leads.phone, así que funciona igual
+            # para el chat web y la llamada de voz. El filtro que hubo aquí
+            # dejaba el CAMINO PRINCIPAL de cierre inalcanzable en esos dos
+            # canales ("todavía no hay cotización" justo después de cotizar);
+            # la entrega para sesiones web va por email (rama de abajo).
+            quote = _latest_quote_for(phone) if phone else None
             if not quote:
                 return {"error": "todavía no hay una cotización elegida; cotiza primero "
                                  "con cotizar antes de generar el checklist"}
@@ -993,21 +1003,25 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                 quote_id=quote.get("id"), insurance_type=quote.get("tipo"),
                 monthly_premium_cop=quote.get("premium_monthly_local"),
                 modalidad=modalidad)
-            if modalidad == "colectiva":
-                result["mensaje"] = (
-                    "Ya le envié un link único; como es un plan colectivo de "
-                    "aceptación garantizada, solo falta firmar y pagar — sin "
-                    "documentos ni verificación facial. No vence."
-                    if result.get("created") else
-                    "ya tiene un checklist de activación enviado; dile que revise "
-                    "WhatsApp o su correo si no lo encuentra.")
+            pasos = ("como es un plan colectivo de aceptación garantizada, solo "
+                     "falta firmar y pagar — sin documentos ni verificación facial"
+                     if modalidad == "colectiva" else
+                     "ahí completa todo a su ritmo: primero verifica su identidad, "
+                     "luego firma y por último paga")
+            if not result.get("created"):
+                result["mensaje"] = ("ya tiene un checklist de activación enviado; "
+                                     "dile que revise WhatsApp o su correo si no lo "
+                                     "encuentra.")
+            elif result.get("sent_via"):
+                result["mensaje"] = f"Ya le envié un link único; {pasos}. No vence."
             else:
-                result["mensaje"] = (
-                    "Ya le envié un link único; ahí completa todo a su ritmo: primero "
-                    "verifica su identidad, luego firma y por último paga. No vence."
-                    if result.get("created") else
-                    "ya tiene un checklist de activación enviado; dile que revise "
-                    "WhatsApp o su correo si no lo encuentra.")
+                # HONESTIDAD: el link se creó pero NO salió por ningún canal
+                # (correo/WhatsApp caídos). Nunca digas "ya te lo envié" —
+                # entrégale la URL directamente en el chat.
+                result["mensaje"] = (f"OJO: el link NO se pudo enviar por WhatsApp ni "
+                                     f"correo. Compártele la URL tal cual en el chat "
+                                     f"para que la abra: {result.get('url', '')} — "
+                                     f"{pasos}. No vence.")
             return result
 
         if name == "verificar_checklist_activacion":
@@ -1417,7 +1431,10 @@ def _append_history(session_id: str, messages: list[dict]) -> None:
 
 # ---------- Loop principal ----------
 
-SUGERENCIAS_RE = re.compile(r"\n?SUGERENCIAS:\s*(.+)\s*$", re.IGNORECASE)
+# Tolera el negrita markdown que DeepSeek agrega a veces (**SUGERENCIAS:**):
+# sin los \*{0,2}, el reply quedaba terminando en "**" y la primera sugerencia
+# salía corrupta ("** Quiero contratar...") — visto en prueba en vivo.
+SUGERENCIAS_RE = re.compile(r"\n?\*{0,2}SUGERENCIAS:\*{0,2}\s*(.+)\s*$", re.IGNORECASE)
 
 DOC_CLAIM_RE = re.compile(r"(te (lo |la )?(envié|envío|mando|mandé)|adjunto|aquí tienes (el|tu) (pdf|documento|cotización))", re.IGNORECASE)
 
