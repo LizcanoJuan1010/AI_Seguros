@@ -20,11 +20,48 @@ import re
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .config import DEMO_TENANT_ID, ELEVENLABS_LANDING_AGENT_ID
+from .config import DEMO_TENANT_ID, ELEVENLABS_LANDING_AGENT_ID, PUBLIC_BASE_URL
 
 log = logging.getLogger("seguria.landing_callback")
 
 router = APIRouter()
+
+# Chip del formulario -> tipo real del catálogo (coinciden literal, "otro"
+# y vacío quedan sin filtro: recommend() trae las mejores opciones parejas).
+_INTERES_A_TIPO = {"vida": "vida", "auto": "auto", "salud": "salud", "hogar": "hogar"}
+
+
+def _enviar_ficha_previa(phone: str, interes: str | None, nombre: str | None) -> None:
+    """Ficha PDF de referencia (no personalizada — todavía no hubo
+    conversación) para que la persona tenga algo concreto en WhatsApp ANTES
+    de que Camila la llame (ver CIERRE del prompt de prueba: ya asume que
+    esto llegó). Best-effort: un fallo aquí nunca debe bloquear la llamada."""
+    try:
+        from .db import get_conn
+        from .documents import build_quote_pdf
+        from .quoting import recommend
+        from . import whatsapp_gateway
+
+        conn = get_conn()
+        try:
+            opciones = recommend(conn, country="CO", tipo=_INTERES_A_TIPO.get((interes or "").lower()),
+                                 age=None, sum_assured_usd=None, budget_monthly_usd=None,
+                                 extras={}, max_options=1)
+        finally:
+            conn.close()
+        if not opciones:
+            return
+        quote = opciones[0]
+        quote.pop("breakdown", None)
+        path = build_quote_pdf(quote, {"name": nombre} if nombre else None, es_afiliado=False)
+
+        from pathlib import Path
+        pdf_url = f"{PUBLIC_BASE_URL}/api/documents/{Path(path).name}"
+        whatsapp_gateway.enviar_documento(
+            phone, pdf_url, Path(path).name,
+            caption=f"Antes de llamarte: una idea de {quote['producto']} — Tequendama Seguros")
+    except Exception:
+        log.warning("no se pudo enviar la ficha previa a %s", phone, exc_info=True)
 
 
 class CallbackRequest(BaseModel):
@@ -59,6 +96,8 @@ def solicitar_callback(req: CallbackRequest) -> dict:
     if not phone:
         return {"ok": False, "mensaje": "Revisa tu número — debe ser un celular "
                                         "colombiano de 10 dígitos."}
+
+    _enviar_ficha_previa(phone, req.interes, req.nombre)
 
     from . import calls
     try:
