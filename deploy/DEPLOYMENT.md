@@ -1,4 +1,4 @@
-# Despliegue de Tequendama Insurance AI (Docker)
+# Despliegue de Tequendama (Docker)
 
 > **Estado verificado (2026-07-21):** stack construido y probado end-to-end en esta
 > máquina. `seguria-api` (healthy), `seguria-tts` (Kokoro genera MP3 en español) y

@@ -160,10 +160,10 @@ no un promedio" del paper.
 
 ## Feature 4 — Seguro embebido (quote & bind para aliados)
 
-**Servicio IA** (dueño del cotizador y de Polar — es el lugar natural)
-- Router `embedded.py`: `POST /api/embedded/quote` (`{partner_key, tipo, contexto}` →
-  prima vía `quoting.quote_product`) y `POST /api/embedded/checkout` (crea el link
-  Polar con `payments._polar_create_checkout`; al aprobarse el webhook, el flujo
+**Backend Nest** (dueño de Polar create checkout + webhook — secrets en Nest)
+- Router `embedded.py` (servicio IA): `POST /api/embedded/quote` (`{partner_key, tipo, contexto}` →
+  prima vía `quoting.quote_product`) y `POST /api/embedded/checkout` (Nest
+  `POST /api/v1/payments/checkout` crea el link Polar; al aprobarse el webhook, el flujo
   existente emite la póliza vía `POST /api/v1/checkout`). Auth por `PARTNER_API_KEYS`
   en `config.py` (patrón `require_service`); rate-limit simple con Redis (ya está en
   el compose y sin uso intensivo).

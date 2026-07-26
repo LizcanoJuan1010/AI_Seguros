@@ -46,11 +46,11 @@
 ## 3. Arquitectura del sistema
 
 ```
-                          ┌─────────────────────────────┐
-   Cliente WhatsApp ────► │  Hermes Agent (gateway WA)  │ ◄──── Gerente WhatsApp
+                          ┌────────────────────────────────┐
+   Cliente WhatsApp ────► │  Hermes Agent (gateway WA)     │ ◄──── Gerente WhatsApp
    (texto / nota voz)     │  persona: SOUL.md (Tequendama) │       (rol por allowlist)
-                          │  skills/ (6 skills)         │
-                          └──────┬──────────┬───────────┘
+                          │  skills/ (6 skills)            │
+                          └──────┬──────────┬──────────────┘
                                  │ HTTP     │ CLI/MCP
                  ┌───────────────▼───┐  ┌───▼────────────┐   ┌───────────────┐
                  │ insurance-api     │  │ OfficeCLI      │   │ Voicebox      │

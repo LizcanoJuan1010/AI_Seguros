@@ -1,4 +1,4 @@
-# Tequendama Insurance AI — stack de fusión (arquitectura polyglot).
+# Tequendama — stack de fusión (arquitectura polyglot).
 #   frontend(nginx) -> /api/v1 -> backend(NestJS)   -> postgres
 #                   -> /api    -> seguria-ai(Python) -> postgres + redis
 # Servicios opcionales (voz, agente Hermes, baileys) bajo perfiles.
@@ -56,6 +56,10 @@ services:
       - JWT_REFRESH_DAYS=${JWT_REFRESH_DAYS:-7}
       # Secreto del webhook de Polar (Standard Webhooks): firma del webhook de pagos
       - POLAR_WEBHOOK_SECRET=${POLAR_WEBHOOK_SECRET:-}
+      # Polar SANDBOX — Nest es el único dueño del access token / create checkout
+      - POLAR_BASE_URL=${POLAR_BASE_URL:-https://sandbox-api.polar.sh/v1}
+      - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN:-}
+      - POLAR_SUCCESS_URL=${POLAR_SUCCESS_URL:-}
       # ELEVENLABS_WEBHOOK_SECRET: header simple de POST /elevenlabs/init (inicio de llamada).
       - ELEVENLABS_WEBHOOK_SECRET=${ELEVENLABS_WEBHOOK_SECRET:-demo-elevenlabs-secret-2026}
       # ELEVENLABS_POSTCALL_SECRET: firma HMAC de POST /elevenlabs/webhook (post-call).
@@ -91,10 +95,7 @@ services:
       - MANAGER_PHONES=${MANAGER_PHONES:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-v4-flash}
-      # Pasarela Polar (SANDBOX). Sin access token el pago corre en modo demo.
-      - POLAR_BASE_URL=${POLAR_BASE_URL:-https://sandbox-api.polar.sh/v1}
-      - POLAR_ACCESS_TOKEN=${POLAR_ACCESS_TOKEN:-}
-      - POLAR_SUCCESS_URL=${POLAR_SUCCESS_URL:-}
+      # Pagos: Nest es dueño de Polar; AI solo usa BACKEND_URL + X-Tenant-Id
       # Informes por correo (patrón Paloma: SMTP primario, Resend fallback)
       - RESEND_API_KEY=${RESEND_API_KEY:-}
       - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:-}
@@ -140,6 +141,9 @@ services:
       - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
       - TTS_URL=${TTS_URL:-http://seguria-tts:8880}
       - TTS_VOICE=${TTS_VOICE:-ef_dora}
+      # STT/TTS en tiempo real para /ws/voice/live (LiveAiCallPage). Sin key,
+      # el endpoint no puede abrir las conexiones a Deepgram.
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
     volumes:
       - ./data/market:/data/market:ro
       - seguria-state:/app/state

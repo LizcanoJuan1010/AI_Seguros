@@ -14,7 +14,11 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { OptionalJwtAuthGuard } from '../../common/jwt-auth.guard';
 import { TenantId } from '../../common/tenant.decorator';
-import { CreatePaymentDto, UpdatePaymentDto } from './payments.dto';
+import {
+  CreateCheckoutDto,
+  CreatePaymentDto,
+  UpdatePaymentDto,
+} from './payments.dto';
 import { PaymentsService } from './payments.service';
 
 @Controller('payments')
@@ -24,9 +28,9 @@ export class PaymentsController {
   /**
    * Webhook de eventos de Polar (order.paid, order.refunded, refund.*,
    * checkout.*). Público a propósito: la autenticidad se valida con la firma
-   * Standard Webhooks (POLAR_WEBHOOK_SECRET) dentro del service, y siempre
-   * responde 200 para cortar los reintentos. URL a registrar en el dashboard
-   * sandbox de Polar (formato "Raw"): https://<host>/api/v1/payments/webhook
+   * Standard Webhooks (POLAR_WEBHOOK_SECRET) dentro del service.
+   * Non-demo: fail-closed (401 si falta secreto o firma inválida).
+   * URL sandbox (formato "Raw"): https://<host>/api/v1/payments/webhook
    */
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
@@ -35,6 +39,20 @@ export class PaymentsController {
     @Body() payload: Record<string, unknown>,
   ) {
     return this.service.handleWebhook(req.rawBody, req.headers, payload);
+  }
+
+  /**
+   * Crea checkout Polar (o demo) y persiste Payment.
+   * Ruta estática antes de `:reference`. OptionalJwt + TenantId.
+   */
+  @UseGuards(OptionalJwtAuthGuard)
+  @Post('checkout')
+  @HttpCode(HttpStatus.CREATED)
+  createCheckout(
+    @TenantId() tenantId: string,
+    @Body() dto: CreateCheckoutDto,
+  ) {
+    return this.service.createCheckout(tenantId, dto);
   }
 
   @UseGuards(OptionalJwtAuthGuard)

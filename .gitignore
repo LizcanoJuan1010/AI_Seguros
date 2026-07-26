@@ -33,3 +33,5 @@ data/market/Usos_Productos_Afiliados_SIN_ID.csv
 
 # Runtime del servicio IA (subidas de clientes, PII) — no versionar
 apps/ai/app/state/
+# Cache local del skill registry SDD (infra, no artefacto versionable)
+.atl/

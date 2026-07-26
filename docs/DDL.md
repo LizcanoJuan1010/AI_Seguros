@@ -1,4 +1,4 @@
-# DDL — toda la data del sistema Tequendama Insurance AI
+# DDL — toda la data del sistema Tequendama
 
 > **UNA sola base: PostgreSQL** (unificado — ya no hay SQLite). Dos esquemas:
 > - **`public`** — dominio del negocio (NestJS/Prisma): 12 tablas, 3 vistas, 10 enums.

@@ -1,4 +1,4 @@
-# 🛡️ Tequendama Insurance AI — Plataforma de seguros con IA (Hackathon Colsubsidio 30X)
+# 🛡️ Tequendama — Plataforma de seguros con IA (Hackathon Colsubsidio 30X)
 
 Asistente conversacional tipo **Erica (Bank of America)** que lleva a una persona de
 _"no sé qué seguro necesito"_ a _"ya quedé asegurada"_ **sin hablar con nadie**: conversa

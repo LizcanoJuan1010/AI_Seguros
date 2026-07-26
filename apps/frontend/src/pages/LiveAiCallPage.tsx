@@ -1,200 +1,73 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { AiVisualizerStub, type AiOrbState } from '../features/call/AiVisualizerStub'
 import { CallControls } from '../features/call/CallControls'
 import { Icon } from '../components/ui/Icon'
-
-type CallCard = {
-  icon: string
-  label: string
-  value: string
-  hint?: string
-  tone?: 'amber'
-}
-
-type CallStep = {
-  speaker: 'ai' | 'user'
-  text: string
-  dur: number
-  /** Datos que la asesora proyecta al lado del orbe durante este paso. */
-  cards?: CallCard[]
-}
-
-/**
- * Guion demo de la llamada (voz-primero, estilo Gemini Live / modo voz GPT):
- * el orbe protagoniza la pantalla; cuando el cliente pregunta por su cuenta
- * o por valores, la asesora proyecta cards y el orbe se hace a un lado;
- * al seguir la conversación las cards se desvanecen y el orbe vuelve al centro.
- */
-const STEPS: CallStep[] = [
-  {
-    speaker: 'ai',
-    text: 'Hola, soy tu asesora Tequendama. ¿En qué te puedo ayudar hoy?',
-    dur: 4200,
-  },
-  {
-    speaker: 'user',
-    text: '"Hola, quiero saber cómo va mi cuenta."',
-    dur: 3200,
-  },
-  {
-    speaker: 'ai',
-    text: 'Claro. Este es el estado de tu cuenta al día de hoy:',
-    dur: 7500,
-    cards: [
-      {
-        icon: 'directions_car',
-        label: 'Póliza activa',
-        value: 'Auto · Mazda CX-30',
-        hint: 'Vigente hasta jul 2027',
-      },
-      {
-        icon: 'task_alt',
-        label: 'Pagos',
-        value: 'Al día',
-        hint: 'Próxima cuota: 05 de agosto',
-      },
-      {
-        icon: 'savings',
-        label: 'Ahorro acumulado con IA',
-        value: '$312.000 COP',
-        hint: 'Desde el inicio de tu póliza',
-        tone: 'amber',
-      },
-    ],
-  },
-  {
-    speaker: 'user',
-    text: '"¿Y cuánto me costaría agregar la cobertura de viajes a la costa?"',
-    dur: 3600,
-  },
-  {
-    speaker: 'ai',
-    text: 'Con cobertura nacional de viajes, tu mensualidad quedaría así:',
-    dur: 7500,
-    cards: [
-      {
-        icon: 'payments',
-        label: 'Mensualidad actual',
-        value: '$185.000 COP',
-      },
-      {
-        icon: 'add_road',
-        label: 'Con cobertura de viajes',
-        value: '$198.500 COP',
-        hint: '+$13.500 · asistencia 24/7 en carretera',
-      },
-      {
-        icon: 'auto_awesome',
-        label: 'Ahorro IA aplicado',
-        value: '15%',
-        hint: 'Por buen comportamiento de manejo',
-        tone: 'amber',
-      },
-    ],
-  },
-  {
-    speaker: 'user',
-    text: '"Me parece bien, déjame pensarlo y te confirmo."',
-    dur: 3400,
-  },
-  {
-    speaker: 'ai',
-    text: 'Perfecto, queda guardada la cotización. ¿Te ayudo con algo más?',
-    dur: 4200,
-  },
-]
+import { PaymentCard } from '../features/assistant/PolicyCard'
+import { useLiveVoiceCall, type CallCard } from '../features/assistant/useLiveVoiceCall'
 
 function formatDuration(s: number): string {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
 
-/**
- * Transcripción en vivo: revela el texto del paso carácter a carácter, como
- * si la asesora/cliente estuvieran siendo transcritos en tiempo real. La
- * velocidad se ajusta para terminar dentro del ~55% de la duración del paso.
- */
-function useTranscript(text: string, active: boolean, stepMs: number) {
-  const [count, setCount] = useState(0)
-
-  useEffect(() => {
-    if (!active || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setCount(text.length)
-      return
-    }
-    setCount(0)
-    const perChar = Math.min(36, Math.max(12, (stepMs * 0.55) / Math.max(text.length, 1)))
-    const id = window.setInterval(() => {
-      setCount((c) => {
-        if (c >= text.length) {
-          window.clearInterval(id)
-          return c
-        }
-        return c + 1
-      })
-    }, perChar)
-    return () => window.clearInterval(id)
-  }, [text, active, stepMs])
-
-  return { shown: text.slice(0, count), typing: count < text.length }
-}
-
 export function LiveAiCallPage() {
-  const [muted, setMuted] = useState(false)
-  const [ended, setEnded] = useState(false)
-  const [stepIndex, setStepIndex] = useState(0)
+  const {
+    status,
+    muted,
+    aiSpeaking,
+    caption,
+    cards,
+    payment,
+    error,
+    start,
+    toggleMute,
+    endCall,
+  } = useLiveVoiceCall()
+  const [sentNote, setSentNote] = useState(false)
   const [seconds, setSeconds] = useState(0)
-  const [cards, setCards] = useState<CallCard[] | null>(null)
+  const [displayCards, setDisplayCards] = useState<CallCard[] | null>(null)
   const [cardsLeaving, setCardsLeaving] = useState(false)
 
-  const step = STEPS[stepIndex]
-  const aiSpeaking = step.speaker === 'ai' && !muted && !ended
-  const transcript = useTranscript(step.text, !muted && !ended, step.dur)
+  const ended = status === 'ended' || status === 'error'
+  const showingPayment = Boolean(payment?.reference)
 
-  // Avanza el guion demo mientras la llamada esté activa.
+  // Arranca la llamada al entrar. StrictMode en dev monta/desmonta el efecto
+  // dos veces: el cleanup invalida el start en vuelo (startGenRef) y el
+  // remount abre una sola conexión estable.
   useEffect(() => {
-    if (muted || ended) return
-    const id = window.setTimeout(
-      () => setStepIndex((i) => (i + 1) % STEPS.length),
-      step.dur,
-    )
-    return () => window.clearTimeout(id)
-  }, [stepIndex, muted, ended, step.dur])
+    void start()
+    return () => {
+      endCall()
+    }
+    // Solo al montar la pantalla — start/endCall son estables (useCallback).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // Cronómetro real de la llamada.
+  // Cronómetro real: solo corre mientras la llamada está activa de verdad.
   useEffect(() => {
-    if (ended) return
+    if (status !== 'active') return
     const id = window.setInterval(() => setSeconds((s) => s + 1), 1000)
     return () => window.clearInterval(id)
-  }, [ended])
+  }, [status])
 
-  // Al colgar, la pantalla se disuelve en la bruma (clase call-leaving) y
-  // ~1s después volvemos al chat (estilo modo voz de Gemini/Claude).
-  const navigate = useNavigate()
+  // Proyección de cards: entran cuando el turno trae tool_result y se
+  // desvanecen cuando arranca el turno siguiente (mismo timing que el guion
+  // de demo original).
   useEffect(() => {
-    if (!ended) return
-    const id = window.setTimeout(() => navigate('/asistente'), 1000)
-    return () => window.clearTimeout(id)
-  }, [ended, navigate])
-
-  // Proyección de cards: entran con el paso que las trae y se desvanecen
-  // cuando la conversación sigue.
-  useEffect(() => {
-    const next = step.cards ?? null
-    if (next) {
-      setCards(next)
+    if (cards.length > 0) {
+      setDisplayCards(cards)
       setCardsLeaving(false)
       return
     }
     setCardsLeaving(true)
     const id = window.setTimeout(() => {
-      setCards(null)
+      setDisplayCards(null)
       setCardsLeaving(false)
     }, 500)
     return () => window.clearTimeout(id)
-  }, [stepIndex, step.cards])
+  }, [cards])
 
-  const showingCards = cards !== null && !cardsLeaving
+  const showingCards =
+    (displayCards !== null && !cardsLeaving) || showingPayment
   const orbState: AiOrbState = ended
     ? 'ended'
     : muted
@@ -203,12 +76,17 @@ export function LiveAiCallPage() {
         ? 'speaking'
         : 'listening'
 
+  const captionText = ended
+    ? 'Llamada finalizada'
+    : muted
+      ? 'Micrófono silenciado'
+      : status === 'connecting'
+        ? 'Conectando con tu asesora...'
+        : (caption?.text ?? 'Contanos en qué te podemos ayudar.')
+  const captionIsUser = !ended && !muted && caption?.speaker === 'user'
+
   return (
-    <div
-      className={`relative h-full min-h-[560px] overflow-hidden ${
-        ended ? 'call-leaving' : ''
-      }`}
-    >
+    <div className="relative h-full min-h-[560px] overflow-hidden">
       {/* Fondo: video de bruma detrás de la animación */}
       <video
         src="/assets/bg-mist.mp4"
@@ -234,13 +112,22 @@ export function LiveAiCallPage() {
             </span>
           </div>
         </div>
-        <div className="flex flex-col text-right">
-          <span className="text-label-sm text-on-surface-variant">
-            Duración
-          </span>
-          <span className="text-label-md font-bold text-primary">
-            {formatDuration(seconds)}
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="hidden flex-col text-right md:flex">
+            <span className="text-label-sm text-on-surface-variant">
+              Duración
+            </span>
+            <span className="text-label-md font-bold text-primary">
+              {formatDuration(seconds)}
+            </span>
+          </div>
+          <div className="flex size-10 items-center justify-center overflow-hidden rounded-full border-2 border-primary/20 bg-primary-container shadow-sm">
+            <img
+              src="/assets/avatars/call-user.png"
+              alt="Usuario en llamada"
+              className="h-full w-full object-cover"
+            />
+          </div>
         </div>
       </div>
 
@@ -270,26 +157,32 @@ export function LiveAiCallPage() {
                 }`}
               />
               {ended
-                ? 'Llamada finalizada · volviendo al chat…'
+                ? 'Llamada finalizada'
                 : muted
                   ? 'Silenciado'
                   : aiSpeaking
                     ? 'Hablando...'
-                    : 'Escuchando...'}
+                    : status === 'connecting'
+                      ? 'Conectando...'
+                      : 'Escuchando...'}
+              {sentNote ? ' · Correo marcado' : ''}
             </p>
+            {error && (
+              <p className="mt-2 text-label-sm text-error">{error}</p>
+            )}
           </div>
         </div>
 
-        {/* Cards proyectadas por la asesora */}
-        {cards && (
+        {/* Cards proyectadas por la asesora (tool_result + payment_link CTA) */}
+        {(displayCards || showingPayment) && (
           <div
-            className={`absolute inset-x-4 bottom-40 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
-              cardsLeaving ? 'call-cards-leaving' : ''
+            className={`absolute inset-x-4 bottom-28 z-20 flex flex-col gap-3 sm:inset-x-auto sm:right-[6%] sm:top-1/2 sm:bottom-auto sm:w-96 sm:-translate-y-1/2 lg:right-[10%] ${
+              cardsLeaving && !showingPayment ? 'call-cards-leaving' : ''
             }`}
           >
-            {cards.map((card, i) => (
+            {displayCards?.map((card, i) => (
               <div
-                key={`${stepIndex}-${card.label}`}
+                key={`${card.label}-${i}`}
                 className={`call-card glass-card rounded-2xl p-5 shadow-lg ${
                   card.tone === 'amber' ? 'border-2 border-amber-cta/60' : ''
                 }`}
@@ -321,6 +214,11 @@ export function LiveAiCallPage() {
                 </div>
               </div>
             ))}
+            {payment ? (
+              <div className="call-card glass-card overflow-hidden rounded-2xl shadow-lg">
+                <PaymentCard payment={payment} />
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -328,30 +226,26 @@ export function LiveAiCallPage() {
       {/* Subtítulo en vivo de la conversación */}
       {!ended && (
         <div
-          className={`pointer-events-none absolute inset-x-0 bottom-40 z-10 justify-center px-margin-mobile sm:bottom-32 ${
+          className={`pointer-events-none absolute inset-x-0 bottom-28 z-10 justify-center px-margin-mobile sm:bottom-32 ${
             showingCards ? 'hidden sm:flex' : 'flex'
           }`}
         >
           <p
-            key={stepIndex}
+            key={captionText}
             className={`call-caption max-w-xl rounded-2xl bg-white/70 px-6 py-3 text-center text-body-md shadow-sm backdrop-blur-md ${
-              step.speaker === 'user'
-                ? 'italic text-on-surface-variant'
-                : 'text-on-surface'
+              captionIsUser ? 'italic text-on-surface-variant' : 'text-on-surface'
             } ${showingCards ? 'sm:translate-x-[-18%]' : ''}`}
           >
-            {muted ? 'Micrófono silenciado' : transcript.shown}
-            {!muted && transcript.typing && (
-              <span className="transcript-caret" aria-hidden />
-            )}
+            {captionText}
           </p>
         </div>
       )}
 
       <CallControls
         muted={muted}
-        onMuteToggle={() => setMuted((v) => !v)}
-        onEnd={() => setEnded(true)}
+        onMuteToggle={toggleMute}
+        onEnd={endCall}
+        onSend={() => setSentNote(true)}
       />
     </div>
   )

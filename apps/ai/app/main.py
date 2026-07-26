@@ -23,6 +23,8 @@ from .assistant import router as assistant_router
 # restaurar en cuanto esos archivos vuelvan a existir.
 # from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
+from .voice_live import router as voice_live_router
+# from .marketing_studio import router as marketing_router
 from .auth import is_staff_token, resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
@@ -52,12 +54,13 @@ async def lifespan(app: FastAPI):
         await memory.close_pool()
 
 
-app = FastAPI(title="Tequendama Insurance API", version="0.1.0", lifespan=lifespan,
+app = FastAPI(title="Tequendama API", version="0.1.0", lifespan=lifespan,
               description="Backend del asistente de venta de seguros LATAM")
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
+app.include_router(voice_live_router)  # WS /ws/voice/live (llamada en vivo, Deepgram STT/TTS)
 # app.include_router(marketing_router)  # ver nota TEMPORAL arriba
 # app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
 
