@@ -19,11 +19,11 @@ docker run -d --name seguria-tts --restart unless-stopped \
 ```bash
 curl -s -X POST http://localhost:8880/v1/audio/speech \
   -H 'Content-Type: application/json' \
-  -d '{"model":"kokoro","input":"Hola, soy SegurIA. Tu cotización está lista.",
+  -d '{"model":"kokoro","input":"Hola, soy Tequendama. Tu cotización está lista.",
        "voice":"ef_dora","response_format":"mp3","speed":1.0}' \
   --output respuesta.mp3
 ```
-- Voces en español: `ef_dora` (femenina, recomendada para SegurIA), `em_alex`, `em_santa`.
+- Voces en español: `ef_dora` (femenina, recomendada para Tequendama), `em_alex`, `em_santa`.
 - Convierte a nota de voz de WhatsApp si el canal lo requiere:
   `ffmpeg -i respuesta.mp3 -c:a libopus respuesta.ogg`.
 

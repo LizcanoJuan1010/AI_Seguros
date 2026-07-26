@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Setup de SegurIA: API + (opcional) Hermes, OfficeCLI y voz (Kokoro).
+# Setup de Tequendama: API + (opcional) Hermes, OfficeCLI y voz (Kokoro).
 # Uso: bash scripts/setup.sh [api|hermes|officecli|voz|docker|all]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="${1:-api}"
 
 setup_api() {
-  echo "==> SegurIA API (FastAPI + SQLite)"
+  echo "==> Tequendama API (FastAPI + SQLite)"
   cd "$ROOT/apps/ai"
   command -v uv >/dev/null || { echo "Instala uv: https://docs.astral.sh/uv/"; exit 1; }
   uv venv .venv 2>/dev/null || true

@@ -1,0 +1,48 @@
+change: live-call-deepgram
+artifact_store: openspec
+execution_mode: interactive
+delivery_strategy: ask-on-risk
+created: 2026-07-24
+
+phases:
+  explore:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/exploration.md
+  proposal:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/proposal.md
+  specs:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/specs/live-voice-call/spec.md
+  design:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/design.md
+  tasks:
+    status: done
+    artifact: openspec/changes/live-call-deepgram/tasks.md
+    chain_strategy: feature-branch-chain
+    tracker_branch: feat/live-call-deepgram
+  apply:
+    status: done
+    pr1_foundation:
+      status: done
+      branch: live-call-deepgram/foundation
+      base: feat/live-call-deepgram
+    pr2_python_voice:
+      status: done
+      branch: live-call-deepgram/python-voice
+      base: live-call-deepgram/foundation
+    pr3_nest_gateway:
+      status: done
+      branch: live-call-deepgram/nest-gateway
+      base: live-call-deepgram/python-voice
+    pr4_frontend:
+      status: done
+      branch: live-call-deepgram/frontend-wiring
+      base: live-call-deepgram/nest-gateway
+    remaining_units: []
+    note: "23/23 tareas (Fases 1-5) implementadas y con tests propios en cada rama de la cadena. Nada pusheado todavía — falta abrir la rama tracker (feat/live-call-deepgram) y las 4 PRs hijas, más DEEPGRAM_API_KEY en el .env.example de la raíz (bloqueado por permisos del proyecto en esta sesión, ver reporte). No se pudo probar en navegador real (sin credenciales de Deepgram ni el stack completo corriendo)."
+  verify:
+    status: pending
+  archive:
+    status: pending

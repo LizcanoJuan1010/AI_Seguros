@@ -4,7 +4,9 @@ vars:
   FRONTEND_DIR: apps/frontend
   BACKEND_DIR: apps/backend
   AI_DIR: apps/ai
-  API_PORT: '{{default "3000" .PORT}}'
+  # 3001 en el host: el proxy de Vite (VITE_BACKEND_URL) ya asume 3001
+  # (3000 suele estar ocupado en las máquinas de desarrollo).
+  API_PORT: '{{default "3001" .PORT}}'
   WEB_PORT: '{{default "5173" .VITE_PORT}}'
   AI_PORT: '{{default "8085" .SEGURIA_AI_PORT}}'
 

@@ -1,4 +1,4 @@
-# 🛡️ SegurIA × Tequendama — Plataforma de seguros con IA (Hackathon Colsubsidio 30X)
+# 🛡️ Tequendama — Plataforma de seguros con IA (Hackathon Colsubsidio 30X)
 
 Asistente conversacional tipo **Erica (Bank of America)** que lleva a una persona de
 _"no sé qué seguro necesito"_ a _"ya quedé asegurada"_ **sin hablar con nadie**: conversa
@@ -146,7 +146,7 @@ Voz → Kokoro-FastAPI (TTS local)     Pagos → Polar (webhook → backend)
   lead-events, quotes, policies, alerts, customers.
 
 ### 💬 Canal WhatsApp (Hermes Agent) + 🎙️ voz
-- **Persona SegurIA** (SOUL.md) con 8 skills: `asesor-seguros` (venta SPIN +
+- **Persona Tequendama** (SOUL.md) con 8 skills: `asesor-seguros` (venta SPIN +
   objeciones), `documentos-cotizacion`, `insights-gerente` (con gating de rol por
   teléfono), `presentaciones-seguros` (PPTX), `seguimiento-proactivo` (cron),
   `siniestros` (FNOL por WhatsApp), `mercado-latam` (1.338 aseguradoras reales +
@@ -239,7 +239,7 @@ docker-compose.yml    # postgres + redis + backend + ai + frontend (+ perfiles v
 
 ## Cumplimiento
 
-SegurIA **cierra la venta de forma autónoma**: Colsubsidio actúa como distribuidor y
+Tequendama **cierra la venta de forma autónoma**: Colsubsidio actúa como distribuidor y
 la aseguradora emite. Antes de emitir se exige y registra el **consentimiento de
 habeas data** (Ley 1581/2012); se divulgan aseguradora, coberturas, exclusiones y
 prima; se informa el **derecho de retracto** (Ley 1480/2011); y el takeover humano

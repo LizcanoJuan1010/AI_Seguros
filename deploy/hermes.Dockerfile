@@ -1,4 +1,4 @@
-# Imagen del agente SegurIA sobre Hermes Agent (NousResearch).
+# Imagen del agente Tequendama sobre Hermes Agent (NousResearch).
 # Incluye OfficeCLI para presentaciones/documentos y las herramientas que Hermes usa
 # (node, ffmpeg, ripgrep, git). El workspace (SOUL.md, AGENTS.md, skills) se monta.
 FROM python:3.11-slim

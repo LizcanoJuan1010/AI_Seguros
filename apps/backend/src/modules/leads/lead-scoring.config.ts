@@ -53,6 +53,9 @@ export class LeadScoringConfigService {
         [Channel.EMAIL]: num('LEAD_SCORE_WEIGHT_CHANNEL_MID', 50),
         [Channel.WEB_CHAT]: num('LEAD_SCORE_WEIGHT_CHANNEL_MID', 50),
         [Channel.VOICE_CALL]: num('LEAD_SCORE_WEIGHT_CHANNEL_CALL', 100),
+        // Misma variable/peso que VOICE_CALL: para el scoring es la misma
+        // señal de compromiso (conversación de voz real con la IA).
+        [Channel.WEB_VOICE_CALL]: num('LEAD_SCORE_WEIGHT_CHANNEL_CALL', 100),
       },
       unassignedBonus: num('LEAD_SCORE_UNASSIGNED_BONUS', 150),
       urgencyMax: num('LEAD_SCORE_URGENCY_MAX', 250),
