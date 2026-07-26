@@ -1,0 +1,5 @@
+# Modelos ONNX de biometría (OpenCV Zoo). No se versionan (SFace ~37 MB): se
+# descargan con scripts/fetch_face_models.sh, se hornean en la imagen Docker, o
+# los baja identity.py en runtime al primer uso.
+face/*.onnx
+!.gitignore

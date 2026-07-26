@@ -28,10 +28,17 @@ export class ClaimsService {
         where,
         ...paginationArgs(query.page, query.limit),
         orderBy: { createdAt: query.order },
+        // El nombre del cliente permite enlazar el reclamo a su expediente 360
+        // desde el panel del gerente (pestaña Reclamos).
+        include: { customer: { select: { fullName: true } } },
       }),
       this.prisma.claim.count({ where }),
     ]);
-    return paginated(data, total, query.page, query.limit);
+    const mapped = data.map(({ customer, ...claim }) => ({
+      ...claim,
+      customerName: customer?.fullName ?? null,
+    }));
+    return paginated(mapped, total, query.page, query.limit);
   }
 
   findOne(tenantId: string, id: string) {

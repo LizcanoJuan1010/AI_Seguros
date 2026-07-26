@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import WebSocket from 'ws';
 import { CallStatus } from '../../generated/prisma/enums';
-import { LiveCallRelay } from './live-call.gateway';
+import { LiveCallGateway, LiveCallRelay } from './live-call.gateway';
 import { LiveCallService } from './live-call.service';
 
 /** Doble de `ws.WebSocket`: mismo protocolo basado en EventEmitter que usa
@@ -66,14 +66,22 @@ function makeRelay() {
     error: jest.fn(),
     log: jest.fn(),
   } as unknown as Logger;
+  // Doble del gateway: solo lo que el relay le pide (los cupos anónimos).
+  // `reservarCupoAnon` devuelve true por defecto; los tests que prueban el
+  // tope lo sobreescriben.
+  const gateway = {
+    reservarCupoAnon: jest.fn().mockReturnValue(true),
+    liberarCupoAnon: jest.fn(),
+  } as unknown as LiveCallGateway;
   const relay = new LiveCallRelay(
     client as unknown as WebSocket,
     jwt,
     config,
     liveCallService,
     logger,
+    gateway,
   );
-  return { relay, client, jwt, config, liveCallService };
+  return { relay, client, jwt, config, liveCallService, gateway };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -124,6 +132,115 @@ describe('LiveCallRelay — auth', () => {
     const messages = client.jsonMessages();
     expect(messages[messages.length - 1]).toMatchObject({ type: 'auth_error' });
     expect(client.closedCode).toBe(4401);
+  });
+});
+
+/** El cliente final entra sin JWT: la landing enlaza /llamada directo y su
+ *  identidad es el device_id anónimo del navegador. */
+describe('LiveCallRelay — auth anónima por device_id', () => {
+  const authAnon = (relay: LiveCallRelay, client: FakeSocket, deviceId: string) => {
+    relay.start();
+    client.emit(
+      'message',
+      Buffer.from(JSON.stringify({ type: 'auth', data: { device_id: deviceId } })),
+      false,
+    );
+  };
+
+  it('rechaza un device_id con formato inválido sin tocar Python', async () => {
+    const { relay, client, config } = makeRelay();
+    authAnon(relay, client, 'no-soy-un-device-id');
+    await tick();
+
+    const messages = client.jsonMessages();
+    expect(messages[messages.length - 1]).toMatchObject({ type: 'auth_error' });
+    expect(client.closedCode).toBe(4401);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(config.get).not.toHaveBeenCalled();
+  });
+
+  it('rechaza si el dispositivo ya tiene una llamada en curso', async () => {
+    const { relay, client, gateway, config } = makeRelay();
+    (gateway.reservarCupoAnon as jest.Mock).mockReturnValue(false);
+    authAnon(relay, client, 'dev_11111111-2222-3333-4444-555555555555');
+    await tick();
+
+    const messages = client.jsonMessages();
+    expect(messages[messages.length - 1]).toMatchObject({
+      type: 'auth_error',
+      data: { reason: expect.stringContaining('llamada en curso') },
+    });
+    expect(client.closedCode).toBe(4401);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(config.get).not.toHaveBeenCalled();
+  });
+
+  it('un device_id válido reserva cupo e intenta abrir el socket a Python', async () => {
+    const { relay, client, gateway, config } = makeRelay();
+    const deviceId = 'dev_11111111-2222-3333-4444-555555555555';
+    authAnon(relay, client, deviceId);
+    await tick();
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(gateway.reservarCupoAnon).toHaveBeenCalledWith(deviceId);
+    // Llegó hasta el dial a Python (que en el test falla y cierra con 1011):
+    // lo que importa es que la auth NO lo rechazó con 4401.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(config.get).toHaveBeenCalled();
+    expect(client.closedCode).not.toBe(4401);
+  });
+
+  it('devuelve el cupo al cerrarse, y una sola vez', () => {
+    const { relay, client, gateway } = makeRelay();
+    const deviceId = 'dev_11111111-2222-3333-4444-555555555555';
+    authAnon(relay, client, deviceId);
+
+    relay.handleClientDisconnect();
+    relay.handleClientDisconnect();
+    internals(relay).handlePythonDisconnect();
+
+    // Sin la idempotencia, un cierre en cascada descontaría de más y el
+    // dispositivo quedaría con cupos negativos (o bloqueado para siempre).
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(gateway.liberarCupoAnon).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(gateway.liberarCupoAnon).toHaveBeenCalledWith(deviceId);
+  });
+});
+
+describe('LiveCallGateway — topes de llamadas anónimas simultáneas', () => {
+  const nuevo = () =>
+    new LiveCallGateway(
+      { verifyAsync: jest.fn() } as unknown as JwtService,
+      { get: jest.fn() } as unknown as ConfigService,
+      {} as unknown as LiveCallService,
+    );
+
+  it('un mismo dispositivo no abre dos llamadas a la vez', () => {
+    const gw = nuevo();
+    expect(gw.reservarCupoAnon('dev_a')).toBe(true);
+    expect(gw.reservarCupoAnon('dev_a')).toBe(false);
+  });
+
+  it('liberar el cupo permite volver a llamar', () => {
+    const gw = nuevo();
+    gw.reservarCupoAnon('dev_a');
+    gw.liberarCupoAnon('dev_a');
+    expect(gw.reservarCupoAnon('dev_a')).toBe(true);
+  });
+
+  it('dispositivos distintos no se bloquean entre sí', () => {
+    const gw = nuevo();
+    expect(gw.reservarCupoAnon('dev_a')).toBe(true);
+    expect(gw.reservarCupoAnon('dev_b')).toBe(true);
+  });
+
+  it('hay un techo global aunque cada dispositivo sea distinto', () => {
+    const gw = nuevo();
+    for (let i = 0; i < 25; i++) {
+      expect(gw.reservarCupoAnon(`dev_${i}`)).toBe(true);
+    }
+    expect(gw.reservarCupoAnon('dev_uno_mas')).toBe(false);
   });
 });
 

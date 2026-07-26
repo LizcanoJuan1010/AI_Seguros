@@ -69,8 +69,20 @@ def test_settings_message_functions_have_no_client_side_field():
     settings = agent._settings_message()
 
     functions = settings["agent"]["think"]["functions"]
-    assert functions == voice_live.VOICE_AGENT_FUNCTIONS
+    assert functions == voice_live._VOICE_FUNCTIONS
     assert all("client_side" not in f for f in functions)
+
+
+def test_settings_message_excludes_tools_that_make_no_sense_by_voice():
+    """Las tools de gerente (que `_exec_tool` rechazaría en voz alta) y las
+    que piden file_id (imposible hablando) no viajan al Voice Agent."""
+    agent = voice_live.DeepgramVoiceAgent(system_prompt="x")
+
+    nombres = {f["name"] for f in agent._settings_message()["agent"]["think"]["functions"]}
+
+    assert nombres.isdisjoint(voice_live._NO_VOICE_TOOLS)
+    # Las del flujo de venta del cliente siguen presentes.
+    assert {"cotizar", "emitir_poliza", "capturar_datos_cliente"} <= nombres
 
 
 async def test_events_yields_audio_for_binary_messages():

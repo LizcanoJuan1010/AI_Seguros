@@ -33,7 +33,7 @@ if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   grep -q '^DEEPSEEK_API_KEY=' "$HERMES_HOME/.env" 2>/dev/null \
     || echo "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}" >> "$HERMES_HOME/.env"
   "$HB" config set model.provider deepseek || true
-  "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-chat}" || true
+  "$HB" config set model.default "${DEEPSEEK_MODEL:-deepseek-v4-flash}" || true
   # La imagen trae un base_url de OpenRouter que rompe la auth con la key de
   # DeepSeek (401): apúntalo siempre al endpoint oficial.
   "$HB" config set model.base_url "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}" || true

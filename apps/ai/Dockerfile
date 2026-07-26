@@ -1,7 +1,21 @@
 FROM python:3.12-slim
 WORKDIR /app
+# libglib2.0 + curl los requiere opencv-python-headless / la descarga de modelos
+# (verificación biométrica YuNet + SFace).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libglib2.0-0 curl && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Modelos ONNX de biometría (OpenCV Zoo) horneados en la imagen para no depender de
+# red en runtime. Si el build está offline, identity.py los descarga al primer uso.
+ENV SEGURIA_FACE_MODEL_DIR=/app/app/models/face
+RUN mkdir -p "$SEGURIA_FACE_MODEL_DIR" && \
+    for m in "face_detection_yunet/face_detection_yunet_2023mar.onnx" \
+             "face_recognition_sface/face_recognition_sface_2021dec.onnx"; do \
+        curl -fsSL "https://github.com/opencv/opencv_zoo/raw/main/models/$m" \
+             -o "$SEGURIA_FACE_MODEL_DIR/$(basename "$m")" || \
+        echo "aviso: no se pudo hornear $(basename "$m"); se descargará en runtime"; \
+    done
 COPY app ./app
 COPY data ./data
 # El servicio IA usa PostgreSQL EXCLUSIVAMENTE (cero SQLite). La conexión sale de

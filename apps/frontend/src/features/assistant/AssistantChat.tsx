@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../components/ui/Icon'
 import { Button } from '../../components/ui/Button'
 import { MessageMarkdown } from './MessageMarkdown'
@@ -13,6 +14,8 @@ import { useAssistantChat } from './useAssistantChat'
 import { ChatHistoryPanel } from './ChatHistoryPanel'
 import { authHeaders } from '../../lib/authFetch'
 import { downloadFile } from '../../lib/download'
+import { useAuth } from '../../contexts/AuthContext'
+import { isStaff } from '../../lib/roles'
 
 /** Tipos de documento aceptados en el chat (extractores del servicio IA). */
 const UPLOAD_ACCEPT =
@@ -365,7 +368,23 @@ function EmptyState({
 }
 
 export function AssistantChat() {
-  const { messages, isStreaming, sendMessage, sessionId } = useAssistantChat()
+  const {
+    messages,
+    isStreaming,
+    hydrated,
+    sendMessage,
+    sessionId,
+    chats,
+    newChat,
+    switchChat,
+    removeChat,
+    enterSession,
+  } = useAssistantChat()
+  const { user } = useAuth()
+  // Todos (cliente y staff) tienen su lista de conversaciones + "nueva
+  // conversación". Solo staff ve además la auditoría global (todas).
+  const canAudit = isStaff(user?.role)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<StagedDoc[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -378,6 +397,20 @@ export function AssistantChat() {
   const recogRef = useRef<SpeechRecognitionLike | null>(null)
   const spokenRef = useRef<Set<string>>(new Set())
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const autoAskRef = useRef(false)
+
+  // Pregunta pre-cargada desde el inicio (`/asistente?q=...`, cards de la
+  // landing): se envía una sola vez y se limpia la URL para que recargar o
+  // compartir el enlace del chat no la repita. Espera a `hydrated` — si se
+  // enviara antes de que cargue el historial inicial, la carga async lo
+  // sobrescribiría con [] (carrera).
+  useEffect(() => {
+    const q = searchParams.get('q')?.trim()
+    if (!q || !hydrated || autoAskRef.current) return
+    autoAskRef.current = true
+    setSearchParams({}, { replace: true })
+    void sendMessage(q)
+  }, [searchParams, setSearchParams, sendMessage, hydrated])
 
   /** Dictado: un toque escucha, otro detiene. El texto cae al input editable. */
   const toggleMic = () => {
@@ -570,9 +603,18 @@ export function AssistantChat() {
         </button>
         <button
           type="button"
+          onClick={newChat}
+          aria-label="Nueva conversación"
+          title="Nueva conversación"
+          className="flex size-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-variant hover:text-primary"
+        >
+          <Icon name="edit_square" className="text-[22px]" />
+        </button>
+        <button
+          type="button"
           onClick={() => setHistoryOpen(true)}
-          aria-label="Ver historial de conversaciones"
-          title="Historial de conversaciones"
+          aria-label="Ver conversaciones"
+          title="Conversaciones"
           className="flex size-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-variant hover:text-primary"
         >
           <Icon name="history" className="text-[22px]" />
@@ -582,7 +624,13 @@ export function AssistantChat() {
       <ChatHistoryPanel
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
-        currentSessionId={sessionId}
+        chats={chats}
+        activeId={sessionId}
+        onNewChat={newChat}
+        onSelectChat={switchChat}
+        onDeleteChat={removeChat}
+        canAudit={canAudit}
+        onEnterGlobal={enterSession}
       />
 
       {/* Mensajes */}
@@ -710,6 +758,14 @@ export function AssistantChat() {
           >
             <Icon name="send" filled className="text-[20px]" />
           </button>
+          <Link
+            to="/llamada"
+            aria-label="Iniciar llamada en vivo con la asesora IA"
+            title="Llamada en vivo con la asesora IA"
+            className="flex size-11 flex-shrink-0 items-center justify-center rounded-full bg-amber-cta text-primary shadow-md shadow-amber-cta/30 transition-all hover:scale-105 hover:shadow-lg hover:shadow-amber-cta/40 active:scale-95"
+          >
+            <Icon name="graphic_eq" filled className="text-[22px]" />
+          </Link>
         </div>
         <p className="mx-auto mt-1.5 max-w-3xl text-center text-label-sm text-outline">
           {uploadError ? (
@@ -720,8 +776,8 @@ export function AssistantChat() {
             `${readyCount} documento${readyCount > 1 ? 's' : ''} listo${readyCount > 1 ? 's' : ''} — escribe algo sobre ellos o presiona Enter para enviarlos`
           ) : (
             <>
-              Enter envía · Shift+Enter salto de línea · 📎 adjunta uno o varios
-              documentos (PDF, Word, Excel, imagen) y escribe sobre ellos
+              Enter envía · Shift+Enter salto de línea · 📎 adjunta documentos
+              (PDF, Word, Excel, imagen) · botón dorado = llamada en vivo
             </>
           )}
         </p>

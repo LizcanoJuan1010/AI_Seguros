@@ -1,9 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { Channel, LeadIntent, LeadStatus } from '../../generated/prisma/enums';
+import {
+  Channel,
+  InsuranceType,
+  LeadIntent,
+  LeadStatus,
+} from '../../generated/prisma/enums';
 import { Prisma } from '../../generated/prisma/client';
 import { paginated, paginationArgs } from '../../common/pagination';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AgentPerformanceQueryDto, HotLeadsQueryDto } from './dashboard.dto';
+import {
+  AgentPerformanceQueryDto,
+  CustomerPortfolioQueryDto,
+  HotLeadsQueryDto,
+  RiskLevel,
+} from './dashboard.dto';
 
 interface CountRow {
   total: bigint;
@@ -19,6 +29,84 @@ interface AgentPerformanceRow {
   conversion_pct: Prisma.Decimal | null;
   revenue_mensual_cop: Prisma.Decimal;
 }
+
+interface PortfolioSqlRow {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  document_id: string | null;
+  created_at: Date;
+  lead_id: string | null;
+  lead_status: LeadStatus | null;
+  intent: LeadIntent | null;
+  priority_score: number | null;
+  first_channel: Channel | null;
+  highest_channel: Channel | null;
+  insurance_type: InsuranceType | null;
+  last_customer_response_at: Date | null;
+  first_contact_at: Date | null;
+  lead_created_at: Date | null;
+  agent_name: string | null;
+  active_policies: bigint | null;
+  total_policies: bigint | null;
+  premium_cop: Prisma.Decimal | null;
+  open_claims: bigint | null;
+  total_claims: bigint | null;
+  max_fraud_score: Prisma.Decimal | null;
+  total_calls: bigint | null;
+  last_call_at: Date | null;
+}
+
+export interface PortfolioCustomer {
+  customerId: string;
+  fullName: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  documentId: string | null;
+  createdAt: Date;
+  lead: {
+    id: string;
+    status: LeadStatus;
+    intent: LeadIntent;
+    priorityScore: number;
+    firstChannel: Channel | null;
+    highestChannel: Channel | null;
+    insuranceType: InsuranceType | null;
+    agentName: string | null;
+    hoursSinceResponse: number | null;
+    uncontacted: boolean;
+  } | null;
+  policies: { active: number; total: number; monthlyPremiumCop: number };
+  claims: { open: number; total: number; maxFraudScore: number | null };
+  calls: { total: number; lastAt: Date | null };
+  risk: { level: RiskLevel; factors: string[] };
+}
+
+/** Adquisición de clientes por red social / canal de origen. */
+export interface AcquisitionSource {
+  source: string;
+  count: number;
+  pct: number;
+}
+
+/** Alerta crítica derivada del riesgo de un cliente (calculada, no persistida). */
+export interface DashboardAlert {
+  id: string;
+  severity: 'alta' | 'media';
+  title: string;
+  message: string;
+  customerId: string;
+  kind: string;
+}
+
+const HOURS_STALE_MEDIO = 24;
+const HOURS_STALE_ALTO = 48;
+const SCORE_URGENTE = 700;
+const SCORE_SEGUIMIENTO = 400;
+const FRAUD_THRESHOLD = 0.5;
 
 interface DailyKpisRow {
   llamadas_ia_hoy: bigint;
@@ -388,5 +476,285 @@ export class DashboardService {
       normal: b.normal,
       low: b.low,
     }));
+  }
+
+  /**
+   * Cartera de clientes 360° para el panel del gerente: cada cliente del
+   * tenant con su lead más relevante (el abierto más reciente, o el último
+   * cerrado), pólizas vigentes, reclamos, llamadas IA y un nivel de riesgo
+   * explicable derivado de las mismas señales del motor de scoring
+   * (priorityScore, silencio del cliente, fraude en reclamos). El `summary`
+   * son los totales del tenant SIN filtros; `data` sí respeta search/intent/
+   * status/insuranceType/risk y se pagina en memoria (cartera acotada a 500).
+   */
+  async customerPortfolio(tenantId: string, query: CustomerPortfolioQueryDto) {
+    const rows = await this.prisma.$queryRaw<PortfolioSqlRow[]>(Prisma.sql`
+      -- Los enums salen en su valor de BD (minúscula); UPPER() los alinea con
+      -- los nombres del cliente Prisma ('nuevo' -> 'NUEVO') que usa la API.
+      SELECT c.id, c.full_name, c.phone, c.email, c.city, c.document_id,
+             c.created_at,
+             l.id AS lead_id,
+             UPPER(l.status::text) AS lead_status,
+             UPPER(l.intent::text) AS intent,
+             l.priority_score,
+             UPPER(l.first_channel::text) AS first_channel,
+             UPPER(l.highest_channel::text) AS highest_channel,
+             UPPER(l.insurance_type::text) AS insurance_type,
+             l.last_customer_response_at,
+             l.first_contact_at, l.created_at AS lead_created_at,
+             u.full_name AS agent_name,
+             pol.active_policies, pol.total_policies, pol.premium_cop,
+             cl.open_claims, cl.total_claims, cl.max_fraud_score,
+             ac.total_calls, ac.last_call_at
+      -- Siempre "public.": el search_path del usuario de BD antepone el
+      -- esquema "seguria" (servicio IA), cuyo "leads" es otra tabla.
+      FROM public.customers c
+      LEFT JOIN LATERAL (
+        SELECT * FROM public.leads
+        WHERE customer_id = c.id
+        ORDER BY (status IN ('nuevo','contactado','cotizado','negociacion')) DESC,
+                 created_at DESC
+        LIMIT 1
+      ) l ON TRUE
+      LEFT JOIN public.users u ON u.id = l.agent_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE status = 'vigente') AS active_policies,
+               COUNT(*) AS total_policies,
+               COALESCE(SUM(monthly_premium_cop) FILTER (WHERE status = 'vigente'), 0)
+                 AS premium_cop
+        FROM public.policies WHERE customer_id = c.id
+      ) pol ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (
+                 WHERE status IN ('reportado','en_revision','docs_pendientes')
+               ) AS open_claims,
+               COUNT(*) AS total_claims,
+               MAX(fraud_score) AS max_fraud_score
+        FROM public.claims WHERE customer_id = c.id
+      ) cl ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS total_calls, MAX(started_at) AS last_call_at
+        FROM public.ai_calls WHERE customer_id = c.id
+      ) ac ON TRUE
+      WHERE c.team_id = ${tenantId}::uuid
+      ORDER BY l.priority_score DESC NULLS LAST, c.created_at DESC
+      LIMIT 500
+    `);
+
+    const customers = rows.map((row) => this.toPortfolioCustomer(row));
+    const summary = this.portfolioSummary(customers);
+
+    const search = query.search?.trim().toLowerCase();
+    const filtered = customers.filter((c) => {
+      if (query.intent && c.lead?.intent !== query.intent) return false;
+      if (query.status && c.lead?.status !== query.status) return false;
+      if (
+        query.insuranceType &&
+        c.lead?.insuranceType !== query.insuranceType
+      ) {
+        return false;
+      }
+      if (query.risk && c.risk.level !== query.risk) return false;
+      if (search) {
+        const haystack = [c.fullName, c.phone, c.email, c.documentId, c.city]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    });
+
+    const { skip, take } = paginationArgs(query.page, query.limit);
+    return {
+      summary,
+      ...paginated(
+        filtered.slice(skip, skip + take),
+        filtered.length,
+        query.page,
+        query.limit,
+      ),
+    };
+  }
+
+  /**
+   * Alertas críticas del panel: se derivan EN VIVO del riesgo de cada cliente
+   * (mismas reglas que la cartera — lead caliente sin contactar, prioridad
+   * urgente, cliente sin responder +48h, posible fraude). No se persisten:
+   * reflejan siempre el estado real del sistema. Una alerta por cliente en
+   * riesgo, con severidad según su nivel y las razones concatenadas.
+   */
+  async getAlerts(tenantId: string): Promise<{ data: DashboardAlert[] }> {
+    const portfolio = await this.customerPortfolio(tenantId, {
+      page: 1,
+      limit: 500,
+    } as CustomerPortfolioQueryDto);
+    const customers = portfolio.data as PortfolioCustomer[];
+
+    const alerts: DashboardAlert[] = [];
+    for (const c of customers) {
+      if (c.risk.level === 'bajo' || c.risk.factors.length === 0) continue;
+      const severity = c.risk.level === 'alto' ? 'alta' : 'media';
+      alerts.push({
+        id: c.customerId,
+        severity,
+        title:
+          severity === 'alta' ? 'Atención inmediata' : 'Requiere seguimiento',
+        message: `${c.fullName ?? 'Cliente sin nombre'} · ${c.risk.factors.join(
+          ' · ',
+        )}`,
+        customerId: c.customerId,
+        kind: 'riesgo_cliente',
+      });
+    }
+    // Las 'alta' primero; techo de 12 para no saturar el panel.
+    alerts.sort((a, b) =>
+      a.severity === b.severity ? 0 : a.severity === 'alta' ? -1 : 1,
+    );
+    return { data: alerts.slice(0, 12) };
+  }
+
+  /**
+   * Adquisición por red social / canal de origen: cuántos clientes llegaron
+   * por cada `referralSource`, ordenado de mayor a menor. Responde "¿qué redes
+   * traen más clientes?" para los KPIs del gerente.
+   */
+  async acquisitionBySource(
+    tenantId: string,
+  ): Promise<{ total: number; data: AcquisitionSource[] }> {
+    const groups = await this.prisma.customer.groupBy({
+      by: ['referralSource'],
+      where: { teamId: tenantId },
+      _count: true,
+    });
+    const total = groups.reduce((sum, g) => sum + g._count, 0);
+    const data: AcquisitionSource[] = groups
+      .map((g) => ({
+        source: g.referralSource ?? 'Sin registrar',
+        count: g._count,
+        pct: total ? g._count / total : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+    return { total, data };
+  }
+
+  private toPortfolioCustomer(row: PortfolioSqlRow): PortfolioCustomer {
+    const openLead =
+      row.lead_id != null &&
+      row.lead_status != null &&
+      OPEN_STATUSES.includes(row.lead_status);
+
+    const reference = row.last_customer_response_at ?? row.lead_created_at;
+    const hoursSinceResponse =
+      openLead && reference
+        ? Math.floor((Date.now() - reference.getTime()) / 3_600_000)
+        : null;
+    const uncontacted = openLead && row.first_contact_at == null;
+    const priorityScore = Number(row.priority_score ?? 0);
+    const maxFraudScore =
+      row.max_fraud_score != null ? Number(row.max_fraud_score) : null;
+    const openClaims = Number(row.open_claims ?? 0);
+
+    // Riesgo explicable: cada factor es una frase lista para el tooltip del
+    // gerente. "Alto" = riesgo de perder la venta o fraude probable.
+    const alto: string[] = [];
+    const medio: string[] = [];
+    if (openLead) {
+      if (row.intent === LeadIntent.CALIENTE && uncontacted) {
+        alto.push('Lead caliente sin primer contacto');
+      }
+      if (priorityScore > SCORE_URGENTE) {
+        alto.push(`Prioridad urgente en cola (score ${priorityScore})`);
+      } else if (priorityScore >= SCORE_SEGUIMIENTO) {
+        medio.push(`En cola de seguimiento (score ${priorityScore})`);
+      }
+      if (hoursSinceResponse != null) {
+        if (hoursSinceResponse > HOURS_STALE_ALTO) {
+          alto.push(`Cliente sin responder hace ${hoursSinceResponse} h`);
+        } else if (hoursSinceResponse > HOURS_STALE_MEDIO) {
+          medio.push(`Cliente sin responder hace ${hoursSinceResponse} h`);
+        }
+      }
+    }
+    if (maxFraudScore != null && maxFraudScore >= FRAUD_THRESHOLD) {
+      alto.push(`Posible fraude en reclamo (score ${maxFraudScore.toFixed(2)})`);
+    } else if (openClaims > 0) {
+      medio.push(`${openClaims} reclamo(s) abierto(s) en gestión`);
+    }
+
+    const level: RiskLevel = alto.length ? 'alto' : medio.length ? 'medio' : 'bajo';
+
+    return {
+      customerId: row.id,
+      fullName: row.full_name,
+      phone: row.phone,
+      email: row.email,
+      city: row.city,
+      documentId: row.document_id,
+      createdAt: row.created_at,
+      lead:
+        row.lead_id && row.lead_status && row.intent
+          ? {
+              id: row.lead_id,
+              status: row.lead_status,
+              intent: row.intent,
+              priorityScore,
+              firstChannel: row.first_channel,
+              highestChannel: row.highest_channel,
+              insuranceType: row.insurance_type,
+              agentName: row.agent_name,
+              hoursSinceResponse,
+              uncontacted,
+            }
+          : null,
+      policies: {
+        active: Number(row.active_policies ?? 0),
+        total: Number(row.total_policies ?? 0),
+        monthlyPremiumCop: Number(row.premium_cop ?? 0),
+      },
+      claims: { open: openClaims, total: Number(row.total_claims ?? 0), maxFraudScore },
+      calls: { total: Number(row.total_calls ?? 0), lastAt: row.last_call_at },
+      risk: { level, factors: [...alto, ...medio] },
+    };
+  }
+
+  private portfolioSummary(customers: PortfolioCustomer[]) {
+    const open = customers.filter(
+      (c) => c.lead && OPEN_STATUSES.includes(c.lead.status),
+    );
+    const byIntent = { caliente: 0, tibio: 0, frio: 0 };
+    for (const c of open) {
+      if (c.lead!.intent === LeadIntent.CALIENTE) byIntent.caliente += 1;
+      else if (c.lead!.intent === LeadIntent.TIBIO) byIntent.tibio += 1;
+      else byIntent.frio += 1;
+    }
+    const byRisk = { alto: 0, medio: 0, bajo: 0 };
+    for (const c of customers) byRisk[c.risk.level] += 1;
+
+    return {
+      totalCustomers: customers.length,
+      openLeads: open.length,
+      hotUncontacted: open.filter(
+        (c) => c.lead!.intent === LeadIntent.CALIENTE && c.lead!.uncontacted,
+      ).length,
+      unresponsive48h: open.filter(
+        (c) =>
+          c.lead!.hoursSinceResponse != null &&
+          c.lead!.hoursSinceResponse > HOURS_STALE_ALTO,
+      ).length,
+      activePolicies: customers.reduce((s, c) => s + c.policies.active, 0),
+      monthlyPremiumCop: customers.reduce(
+        (s, c) => s + c.policies.monthlyPremiumCop,
+        0,
+      ),
+      openClaims: customers.reduce((s, c) => s + c.claims.open, 0),
+      fraudSuspects: customers.filter(
+        (c) =>
+          c.claims.maxFraudScore != null &&
+          c.claims.maxFraudScore >= FRAUD_THRESHOLD,
+      ).length,
+      byIntent,
+      byRisk,
+    };
   }
 }

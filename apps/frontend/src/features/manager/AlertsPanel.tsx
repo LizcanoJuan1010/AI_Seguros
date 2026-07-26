@@ -14,12 +14,17 @@ export function AlertsPanel({ items }: Props) {
         <h3 className="text-sm font-bold text-on-secondary-fixed">
           Alertas Críticas
         </h3>
+        <span className="ml-auto rounded-full bg-on-secondary-fixed/15 px-2 py-0.5 text-[11px] font-bold text-on-secondary-fixed">
+          {items.length}
+        </span>
       </div>
-      <div className="flex flex-col gap-3 p-4">
+      {/* Ancho completo: las alertas se reparten en columnas para llenar la
+          caja en vez de apilarse en una sola tira larga. */}
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {items.map((alert) => (
           <div
             key={alert.id}
-            className={`rounded-lg border-l-4 p-3 ${
+            className={`flex flex-col rounded-lg border-l-4 p-3 ${
               alert.tone === 'amber'
                 ? 'border-amber-cta bg-amber-50'
                 : 'border-error bg-error-container/40'

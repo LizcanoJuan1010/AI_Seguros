@@ -15,9 +15,8 @@ Twilio en trial solo marca a números verificados a mano. Endurecer esto es
 trabajo aparte, fuera de alcance de esta prueba.
 """
 import logging
-import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from .config import DEMO_TENANT_ID, ELEVENLABS_LANDING_AGENT_ID, PUBLIC_BASE_URL
@@ -72,49 +71,66 @@ class CallbackRequest(BaseModel):
     consent: bool = False
 
 
-def _normaliza_e164(telefono: str) -> str | None:
-    """Acepta "300 123 4567" o "+57 300 123 4567" → "+573001234567".
-    Colombia-only (celular de 10 dígitos que empieza en 3) — coincide con el
-    "+57" fijo que ya muestra CallMeBack.tsx junto al campo del formulario."""
-    digitos = re.sub(r"\D", "", telefono or "")
-    if digitos.startswith("57") and len(digitos) == 12 and digitos[2] == "3":
-        return f"+{digitos}"
-    if len(digitos) == 10 and digitos.startswith("3"):
-        return f"+57{digitos}"
-    return None
-
-
 @router.post("/api/callback/solicitar")
-def solicitar_callback(req: CallbackRequest) -> dict:
+def solicitar_callback(req: CallbackRequest, request: Request) -> dict:
     """Contrato estable con CallMeBack.tsx: SIEMPRE 200, `ok=false` +
     `mensaje` para que los rechazos de validación se pinten bajo el campo sin
-    sacar al visitante del formulario (nunca un HTTPException 4xx aquí)."""
+    sacar al visitante del formulario (nunca un HTTPException 4xx aquí).
+
+    La validación del número, el rastro auditable del consentimiento y los
+    topes por hora viven en `callback.py` — esta puerta es anónima y sin eso
+    sirve para hostigar a un tercero con nuestra cuenta de telefonía pagando."""
+    from . import callback as guard
+    from .db import get_conn
+
     if not req.consent:
         return {"ok": False, "mensaje": "Necesitamos tu autorización para poder llamarte "
                                         "(Ley 1581 de 2012)."}
-    phone = _normaliza_e164(req.telefono)
-    if not phone:
+    phone = guard.normalizar_telefono(req.telefono)
+    if not phone or not guard.es_celular_colombiano(phone):
         return {"ok": False, "mensaje": "Revisa tu número — debe ser un celular "
                                         "colombiano de 10 dígitos."}
 
-    _enviar_ficha_previa(phone, req.interes, req.nombre)
+    # Solo los ramos del formulario: nada de texto libre del visitante hacia
+    # las `dynamic_variables` que recibe el agente de voz.
+    interes = req.interes if req.interes in guard.INTERESES else ""
+    nombre = (req.nombre or "").strip()[:80]
+    device_id = (req.device_id or "").strip()
+    ip = request.client.host if request.client else ""
 
-    from . import calls
+    conn = get_conn()
     try:
-        resultado = calls.iniciar_llamada(
-            phone, DEMO_TENANT_ID,
-            dynamic_variables={
-                "nombre_cliente": (req.nombre or "").strip(),
-                "interes_declarado": req.interes or "",
-                "device_id": req.device_id or "",
-                "origen": "landing_callback",
-            },
-            agent_id=ELEVENLABS_LANDING_AGENT_ID,
-        )
-    except Exception:
-        log.exception("no se pudo iniciar la llamada de prueba desde la landing")
-        return {"ok": False, "mensaje": "No pudimos iniciar la llamada en este momento; "
-                                       "intenta de nuevo en unos minutos."}
+        bloqueo = guard.limite_excedido(conn, phone=phone, device_id=device_id, ip=ip)
+        if bloqueo:
+            return {"ok": False, "mensaje": bloqueo}
+        req_id = guard.registrar(
+            conn, phone=phone, nombre=nombre or None, interes=interes or None,
+            device_id=device_id or None, tenant_id=DEMO_TENANT_ID, consent=True,
+            ip=ip or None, user_agent=request.headers.get("user-agent", "")[:300] or None,
+            status="solicitada")
+
+        _enviar_ficha_previa(phone, interes, nombre)
+
+        from . import calls
+        try:
+            resultado = calls.iniciar_llamada(
+                phone, DEMO_TENANT_ID,
+                dynamic_variables={
+                    "nombre_cliente": nombre,
+                    "interes_declarado": guard.INTERESES.get(interes, ""),
+                    "device_id": device_id,
+                    "origen": "landing_callback",
+                },
+                agent_id=ELEVENLABS_LANDING_AGENT_ID,
+            )
+        except Exception:
+            log.exception("no se pudo iniciar la llamada de prueba desde la landing")
+            guard.cerrar(conn, req_id, {"ok": False, "error": "excepción al llamar"})
+            return {"ok": False, "mensaje": "No pudimos iniciar la llamada en este momento; "
+                                            "intenta de nuevo en unos minutos."}
+        guard.cerrar(conn, req_id, resultado)
+    finally:
+        conn.close()
 
     if not resultado.get("ok", True):
         # p.ej. fuera de la ventana legal de contacto (Ley 2300/2023)
@@ -124,4 +140,5 @@ def solicitar_callback(req: CallbackRequest) -> dict:
     mensaje = ("Solicitud registrada (modo demo: no se marca de verdad todavía)."
               if resultado.get("demo") else
               "Te estamos llamando — contesta en unos segundos.")
-    return {"ok": True, "demo": bool(resultado.get("demo")), "mensaje": mensaje}
+    return {"ok": True, "demo": bool(resultado.get("demo")), "solicitud_id": req_id,
+            "mensaje": mensaje}

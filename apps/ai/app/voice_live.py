@@ -18,6 +18,7 @@ openspec/changes/voice-agent-spike/, openspec/changes/voice-agent-migration/desi
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import AsyncIterator, Optional
 
@@ -33,6 +34,19 @@ log = logging.getLogger("seguria.voice_live")
 router = APIRouter()
 
 _AUTH_TIMEOUT_S = 10
+# Handshake contra Deepgram (Welcome/SettingsApplied). Sin límite, una cuenta
+# sin el Agents Platform habilitado (acepta el WS pero nunca contesta) dejaba
+# la llamada colgada PARA SIEMPRE en "Conectando…" — exactamente el escenario
+# "recién puse la API key". El spike de referencia usaba 10 s.
+_CONNECT_TIMEOUT_S = 10
+
+# Herramientas que NO se le ofrecen al agente de voz. Las de gerente porque
+# `_exec_tool` igual las rechaza ("acceso denegado") y el agente leería ese
+# rechazo en voz alta; `analizar_documento` porque pide un file_id que en una
+# llamada no existe (no hay forma de subir archivos hablando).
+_NO_VOICE_TOOLS = {"obtener_insights", "listar_leads", "crear_campana_marketing",
+                   "solicitar_informe_gerencial", "analizar_documento"}
+_VOICE_FUNCTIONS = [f for f in VOICE_AGENT_FUNCTIONS if f.get("name") not in _NO_VOICE_TOOLS]
 
 
 def _parse_sse_frame(frame: str) -> Optional[tuple[str, dict]]:
@@ -83,12 +97,17 @@ class DeepgramVoiceAgent:
     def __init__(self, *, system_prompt: str) -> None:
         self._ws = None
         self._system_prompt = system_prompt
+        # Última vez que salió audio real hacia Deepgram — lo usa el keepalive
+        # para mandar silencio SOLO cuando el flujo se detuvo (mute, pestaña en
+        # background). Inyectar silencio entre chunks reales metería artefactos.
+        self._last_audio = 0.0
+        self._keepalive_task: Optional[asyncio.Task] = None
 
     def _settings_message(self) -> dict:
         think: dict = {
             "provider": {"type": "groq", "model": config.DEEPSEEK_MODEL},
             "prompt": self._system_prompt,
-            "functions": VOICE_AGENT_FUNCTIONS,
+            "functions": _VOICE_FUNCTIONS,
         }
         if config.DEEPSEEK_API_KEY:
             # `type: "groq"` es arbitrario entre los no-managed: Deepgram
@@ -117,12 +136,39 @@ class DeepgramVoiceAgent:
         self._ws = await websockets.connect(
             _VOICE_AGENT_URL,
             additional_headers={"Authorization": f"Token {config.DEEPGRAM_API_KEY}"},
+            open_timeout=_CONNECT_TIMEOUT_S,
         )
-        await self._ws.recv()  # Welcome — no trae nada que necesitemos.
+        # Welcome — no trae nada que necesitemos, pero SÍ tiene que llegar.
+        await asyncio.wait_for(self._ws.recv(), timeout=_CONNECT_TIMEOUT_S)
         await self._ws.send(json.dumps(self._settings_message()))
-        reply = json.loads(await self._ws.recv())
+        reply = json.loads(await asyncio.wait_for(self._ws.recv(), timeout=_CONNECT_TIMEOUT_S))
         if reply.get("type") != "SettingsApplied":
             raise RuntimeError(f"Voice Agent rechazó la configuración: {reply}")
+        self._last_audio = time.monotonic()
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self) -> None:
+        """Deepgram corta con CLIENT_MESSAGE_TIMEOUT a los ~10-12 s sin audio
+        (confirmado empíricamente en el spike — ver design.md de
+        voice-agent-migration). Con el mic silenciado (o la pestaña en
+        background) el navegador deja de mandar frames y la llamada moría
+        sola. Cada 4 s sin audio real se manda ~100 ms de silencio linear16
+        @16 kHz — el mecanismo que el spike verificó, a diferencia del
+        mensaje KeepAlive JSON, que no se probó contra la API real."""
+        silence = b"\x00" * 3200  # 100 ms de PCM16 mono a 16 kHz
+        try:
+            while self._ws is not None:
+                await asyncio.sleep(2)
+                if self._ws is None:
+                    return
+                if time.monotonic() - self._last_audio > 4:
+                    try:
+                        await self._ws.send(silence)
+                        self._last_audio = time.monotonic()
+                    except ConnectionClosed:
+                        return
+        except asyncio.CancelledError:
+            return
 
     async def send_audio(self, chunk: bytes) -> None:
         """Deepgram puede cerrar la conexión de su lado en cualquier
@@ -134,6 +180,7 @@ class DeepgramVoiceAgent:
             return
         try:
             await self._ws.send(chunk)
+            self._last_audio = time.monotonic()
         except ConnectionClosed:
             pass
 
@@ -158,6 +205,9 @@ class DeepgramVoiceAgent:
             pass
 
     async def close(self) -> None:
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
         if self._ws is None:
             return
         try:
@@ -209,19 +259,41 @@ class VoiceSession:
         self.assistant_speaking = False
         self.turns_completed = 0
         self._agent: Optional[DeepgramVoiceAgent] = None
+        # Texto acumulado del turno actual del asistente — viaja en `turn_end`
+        # para que Nest persista el lado de la IA (CallMessage). Sin esto, en
+        # Postgres solo quedaba el lado del cliente.
+        self._reply_text = ""
+        # Refs de tasks fire-and-forget (_remember, tools): sin referencia
+        # fuerte, el GC puede matarlas a mitad de camino.
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     async def _send_json(self, type_: str, data: dict) -> None:
         await self.ws.send_json({"type": type_, "data": data})
 
     async def authenticate(self) -> bool:
-        """Primer frame esperado: `{"type":"auth","data":{"token":...}}`."""
+        """Primer frame: `{"type":"auth","data":{...}}` con `token` (staff) o
+        `device_id` (cliente final anónimo).
+
+        El cliente final no tiene usuario — su identidad es el `device_id` del
+        navegador, el mismo que ya ancla memoria y leads en el chat web, así
+        que la llamada continúa la conversación que esa persona ya tuvo. Quien
+        decide si el anónimo puede entrar es el gateway de Nest (valida formato
+        y topes, ver live-call.gateway.ts): aquí solo se confía en lo que llega
+        de él, igual que el resto de rutas servicio-a-servicio del stack."""
         try:
             raw = await asyncio.wait_for(self.ws.receive_json(), timeout=_AUTH_TIMEOUT_S)
             if raw.get("type") != "auth":
                 raise ValueError("se esperaba el frame 'auth' primero")
-            token = (raw.get("data") or {}).get("token", "")
-            claims = auth.decode_token(token)
-            if not claims:
+            data = raw.get("data") or {}
+            token = data.get("token", "")
+            device_id = str(data.get("device_id") or "").strip()
+            claims = auth.decode_token(token) if token else None
+            if not claims and not device_id:
                 raise ValueError("token inválido o expirado")
         except Exception as exc:
             try:
@@ -230,9 +302,14 @@ class VoiceSession:
                 pass
             return False
 
-        self.user_id = f"web:{claims['sub']}"
-        self.tenant_id = claims.get("teamId") or config.DEMO_TENANT_ID
-        self.role = "gerente" if claims.get("role") in {"GERENTE", "ADMIN"} else "cliente"
+        if claims:
+            self.user_id = f"web:{claims['sub']}"
+            self.tenant_id = claims.get("teamId") or config.DEMO_TENANT_ID
+            self.role = "gerente" if claims.get("role") in {"GERENTE", "ADMIN"} else "cliente"
+        else:
+            self.user_id = f"web:{device_id}"
+            self.tenant_id = config.DEMO_TENANT_ID
+            self.role = "cliente"
         await self._send_json("auth_ok", {})
         return True
 
@@ -267,6 +344,11 @@ class VoiceSession:
         )
         for task in pending:
             task.cancel()
+        # Espera la cancelación de verdad: sin esto, _cleanup cerraba el WS
+        # con la task aún en vuelo ("Task was destroyed but it is pending").
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in list(self._bg_tasks):
+            task.cancel()
         await self._cleanup()
 
     async def _client_loop(self) -> None:
@@ -284,7 +366,12 @@ class VoiceSession:
                 text = message.get("text")
                 if text is None:
                     continue
-                control = json.loads(text)
+                try:
+                    control = json.loads(text)
+                except json.JSONDecodeError:
+                    # Un frame malformado no debe tumbar la llamada entera.
+                    log.debug("frame de control no-JSON ignorado")
+                    continue
                 ctype = control.get("type")
                 if ctype == "mute":
                     self.muted = True
@@ -316,28 +403,56 @@ class VoiceSession:
             content = payload.get("content", "")
             if role == "user":
                 await self._send_json("transcript_final", {"text": content})
+                # `thinking` resetea el buffer del subtítulo en el frontend
+                # (useLiveVoiceCall): sin esto, el caption CONCATENABA todos
+                # los turnos del asistente desde el inicio de la llamada.
+                await self._send_json("thinking", {})
                 if self.assistant_speaking:
                     await self._barge_in()
-                asyncio.create_task(_remember(self.user_id, content, self.tenant_id))
+                self._spawn(_remember(self.user_id, content, self.tenant_id))
             elif role == "assistant":
+                self._reply_text += content
                 await self._send_json("token", {"text": content})
             return
         if kind == "UserStartedSpeaking":
             if self.assistant_speaking:
                 await self._barge_in()
             return
+        if kind == "AgentStartedSpeaking":
+            # Sin esta transición el barge-in estaba MUERTO (assistant_speaking
+            # jamás pasaba a True) y la UI nunca mostraba a la IA hablando.
+            self.assistant_speaking = True
+            await self._send_json("assistant_speaking_start", {})
+            return
+        if kind == "AgentAudioDone":
+            self.assistant_speaking = False
+            self.turns_completed += 1
+            await self._send_json("assistant_speaking_end", {})
+            # Nest espía `turn_end` para persistir el turno de la IA
+            # (recordAssistantTurn) — sin esto el transcript quedaba a medias.
+            await self._send_json("turn_end", {"reply": self._reply_text})
+            self._reply_text = ""
+            return
         if kind == "FunctionCallRequest":
             for call in payload.get("functions", []):
-                await self._handle_function_call(call)
+                # En task aparte: una tool lenta (emitir_poliza -> HTTP 8 s)
+                # ejecutada en serie BLOQUEABA el relay de audio — el relleno
+                # hablado del agente se cortaba a mitad de palabra.
+                self._spawn(self._handle_function_call(call))
+            return
+        if kind == "Warning":
+            # Cuota, modelo deprecado, voz degradada… — antes se tragaba en
+            # silencio y el síntoma aparecía después sin pista alguna.
+            log.warning("Voice Agent warning: %s", payload)
             return
         if kind == "Error":
             log.warning("Voice Agent error: %s", payload)
             await self._send_json("error", {
                 "message": payload.get("description") or "Error del agente de voz"})
             return
-        # AgentAudioDone (fin de turno hablado), History, Welcome,
-        # SettingsApplied, etc.: sin acción por ahora — ver Open Questions
-        # en openspec/changes/voice-agent-migration/design.md.
+        if kind in {"Welcome", "SettingsApplied", "History"}:
+            return
+        log.debug("evento del Voice Agent sin manejar: %s", kind)
 
     async def _handle_function_call(self, call: dict) -> None:
         from .assistant import _checkout_frames, _summarize_tool

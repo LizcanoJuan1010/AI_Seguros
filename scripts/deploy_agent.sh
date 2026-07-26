@@ -27,8 +27,8 @@ done
 echo "==> Proveedor DeepSeek (config.yaml)"
 if grep -q '^DEEPSEEK_API_KEY=..' "$HH/.env" 2>/dev/null; then
   hermes config set model.provider deepseek || true
-  hermes config set model.default "${DEEPSEEK_MODEL:-deepseek-chat}" || true
-  echo "   provider=deepseek, default=${DEEPSEEK_MODEL:-deepseek-chat}"
+  hermes config set model.default "${DEEPSEEK_MODEL:-deepseek-v4-flash}" || true
+  echo "   provider=deepseek, default=${DEEPSEEK_MODEL:-deepseek-v4-flash}"
 else
   echo "   (sin DEEPSEEK_API_KEY en $HH/.env — añádela y re-ejecuta, o configúrala a mano)"
 fi

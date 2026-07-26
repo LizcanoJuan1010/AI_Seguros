@@ -1,6 +1,7 @@
 """Motor de versionado/QA de prompts (adaptado de docket-motor,
 https://github.com/neylinsomne/docket-motor, bases 01-06) para los prompts de
-Tequendama (`SYSTEM_PROMPT_CLIENTE`/`SYSTEM_PROMPT_GERENTE` en `agent_core.py`).
+Tequendama (`SYSTEM_PROMPT_WEB`/`SYSTEM_PROMPT_WHATSAPP`/`SYSTEM_PROMPT_GERENTE`
+en `agent_core.py`).
 
 Reusa la misma base de Supabase que el resto de Tequendama, en un schema
 propio (`docket`, ver la migración `20260724160000_docket_engine_core`) —

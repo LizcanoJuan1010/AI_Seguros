@@ -35,6 +35,9 @@ class StreamChatRequest(BaseModel):
     session_id: str = Field(..., description="Identificador estable de la conversación")
     message: str
     phone: str | None = Field(None, description="WhatsApp del cliente si se conoce")
+    device_id: str | None = Field(
+        None, description="Identidad durable del navegador del cliente anónimo "
+                          "(la 'cuenta' sin registro: ancla memoria y leads entre visitas)")
     manager_key: str | None = Field(None, description="API key para actuar como gerente")
 
 
@@ -252,6 +255,10 @@ async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
     # en vivo ("voice", Camilo — cierra la venta igual que WhatsApp). WhatsApp
     # en sí no pasa por acá (entra por `agent_core.run_agent`).
     system = _select_system_prompt(role, channel)
+    # Mismo bloque de conocimiento de gerencia que inyecta agent_core.run_agent
+    # (los dos runners deben responder con la misma información del negocio).
+    from .knowledge import knowledge_context
+    system += await asyncio.to_thread(knowledge_context, tenant_id)
     if mem_ctx:
         system = f"{system}\n\n{mem_ctx}"
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
@@ -660,7 +667,9 @@ async def _run_stream(req: StreamChatRequest, tenant_id: str, role: str) -> Asyn
     # WhatsApp autorizado sigue pudiendo elevar a gerente por compatibilidad.
     if role != "gerente" and phone and phone in MANAGER_PHONES:
         role = "gerente"
-    user_id = phone or f"web:{session_id}"
+    # Identidad del turno: teléfono real > device_id (durable entre visitas y
+    # conversaciones) > session_id (último recurso, muere con la conversación).
+    user_id = phone or f"web:{req.device_id or session_id}"
     out: dict = {"reply": ""}
     try:
         yield _frame("thinking", {"text": "Analizando tu mensaje..."})

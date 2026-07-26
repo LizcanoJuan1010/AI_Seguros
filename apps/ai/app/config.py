@@ -167,23 +167,14 @@ FRONTEND_PUBLIC_URL = os.getenv("FRONTEND_PUBLIC_URL", "").rstrip("/")
 # la llamada en vivo /ws/voice/live (voice_live.py). Sin DEEPGRAM_API_KEY corre
 # en modo demo (mismo criterio que el resto).
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
-# `nova-3` (default, /v1/listen) vs `flux-general-multi` (/v2/listen,
-# detección de turno SEMÁNTICA en vez de silencio — ver
-# voice_live.DeepgramSTT.transcripts()). Cambiar de uno a otro es solo esta
-# env var, sin tocar código — dejamos `nova-3` por defecto porque el
-# comportamiento exacto de `transcript` en los eventos de Flux (¿acumulado
-# por turno o incremental?) no se pudo verificar contra una llamada real en
-# esta sesión; probarlo primero en un tenant/subset antes de activarlo global.
+# STT/idioma para las tools de notas de voz (app/voice_deepgram.py, REST
+# /v1/listen). OJO: la LLAMADA EN VIVO (voice_live.py, Voice Agent) NO lee
+# estas vars — hardcodea nova-3 + "es" en su Settings, que es la combinación
+# verificada contra la API real. (Aquí vivían DEEPGRAM_LANGUAGE y
+# DEEPGRAM_ENDPOINTING_MS con comentarios que referían a DeepgramSTT, clase
+# eliminada en la migración al Voice Agent: config muerta, retirada.)
 DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
-# Preferí es-419 (LATAM) para la llamada en vivo; DEEPGRAM_LANGUAGE es el
-# alias que usa voice_live.py (cae a DEEPGRAM_STT_LANGUAGE si no se setea).
-# Con modelos flux-* se manda como `language_hint` (multilenguaje).
 DEEPGRAM_STT_LANGUAGE = os.getenv("DEEPGRAM_STT_LANGUAGE", "es-419")
-DEEPGRAM_LANGUAGE = os.getenv("DEEPGRAM_LANGUAGE", DEEPGRAM_STT_LANGUAGE)
-# Silencio (ms) para cerrar la frase del usuario en /ws/voice/live con
-# modelos nova-*; sin efecto con flux-* (la detección de turno es semántica).
-# Más bajo = responde antes; demasiado bajo corta a mitad de frase.
-DEEPGRAM_ENDPOINTING_MS = int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "200"))
 DEEPGRAM_VOICE_MODEL = os.getenv("DEEPGRAM_VOICE_MODEL", "aura-2-celeste-es")
 
 # Motor de versionado/QA de prompts (docket-motor, adaptado — ver
@@ -215,6 +206,23 @@ BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Protección inteligente inspirada en
 BRAND_COLOR = os.getenv("BRAND_COLOR", "#083911")  # verde primario del frontend
 BRAND_ACCENT_COLOR = os.getenv("BRAND_ACCENT_COLOR", "#FFBF00")
 BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
+
+# Gate de cumplimiento en la emisión. true (default) = sin los datos obligatorios del
+# producto (SARLAFT, asegurabilidad, beneficiarios) NO se emite la póliza. false = solo
+# advierte (modo laxo para pruebas). La identidad y la firma se validan aparte
+# (app/kyc.py con Didit, app/esign.py). Ver agent_core._emitir_poliza.
+KYC_ENFORCE = os.getenv("SEGURIA_KYC_ENFORCE", "true").lower() not in ("0", "false", "no")
+
+# ---------- "Te llamamos" desde la landing pública (ver app/callback.py) ----------
+# Indicativo que se asume cuando el visitante escribe su celular sin "+".
+DEFAULT_COUNTRY_CODE = os.getenv("SEGURIA_DEFAULT_COUNTRY_CODE", "57")
+# Topes por hora del endpoint anónimo. Son la ÚNICA contención contra el abuso
+# hasta que exista verificación por OTP — no los subas sin agregarla antes.
+CALLBACK_MAX_POR_TELEFONO = int(os.getenv("SEGURIA_CALLBACK_MAX_TELEFONO", "3"))
+CALLBACK_MAX_POR_DISPOSITIVO = int(os.getenv("SEGURIA_CALLBACK_MAX_DISPOSITIVO", "5"))
+CALLBACK_MAX_POR_IP = int(os.getenv("SEGURIA_CALLBACK_MAX_IP", "20"))
+# El horario NO se configura acá: `calls._dentro_ventana_legal` aplica la Ley
+# 2300/2023 (L-V 7-19, sáb 8-15, nunca domingo) a TODA llamada saliente.
 
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)

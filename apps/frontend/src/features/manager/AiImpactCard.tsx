@@ -80,7 +80,7 @@ export function AiImpactCard({ data }: Props) {
           className="rounded-lg bg-amber-cta/20 p-1.5 text-primary"
         />
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 xs:grid-cols-2 lg:grid-cols-4">
         {stats.map((s) => (
           <div key={s.id} className="flex flex-col gap-1">
             <span className="flex items-center gap-1 text-xs font-medium text-on-surface-variant">

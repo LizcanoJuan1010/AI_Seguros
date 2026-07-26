@@ -74,3 +74,26 @@ def _seguria_test_schema():
 
     with psycopg.connect(_DSN, autocommit=True) as conn:
         conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(ident))
+
+
+@pytest.fixture(autouse=True)
+def _sin_claves_de_voz(monkeypatch):
+    """Neutraliza las claves reales del .env (config.py hace load_dotenv al
+    importar): un test futuro que ejercite /ws/voice/live sin monkeypatchear
+    intentaría un handshake REAL contra Deepgram. Los tests que necesitan
+    claves fake las setean explícitamente encima de esto."""
+    from app import config as _config
+    monkeypatch.setattr(_config, "DEEPGRAM_API_KEY", "", raising=False)
+    monkeypatch.setattr(_config, "DEEPSEEK_API_KEY", "", raising=False)
+
+
+@pytest.fixture
+def db_conn():
+    """Conexión al esquema de test, para los tests que verifican persistencia
+    directamente (más barato y determinista que ir por el endpoint)."""
+    from app.db import get_conn
+    conn = get_conn()
+    try:
+        yield conn
+    finally:
+        conn.close()

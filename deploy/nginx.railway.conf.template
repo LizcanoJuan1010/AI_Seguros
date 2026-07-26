@@ -48,6 +48,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 
     # Servicio IA (Python). Incluye el chat por SSE. El WS de la llamada en
@@ -63,6 +64,7 @@ server {
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
         proxy_set_header Connection '';
         proxy_http_version 1.1;
     }

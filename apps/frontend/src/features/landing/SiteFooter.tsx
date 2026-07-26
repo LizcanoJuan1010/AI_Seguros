@@ -1,5 +1,10 @@
 import { Link } from 'react-router-dom'
 import { Icon } from '../../components/ui/Icon'
+import { WhatsAppIcon } from '../../components/ui/WhatsAppIcon'
+import {
+  ADVISOR_WHATSAPP_DISPLAY,
+  ADVISOR_WHATSAPP_URL,
+} from '../../lib/contact'
 
 const productLinks = [
   { label: 'Seguro de Vida', href: '#planes' },
@@ -47,7 +52,7 @@ export function SiteFooter() {
             {productLinks.map((link) => (
               <a
                 key={link.label}
-                className="text-label-sm text-on-surface-variant transition-colors hover:text-primary"
+                className="inline-block py-1.5 text-label-sm text-on-surface-variant transition-colors hover:text-primary"
                 href={link.href}
               >
                 {link.label}
@@ -61,7 +66,7 @@ export function SiteFooter() {
             {companyLinks.map((link) => (
               <a
                 key={link.label}
-                className="text-label-sm text-on-surface-variant transition-colors hover:text-primary"
+                className="inline-block py-1.5 text-label-sm text-on-surface-variant transition-colors hover:text-primary"
                 href={link.href}
               >
                 {link.label}
@@ -79,9 +84,18 @@ export function SiteFooter() {
               <Icon name="mail" className="text-[18px]" />
               hola@tequendama.ai
             </a>
+            <a
+              className="flex items-center gap-2 text-label-sm text-on-surface-variant transition-colors hover:text-[#1faf54]"
+              href={ADVISOR_WHATSAPP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <WhatsAppIcon className="size-[18px] text-[#25d366]" />
+              WhatsApp {ADVISOR_WHATSAPP_DISPLAY}
+            </a>
             <Link
               className="flex items-center gap-2 text-label-sm text-on-surface-variant transition-colors hover:text-primary"
-              to="/llamada"
+              to="/asistente"
             >
               <Icon name="support_agent" className="text-[18px]" />
               Soporte 24/7 con IA

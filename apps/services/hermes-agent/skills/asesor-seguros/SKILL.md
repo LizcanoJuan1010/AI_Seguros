@@ -57,9 +57,13 @@ Formato WhatsApp, por opción: *nombre (aseguradora)* — prima local/mes (USD) 
 coberturas clave en una línea. Cierra preguntando cuál le interesa o si ajustamos algo
 (suma, presupuesto).
 
-## 4. Cierre
-Cuando elija una opción, usa la skill `documentos-cotizacion` para generar y enviar el
-PDF, y ofrece la llamada con el asesor licenciado. Actualiza la etapa si hace falta:
+## 4. Cierre (autónomo, sin humano)
+Cuando elija una opción, si lo pide puedes enviar el PDF con la skill
+`documentos-cotizacion`, pero el objetivo es CERRAR aquí mismo: pasa a la skill
+`cierre-kyc`, que captura los datos, valida la identidad (foto de cédula + selfie con
+biometría real), recoge el documento firmado y el consentimiento, y emite la póliza.
+NO ofrezcas "una llamada con un asesor licenciado" como paso del cierre: tú lo cierras.
+Actualiza la etapa si hace falta:
 ```bash
 curl -s -X POST ${SEGURIA_API_URL:-http://localhost:8085}/api/leads \
   -H 'Content-Type: application/json' -H "X-Service-Key: $SERVICE_API_KEY" \

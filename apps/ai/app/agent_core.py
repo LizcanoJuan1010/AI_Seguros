@@ -364,7 +364,7 @@ TOOLS_SCHEMA = [
             "insurance_type": {"type": "string"}}}}},
     {"type": "function", "function": {
         "name": "analizar_documento",
-        "description": "Lee un archivo que el cliente envió (cédula, tarjeta de propiedad, RUT, examen...) y extrae datos automáticamente para autocompletar el intake.",
+        "description": "Lee un archivo que el cliente envió (cédula, tarjeta de propiedad, RUT, examen...) y extrae datos para autocompletar el intake. NO sirve para verificar identidad: esa va siempre por `generar_verificacion_identidad`.",
         "parameters": {"type": "object", "required": ["file_id"], "properties": {
             "file_id": {"type": "string"}}}}},
     {"type": "function", "function": {
@@ -459,6 +459,18 @@ def _get_checkout(conn: psycopg.Connection, key: str) -> dict:
     _checkout_table(conn)
     row = conn.execute("SELECT * FROM checkout_session WHERE session_key=%s", (key,)).fetchone()
     return dict(row) if row else {}
+
+
+def _intake_datos(conn: psycopg.Connection, session_key: str) -> dict:
+    """Datos del catálogo KYC/SARLAFT ya capturados en la sesión (`intake_session`).
+    Devuelve {} si la tabla aún no existe o la consulta falla — nunca rompe el turno."""
+    try:
+        row = conn.execute("SELECT datos FROM intake_session WHERE session_key=%s",
+                           (session_key,)).fetchone()
+        return json.loads(row["datos"]) if row and row["datos"] else {}
+    except Exception:
+        conn.rollback()
+        return {}
 
 
 def _save_checkout(conn: psycopg.Connection, key: str, **fields) -> dict:
@@ -615,6 +627,22 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
                 "necesita": "generar_firma_poliza"}
 
     insurance_type = (str(args.get("insurance_type") or "").strip().upper() or "VIDA")
+
+    # Gate de datos obligatorios del catálogo (SARLAFT, declaración de
+    # asegurabilidad, beneficiarios…): la identidad y la firma ya se validaron
+    # arriba (Didit/esign); esto cubre lo que exige el producto concreto.
+    # Configurable con KYC_ENFORCE (default true).
+    from . import intake
+    from .config import KYC_ENFORCE
+    if KYC_ENFORCE:
+        faltan_datos = [f.get("label") or f.get("key")
+                        for f in intake.faltantes(insurance_type.lower(), _intake_datos(conn, session_key))]
+        if faltan_datos:
+            return {"error": "no se puede emitir todavía: faltan datos obligatorios del producto — "
+                             + "; ".join(faltan_datos),
+                    "faltan_kyc": faltan_datos, "necesita": "guardar_datos_cliente",
+                    "mensaje": "Pide al cliente los datos que faltan y reintenta emitir."}
+
     try:
         prima = round(float(args.get("monthly_premium_cop") or 0), 2)
     except (ValueError, TypeError):
@@ -1418,6 +1446,11 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     else:
         # web: -> Sofía (informativa); número real -> Mónica (WhatsApp, cierra).
         system = SYSTEM_PROMPT_WEB if phone.startswith("web:") else SYSTEM_PROMPT_WHATSAPP
+    # Conocimiento del negocio editable por gerencia (panel "Agente IA" del
+    # CRM): promos, políticas, aclaraciones de precios. Devuelve "" si no hay
+    # entradas o la BD falla — nunca rompe el turno.
+    from .knowledge import knowledge_context
+    system += knowledge_context(tenant_id)
     # enviar_nota_voz (Deepgram) solo tiene sentido con un número real de
     # WhatsApp al que mandar el audio — Sofía/gerente se quedan con el set base.
     tools = TOOLS_SCHEMA_WHATSAPP if es_whatsapp else TOOLS_SCHEMA

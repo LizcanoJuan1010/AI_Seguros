@@ -1,6 +1,8 @@
 import { HeroStub } from '../features/landing/HeroStub'
+import { QuickAccess } from '../features/landing/QuickAccess'
 import { TrustStrip } from '../features/landing/TrustStrip'
 import { ProductCards } from '../features/landing/ProductCards'
+import { FeatureShowcase } from '../features/landing/FeatureShowcase'
 import { HowItWorks } from '../features/landing/HowItWorks'
 import { CallMeBack } from '../features/landing/CallMeBack'
 import { InsightSection } from '../features/landing/InsightSection'
@@ -16,8 +18,10 @@ export function LandingPage() {
       <MistBackground />
       <main className="relative z-10">
         <HeroStub />
+        <QuickAccess />
         <TrustStrip />
         <ProductCards />
+        <FeatureShowcase />
         <HowItWorks />
         <CallMeBack />
         <InsightSection />

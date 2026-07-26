@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAccessToken } from '../../lib/authFetch'
+import { getDeviceId } from '../../lib/clientIdentity'
 import type { AssistantPayment, PaymentStatus } from './useAssistantChat'
 
 /**
@@ -123,6 +124,14 @@ export function useLiveVoiceCall() {
     authedRef.current = false
     dropAudioUntilSpeakStartRef.current = false
     setPayment(null)
+    // Estado de conversación limpio para el siguiente intento: sin esto,
+    // "Volver a llamar" arrancaba MUDO si la llamada anterior murió
+    // silenciada, con las cards viejas proyectadas y el orbe en "hablando".
+    mutedRef.current = false
+    setMuted(false)
+    setCards([])
+    setCaption(null)
+    setAiSpeaking(false)
     wsRef.current?.close()
     wsRef.current = null
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -219,17 +228,37 @@ export function useLiveVoiceCall() {
         playerNodeRef.current?.port.postMessage({ cmd: 'clear' })
         break
       case 'call_status':
-        setStatus('ended')
+        // FALLIDA (el motor de voz se cayó a mitad de llamada) no es un
+        // colgado limpio: como 'ended' redirigía al chat en 1 s tapando lo
+        // que pasó; como 'error' se queda con el mensaje y el reintento.
+        if (String(data.status ?? '').toUpperCase() === 'FALLIDA') {
+          setError('Se perdió la conexión con el servicio de voz')
+          setStatus('error')
+        } else {
+          setStatus('ended')
+        }
         break
       default:
         break
     }
   }, [])
 
-  const startPlayback = useCallback(async (): Promise<void> => {
+  const startPlayback = useCallback(async (gen: number): Promise<void> => {
     const ctx = new AudioContext({ sampleRate: 24000 })
-    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
+    // Sin gesto de usuario previo (entrar a /llamada por URL directa o F5),
+    // la promesa de resume() queda PENDIENTE para siempre — esperarla colgaba
+    // todo start() en "Conectando..." sin llegar siquiera a abrir el WS. No
+    // se espera: el worklet carga igual en 'suspended' y el primer click
+    // despierta el contexto (listener de pointerdown en start()).
+    void ctx.resume()
     await ctx.audioWorklet.addModule('/audio/pcm-player-processor.js')
+    // Si la llamada murió durante el await (cleanup corrió), cerrar ESTE
+    // contexto en vez de repoblarlo en los refs: Chrome corta alrededor de
+    // ~6 AudioContext por documento y los huérfanos se acumulaban por ciclo.
+    if (gen !== startGenRef.current) {
+      void ctx.close()
+      throw new Error('llamada cancelada')
+    }
     const player = new AudioWorkletNode(ctx, 'pcm-player-processor', {
       outputChannelCount: [1],
     })
@@ -238,11 +267,23 @@ export function useLiveVoiceCall() {
     playerNodeRef.current = player
   }, [])
 
-  const startCapture = useCallback(async (ws: WebSocket): Promise<void> => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  const startCapture = useCallback(async (ws: WebSocket, gen: number): Promise<void> => {
+    // AEC/NS explícitos: sin echoCancellation, la voz de la IA saliendo por
+    // los parlantes vuelve a entrar por el mic y dispara barge_in en loop.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+    })
+    // El permiso pudo tardar (diálogo abierto) y la llamada morir mientras
+    // tanto: si este start ya no es el vigente, soltar el mic INMEDIATAMENTE
+    // — sin esto quedaba el punto rojo de grabación encendido sobre la
+    // pantalla de error, con la página diciendo "no pudimos conectar".
+    if (gen !== startGenRef.current) {
+      stream.getTracks().forEach((t) => t.stop())
+      throw new Error('llamada cancelada')
+    }
     streamRef.current = stream
     const ctx = new AudioContext({ sampleRate: 16000 })
-    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
+    void ctx.resume() // sin gesto previo quedaría pendiente — ver startPlayback
     await ctx.audioWorklet.addModule('/audio/mic-processor.js')
     const source = ctx.createMediaStreamSource(stream)
     const mic = new AudioWorkletNode(ctx, 'mic-processor')
@@ -267,11 +308,26 @@ export function useLiveVoiceCall() {
     const gen = ++startGenRef.current
     setStatus('connecting')
     setError(null)
+    // El rescate de autoplay se registra ANTES de crear los AudioContext: el
+    // primer click despierta lo que haya nacido 'suspended'. Registrarlo al
+    // final (como antes) significaba que si algo se colgaba en el camino, el
+    // listener nunca existía y la pantalla moría en "Conectando...".
+    if (!resumeListenerRef.current) {
+      const onFirstPointerDown = () => resumeSuspendedContexts()
+      resumeListenerRef.current = onFirstPointerDown
+      document.addEventListener('pointerdown', onFirstPointerDown, { once: true })
+    }
     try {
+      // Staff con sesión -> JWT. Cliente final -> device_id anónimo: la
+      // landing enlaza /llamada directo y un lead no debería tener que
+      // loguearse para hablar (ver live-call.gateway.ts, que valida el
+      // formato y limita las llamadas simultáneas por dispositivo).
       const token = getAccessToken()
-      if (!token) throw new Error('No hay sesión activa')
+      const authFrame = token
+        ? { token }
+        : { device_id: getDeviceId() }
 
-      await startPlayback()
+      await startPlayback(gen)
       if (gen !== startGenRef.current) return
 
       const ws = new WebSocket(liveCallWsUrl())
@@ -283,7 +339,7 @@ export function useLiveVoiceCall() {
           ws.close()
           return
         }
-        ws.send(JSON.stringify({ type: 'auth', data: { token } }))
+        ws.send(JSON.stringify({ type: 'auth', data: authFrame }))
       }
       ws.onmessage = (event: MessageEvent) => {
         if (typeof event.data === 'string') {
@@ -305,35 +361,70 @@ export function useLiveVoiceCall() {
       }
       ws.onclose = () => {
         if (gen !== startGenRef.current) return
-        startingRef.current = false
-        setStatus((s) => (s === 'error' ? s : 'ended'))
+        // Un cierre ANTES de auth_ok no es un colgado limpio: es el servidor
+        // caído/reiniciado a mitad del handshake. Tratarlo como 'ended'
+        // catapultaba al usuario al chat sin explicación (el redirect de
+        // 1 s); como 'error' se queda con el mensaje y "Volver a llamar".
+        // OJO: leer authedRef ANTES de cleanup(), que lo resetea.
+        const huboLlamada = authedRef.current
+        if (!huboLlamada) {
+          setError('Se perdió la conexión antes de iniciar la llamada')
+        }
+        setStatus((s) => (s === 'error' ? s : huboLlamada ? 'ended' : 'error'))
+        // Cierre iniciado por el SERVIDOR (error del servicio de voz, fin de
+        // sesión): sin este cleanup, `wsRef` queda apuntando al socket muerto
+        // y el guard de `start()` bloquea cualquier reintento — el botón
+        // "Volver a llamar" no haría nada. (El cierre iniciado por nosotros
+        // ya pasó por cleanup(), que invalida `gen` y no entra aquí.)
+        cleanup()
       }
 
-      await startCapture(ws)
+      await startCapture(ws, gen)
       if (gen !== startGenRef.current) {
         ws.close()
         return
       }
 
       resumeSuspendedContexts()
-      const onFirstPointerDown = () => resumeSuspendedContexts()
-      resumeListenerRef.current = onFirstPointerDown
-      document.addEventListener('pointerdown', onFirstPointerDown, { once: true })
+
+      // Watchdog del handshake: si en 15 s no llegó auth_ok (proxy que traga
+      // el upgrade, backend que acepta TCP y no contesta) no había NINGUNA
+      // salida — la pantalla moría en "Conectando…" sin botón de reintento.
+      window.setTimeout(() => {
+        if (gen !== startGenRef.current || authedRef.current) return
+        setError('No pudimos conectar la llamada — revisa tu conexión')
+        setStatus('error')
+        cleanup()
+      }, 15_000)
     } catch (err) {
       if (gen !== startGenRef.current) return
-      setError((err as Error)?.message ?? 'No se pudo iniciar la llamada')
+      const e = err as Error
+      // El error crudo del navegador es críptico y en inglés ("Permission
+      // denied"). Con el permiso BLOQUEADO además el prompt ya no reaparece:
+      // reintentar rechaza al instante para siempre — hay que decirle dónde
+      // desbloquearlo, no solo que falló.
+      setError(
+        e?.name === 'NotAllowedError' || e?.name === 'NotFoundError'
+          ? 'Necesitamos permiso del micrófono para la llamada — habilítalo en el candado de la barra de direcciones y vuelve a intentar'
+          : (e?.message ?? 'No se pudo iniciar la llamada'),
+      )
       setStatus('error')
       cleanup()
     }
   }, [cleanup, handleJson, resumeSuspendedContexts, startCapture, startPlayback])
 
   const toggleMute = useCallback(() => {
-    setMuted((prev) => {
-      const next = !prev
-      mutedRef.current = next
-      wsRef.current?.send(JSON.stringify({ type: next ? 'mute' : 'unmute', data: {} }))
-      return next
-    })
+    const next = !mutedRef.current
+    mutedRef.current = next
+    // Guard de OPEN obligatorio (igual que endCall): durante CONNECTING,
+    // send() lanza InvalidStateError — y como antes vivía DENTRO del updater
+    // de setMuted, la excepción salía en fase de render y desmontaba la app
+    // entera en blanco. Un click a "Silenciar" mientras decía "Conectando…"
+    // bastaba para tumbar todo.
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: next ? 'mute' : 'unmute', data: {} }))
+    }
+    setMuted(next)
   }, [])
 
   const endCall = useCallback(() => {

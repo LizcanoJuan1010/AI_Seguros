@@ -48,6 +48,18 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsISO8601({ strict: true })
   consentAt?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  referralSource?: string;
+
+  @IsOptional()
+  @IsString()
+  referralLink?: string;
 }
 
 export class UpdateCustomerDto extends PartialType(CreateCustomerDto) {}

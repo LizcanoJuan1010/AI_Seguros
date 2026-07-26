@@ -9,7 +9,6 @@ import { ChatShellLayout } from './layouts/ChatShellLayout'
 import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
 import { LiveAiCallPage } from './pages/LiveAiCallPage'
-import { AgentLeadsPage } from './pages/AgentLeadsPage'
 import { ManagerDashboardPage } from './pages/ManagerDashboardPage'
 import { AssistantPage } from './pages/AssistantPage'
 import { EmbedQuotePage } from './pages/EmbedQuotePage'
@@ -29,6 +28,13 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             {/* Widget embebible (iframe de aliados): sin nav, sin auth */}
             <Route path="/embed" element={<EmbedQuotePage />} />
+            {/* La bandeja del vendedor se fusionó en el panel del gerente:
+                la pestaña "Clientes" muestra el mismo expediente 360. Enlaces y
+                marcadores antiguos a /vendedor redirigen allí. */}
+            <Route
+              path="/vendedor"
+              element={<Navigate to="/gerente?tab=clientes" replace />}
+            />
             {/* Checklist de activación: link enviado al cliente, sin auth */}
             <Route path="/activacion/:token" element={<ChecklistPage />} />
             {/* Sofía (chat web): pública — un lead nunca debería loguearse
@@ -39,11 +45,16 @@ export default function App() {
               <Route path="/asistente" element={<AssistantPage />} />
             </Route>
 
-            {/* Rutas protegidas: requieren sesión (redirigen a /login si no) */}
+            {/* Llamada de voz del cliente final: SIN login, igual que el chat.
+                Su identidad es el device_id anónimo (lib/clientIdentity.ts) y
+                la landing enlaza aquí directo, así que no puede exigir sesión. */}
+            <Route element={<AppShellLayout />}>
+              <Route path="/llamada" element={<LiveAiCallPage />} />
+            </Route>
+
+            {/* Rutas de staff (gerente): requieren sesión */}
             <Route element={<RequireAuth />}>
               <Route element={<AppShellLayout />}>
-                <Route path="/llamada" element={<LiveAiCallPage />} />
-                <Route path="/vendedor" element={<AgentLeadsPage />} />
                 <Route path="/gerente" element={<ManagerDashboardPage />} />
                 <Route element={<RequireRole roles={['GERENTE', 'ADMIN']} />}>
                   <Route path="/campanas" element={<CampaignsPage />} />

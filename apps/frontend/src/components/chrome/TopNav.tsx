@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Icon } from '../ui/Icon'
-import { TeamSwitcher } from './TeamSwitcher'
 import { useAuth } from '../../contexts/AuthContext'
+import { homeForRole, isStaff } from '../../lib/roles'
 
 type TopNavProps = {
   variant?: 'marketing' | 'app'
@@ -14,19 +14,28 @@ type TopNavProps = {
  */
 const marketingLinks = [
   { href: '#planes', label: 'Planes', icon: 'verified_user' },
+  { href: '#funciones', label: 'Funciones', icon: 'bolt' },
   { href: '#como-funciona', label: 'Cómo funciona', icon: 'route' },
   { href: '#opiniones', label: 'Opiniones', icon: 'reviews' },
   { href: '#faq', label: 'Preguntas', icon: 'help' },
 ]
 
-const appLinks = [
-  { to: '/', label: 'Inicio', icon: 'home', end: true },
-  { to: '/asistente', label: 'Asistente IA', icon: 'smart_toy', end: false },
-  { to: '/llamada', label: 'Llamada IA', icon: 'support_agent', end: false },
-  { to: '/vendedor', label: 'Vendedor', icon: 'badge', end: false },
-  { to: '/gerente', label: 'Gerente', icon: 'monitoring', end: false },
-  { to: '/campanas', label: 'Campañas', icon: 'campaign', end: false },
-]
+// La llamada en vivo ya no es pestaña propia: se entra desde el botón de
+// voz del chat del asistente (estilo Gemini Live), ruta /llamada intacta.
+// El menú de app depende de quién mira: el cliente anónimo solo ve el
+// asistente; Gerente y Campañas aparecen solo para el staff (la antigua
+// bandeja del vendedor se fusionó en la pestaña "Clientes" del gerente).
+function appLinksForRole(role: string | undefined) {
+  const links = [
+    { to: '/', label: 'Inicio', icon: 'home', end: true },
+    { to: '/asistente', label: 'Asistente IA', icon: 'smart_toy', end: false },
+  ]
+  if (isStaff(role)) {
+    links.push({ to: '/gerente', label: 'Gerente', icon: 'monitoring', end: false })
+    links.push({ to: '/campanas', label: 'Campañas', icon: 'campaign', end: false })
+  }
+  return links
+}
 
 const appLinkClass = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-2 rounded-full px-4 py-2 text-label-md transition-colors duration-200 ${
@@ -47,6 +56,7 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
   const [scrolled, setScrolled] = useState(false)
   const { user, signOut } = useAuth()
   const location = useLocation()
+  const appLinks = appLinksForRole(user?.role)
 
   // El header de marketing arranca transparente sobre el hero y gana fondo
   // glass al hacer scroll. En la app el scroll ocurre en un contenedor
@@ -103,7 +113,7 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
               variant === 'app' ? 'hidden xl:flex' : 'hidden sm:flex'
             }`}
           >
-            <span className="font-display text-[21px] font-semibold tracking-tight text-primary md:text-[24px]">
+            <span className="brand-wordmark font-display text-[21px] font-semibold tracking-tight md:text-[24px]">
               Tequendama
             </span>
             <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.28em] text-secondary">
@@ -155,14 +165,16 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
         <div className="flex min-w-0 items-center justify-end gap-2">
           {variant === 'marketing' ? (
             <>
+              {/* Acceso de staff: el cliente final NUNCA necesita esto — su
+                  canal es el CTA del chat, sin registro. */}
               <Link
-                to={user ? '/asistente' : '/login'}
+                to={user ? homeForRole(user.role) : '/login'}
                 className="hidden rounded-full px-4 py-2 text-label-md text-primary transition-colors hover:bg-primary/10 md:inline-flex"
               >
-                {user ? 'Mi panel' : 'Ingresar'}
+                {user ? 'Mi panel' : 'Acceso asesores'}
               </Link>
               <Link
-                to="/llamada"
+                to="/asistente"
                 className="hidden items-center gap-2 rounded-full bg-amber-cta px-5 py-2.5 text-label-md font-bold text-primary shadow-md shadow-amber-cta/25 transition-all hover:scale-105 hover:shadow-lg hover:shadow-amber-cta/30 active:scale-95 sm:inline-flex"
               >
                 <Icon name="support_agent" className="text-[20px]" />
@@ -171,19 +183,6 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
             </>
           ) : (
             <>
-              <TeamSwitcher />
-              <button
-                type="button"
-                className="relative hidden size-10 items-center justify-center rounded-full border border-outline-variant/60 bg-surface-container-lowest/70 text-primary transition-colors hover:bg-surface-variant sm:flex"
-                aria-label="Notificaciones"
-                title="Notificaciones"
-              >
-                <Icon name="notifications" className="text-[22px]" />
-                <span
-                  className="absolute right-2 top-2 size-2 rounded-full bg-amber-cta ring-2 ring-white"
-                  aria-hidden
-                />
-              </button>
               {user && (
                 <div className="hidden items-center gap-2 xl:flex">
                   <div className="flex items-center gap-2.5 rounded-full border border-outline-variant/50 bg-surface-container-lowest/70 py-1 pl-1 pr-4">
@@ -214,7 +213,7 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
           )}
           <button
             type="button"
-            className="flex size-10 items-center justify-center rounded-full border border-outline-variant/50 bg-surface-container-lowest/70 text-primary transition-colors hover:bg-surface-variant lg:hidden"
+            className="flex size-11 items-center justify-center rounded-full border border-outline-variant/50 bg-surface-container-lowest/70 text-primary transition-colors hover:bg-surface-variant lg:hidden"
             aria-label={open ? 'Cerrar menú' : 'Abrir menú'}
             aria-expanded={open}
             aria-controls="mobile-nav"
@@ -253,7 +252,7 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
                   ))}
                   <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/40 pt-4">
                     <Link
-                      to="/llamada"
+                      to="/asistente"
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-cta px-5 py-3.5 text-body-md font-bold text-primary shadow-md shadow-amber-cta/25"
                       onClick={() => setOpen(false)}
                     >
@@ -261,11 +260,11 @@ export function TopNav({ variant = 'marketing' }: TopNavProps) {
                       Hablar con un asesor
                     </Link>
                     <Link
-                      to={user ? '/asistente' : '/login'}
+                      to={user ? homeForRole(user.role) : '/login'}
                       className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-primary px-5 py-3 text-body-md font-bold text-primary transition-colors hover:bg-primary/5"
                       onClick={() => setOpen(false)}
                     >
-                      {user ? 'Ir a mi panel' : 'Ingresar'}
+                      {user ? 'Ir a mi panel' : 'Acceso asesores'}
                     </Link>
                   </div>
                 </>

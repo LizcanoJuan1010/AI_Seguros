@@ -9,6 +9,7 @@ consultas quedan sin cualificar y caen siempre en `seguria`.
 """
 import csv
 import json
+import logging
 import os
 from datetime import datetime, timedelta
 
@@ -115,6 +116,20 @@ CREATE TABLE IF NOT EXISTS customer_profile (
     fuente TEXT DEFAULT 'llamada',
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+-- Conocimiento del negocio editable por gerencia (panel "Agente IA" del CRM).
+-- Las entradas activas se inyectan al system prompt de TODAS las
+-- conversaciones del tenant (ver agent_core.run_agent / knowledge.py).
+CREATE TABLE IF NOT EXISTS agent_knowledge (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    active BOOLEAN DEFAULT TRUE,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+-- true cuando gerencia editó el producto desde el CRM: el seed del catálogo
+-- JSON deja de pisar esa fila en los siguientes arranques.
+ALTER TABLE products ADD COLUMN IF NOT EXISTS editado_manual BOOLEAN DEFAULT FALSE;
 """
 
 COUNTRY_CURRENCY = {
@@ -180,6 +195,16 @@ def init_db(seed_demo: bool = True) -> None:
             from .mock_profiles import seed_mock_profiles
             seed_mock_profiles(conn)
         conn.commit()
+        # Documentos firmados demo: idempotente (regenera archivos faltantes,
+        # no duplica la referencia en la BD), fuera del guard de "primera vez"
+        # porque los PDFs viven en un dir efímero del contenedor.
+        if seed_demo:
+            try:
+                from .demo_documents import seed_demo_documents
+                seed_demo_documents(conn)
+            except Exception as exc:  # noqa: BLE001 - demo best-effort
+                logging.getLogger("seguria.db").warning(
+                    "seed_demo_documents falló: %s", exc)
     finally:
         conn.close()
 
@@ -197,7 +222,8 @@ def _seed_catalog(conn: psycopg.Connection) -> None:
                  paises=EXCLUDED.paises, suma_base_usd=EXCLUDED.suma_base_usd,
                  prima_base_usd=EXCLUDED.prima_base_usd, prima_por_dia=EXCLUDED.prima_por_dia,
                  coberturas=EXCLUDED.coberturas, factores=EXCLUDED.factores,
-                 modalidad=EXCLUDED.modalidad""",
+                 modalidad=EXCLUDED.modalidad
+               WHERE products.editado_manual IS DISTINCT FROM TRUE""",
             (p["id"], p["tipo"], p["nombre"], p["aseguradora"], json.dumps(p["paises"]),
              p["suma_base_usd"], p["prima_base_usd"], int(p.get("prima_por_dia", False)),
              json.dumps(p["coberturas"], ensure_ascii=False),

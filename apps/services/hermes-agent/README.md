@@ -26,7 +26,7 @@ hermes --version
 ```bash
 echo "DEEPSEEK_API_KEY=sk-tu-key" >> ~/.hermes/.env
 hermes config set model.provider deepseek
-hermes config set model.default  deepseek-chat   # deepseek-reasoner para análisis gerencial
+hermes config set model.default  deepseek-v4-flash   # deepseek-v4-pro para análisis gerencial
 ```
 Alternativas: `provider: custom` + `base_url: https://api.deepseek.com` (OpenAI-compatible),
 u OpenRouter/Anthropic.
