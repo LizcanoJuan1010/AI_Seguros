@@ -43,6 +43,33 @@ def enviar_whatsapp(phone: str, text: str) -> bool:
         return False
 
 
+def enviar_documento(phone: str, url: str, filename: str, caption: str | None = None) -> bool:
+    """Envía un documento (ficha PDF de cotización/póliza) por WhatsApp como
+    adjunto real vía `POST {WA_GATEWAY_URL}/send-document` — Baileys descarga
+    `url` directamente, no hace falta mandar el archivo en base64 (a diferencia
+    de `enviar_nota_voz`, que sí lo hace porque el audio de Kokoro no queda
+    hosteado en ningún lado). `url` debe ser absoluta (PUBLIC_BASE_URL +
+    `/api/documents/{filename}`): Baileys corre en su propio proceso/red y no
+    puede resolver una ruta relativa."""
+    if not enabled():
+        log.info("WA_GATEWAY no configurado: no se envía documento a %s (demo)", phone)
+        return False
+    digits = phone.lstrip("+")
+    try:
+        resp = requests.post(
+            f"{WA_GATEWAY_URL}/send-document",
+            json={"tenant": WA_GATEWAY_TENANT, "to": digits, "url": url,
+                 "filename": filename, "caption": caption},
+            timeout=_TIMEOUT,
+            headers={"x-webhook-secret": WA_GATEWAY_WEBHOOK_SECRET},
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as exc:
+        log.warning("no se pudo enviar el documento a %s: %s", phone, exc)
+        return False
+
+
 def _sintetizar(text: str) -> bytes | None:
     """MP3 del texto vía Kokoro-FastAPI (el mismo TTS que ya usa el chat web
     en `/api/assistant/tts`, perfil `voz` del compose). None si el servicio

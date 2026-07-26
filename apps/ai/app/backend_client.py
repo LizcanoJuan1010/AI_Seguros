@@ -79,6 +79,24 @@ def upsert_lead(tenant_id: str, phone: str, *, insurance_type: str | None = None
         return None
 
 
+def update_campaign_send(tenant_id: str, send_id: str, status: str,
+                         error: str | None = None) -> None:
+    """Callback tras intentar el envío de un CampaignSend puntual (ver
+    campaign_broadcast.py). `status` es 'ENVIADO'|'FALLIDO'. Silencioso ante
+    fallos (best-effort): si el backend no responde, el barrido de 90 min de
+    `CampaignsService.reconcileStalePending` lo marca FALLIDO más tarde."""
+    try:
+        resp = requests.patch(
+            f"{BACKEND_URL}/api/v1/campaigns/sends/{send_id}",
+            json={"status": status, **({"error": error} if error else {})},
+            timeout=_TIMEOUT,
+            headers={"X-Tenant-Id": tenant_id},
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        log.warning("no se pudo actualizar CampaignSend %s: %s", send_id, exc)
+
+
 def log_turn(tenant_id: str, phone: str, channel: str, role: str, message: str) -> None:
     """Abre/reutiliza la sesión y registra el mensaje en una sola llamada de
     conveniencia. `role` usa el vocabulario del chat (`cliente`/`asistente`/

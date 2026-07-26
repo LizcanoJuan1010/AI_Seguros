@@ -23,8 +23,8 @@ const marketingLinks = [
 // La llamada en vivo ya no es pestaña propia: se entra desde el botón de
 // voz del chat del asistente (estilo Gemini Live), ruta /llamada intacta.
 // El menú de app depende de quién mira: el cliente anónimo solo ve el
-// asistente; el panel Gerente aparece para el staff (la antigua bandeja del
-// vendedor se fusionó en su pestaña "Clientes").
+// asistente; Gerente y Campañas aparecen solo para el staff (la antigua
+// bandeja del vendedor se fusionó en la pestaña "Clientes" del gerente).
 function appLinksForRole(role: string | undefined) {
   const links = [
     { to: '/', label: 'Inicio', icon: 'home', end: true },
@@ -32,6 +32,7 @@ function appLinksForRole(role: string | undefined) {
   ]
   if (isStaff(role)) {
     links.push({ to: '/gerente', label: 'Gerente', icon: 'monitoring', end: false })
+    links.push({ to: '/campanas', label: 'Campañas', icon: 'campaign', end: false })
   }
   return links
 }

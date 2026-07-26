@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS products (
     prima_base_usd DOUBLE PRECISION NOT NULL,
     prima_por_dia INTEGER DEFAULT 0,
     coberturas TEXT NOT NULL,        -- JSON array
-    factores TEXT NOT NULL           -- JSON object
+    factores TEXT NOT NULL,          -- JSON object
+    modalidad TEXT DEFAULT 'individual'  -- colectiva|individual|asesor, ver underwriting.py
 );
 CREATE TABLE IF NOT EXISTS fx_rates (
     currency TEXT NOT NULL,
@@ -173,6 +174,18 @@ def init_db(seed_demo: bool = True) -> None:
     try:
         conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
         conn.execute(SCHEMA)  # sin cualificar → cae en el search_path (esquema seguria)
+        # Migra instalaciones con la tabla `quotes` ya creada antes de este
+        # campo (mismo criterio inline que kyc.py::_tables — CREATE TABLE IF
+        # NOT EXISTS no altera una tabla que ya existía con otro shape).
+        # Guarda el PDF de la cotización (generar_documento) para que el
+        # checklist de activación pueda enlazarlo sin regenerarlo.
+        conn.execute("ALTER TABLE quotes ADD COLUMN IF NOT EXISTS document_url TEXT")
+        # Modalidad del producto (colectiva|individual|asesor — ver
+        # underwriting.py y checklist.py): guaranteed-acceptance colectiva NO
+        # pasa por biometría/underwriting individual; "asesor" no es
+        # autogestionable en absoluto (Nota_estrategica_Seguros_Colsubsidio.pdf).
+        conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS "
+                    "modalidad TEXT DEFAULT 'individual'")
         _seed_catalog(conn)
         _seed_fx(conn)
         if seed_demo and conn.execute("SELECT COUNT(*) c FROM leads").fetchone()["c"] == 0:
@@ -202,18 +215,20 @@ def _seed_catalog(conn: psycopg.Connection) -> None:
         conn.execute(
             """INSERT INTO products
                (id, tipo, nombre, aseguradora, paises, suma_base_usd, prima_base_usd,
-                prima_por_dia, coberturas, factores)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                prima_por_dia, coberturas, factores, modalidad)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (id) DO UPDATE SET
                  tipo=EXCLUDED.tipo, nombre=EXCLUDED.nombre, aseguradora=EXCLUDED.aseguradora,
                  paises=EXCLUDED.paises, suma_base_usd=EXCLUDED.suma_base_usd,
                  prima_base_usd=EXCLUDED.prima_base_usd, prima_por_dia=EXCLUDED.prima_por_dia,
-                 coberturas=EXCLUDED.coberturas, factores=EXCLUDED.factores
+                 coberturas=EXCLUDED.coberturas, factores=EXCLUDED.factores,
+                 modalidad=EXCLUDED.modalidad
                WHERE products.editado_manual IS DISTINCT FROM TRUE""",
             (p["id"], p["tipo"], p["nombre"], p["aseguradora"], json.dumps(p["paises"]),
              p["suma_base_usd"], p["prima_base_usd"], int(p.get("prima_por_dia", False)),
              json.dumps(p["coberturas"], ensure_ascii=False),
-             json.dumps(p["factores"], ensure_ascii=False)),
+             json.dumps(p["factores"], ensure_ascii=False),
+             p.get("modalidad") or "individual"),
         )
 
 

@@ -74,3 +74,15 @@ def _seguria_test_schema():
 
     with psycopg.connect(_DSN, autocommit=True) as conn:
         conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(ident))
+
+
+@pytest.fixture
+def db_conn():
+    """Conexión al esquema de test, para los tests que verifican persistencia
+    directamente (más barato y determinista que ir por el endpoint)."""
+    from app.db import get_conn
+    conn = get_conn()
+    try:
+        yield conn
+    finally:
+        conn.close()

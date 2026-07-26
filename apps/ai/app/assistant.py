@@ -465,7 +465,8 @@ def _latest_quote_for(user_id: str) -> dict | None:
     conn = get_conn()
     try:
         row = conn.execute(
-            """SELECT q.*, p.nombre AS producto, p.tipo, p.aseguradora, p.coberturas
+            """SELECT q.*, p.nombre AS producto, p.tipo, p.aseguradora, p.coberturas,
+                      p.modalidad
                FROM quotes q JOIN products p ON p.id = q.product_id
                JOIN leads l ON l.id = q.lead_id
                WHERE l.phone = %s ORDER BY q.id DESC LIMIT 1""",

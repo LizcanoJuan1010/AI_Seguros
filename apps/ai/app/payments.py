@@ -13,6 +13,7 @@ Este módulo es un cliente HTTP delgado: NO llama a Polar ni requiere
 `POLAR_ACCESS_TOKEN`. El token vive solo en Nest.
 """
 import logging
+import uuid
 from typing import Any
 
 import psycopg
@@ -115,6 +116,20 @@ def _backend_checkout(tenant_id: str, amount_cop: float, concept: str,
     return resp.json() or {}
 
 
+def _backend_create(tenant_id: str, payment: dict) -> None:
+    """POST /api/v1/payments (alta genérica, sin checkout Polar) — la usa
+    `activar_recaudo_nomina`, que no pasa por `_backend_checkout` porque no
+    hay checkout externo que crear (la inscripción ES el pago). Nest siempre
+    crea en PENDING (ver CreatePaymentDto); el caller debe confirmar el
+    estado real con un `_backend_patch` después, igual que hace el resto del
+    módulo (best-effort: un fallo acá no debe bloquear la venta)."""
+    try:
+        requests.post(f"{BACKEND_URL}/api/v1/payments", json=payment,
+                     timeout=_TIMEOUT, headers=_headers(tenant_id)).raise_for_status()
+    except Exception as exc:
+        log.warning("no se pudo registrar el pago en el backend: %s", exc)
+
+
 def _backend_patch(tenant_id: str, reference: str, fields: dict) -> None:
     try:
         requests.patch(
@@ -205,6 +220,48 @@ def generar_link_pago(conn: psycopg.Connection, session_key: str,
         "confirma con el cliente y verifica con verificar_pago, que aprobará "
         "el pago simulado vía Nest")
     return _payment_out(row, nota=nota)
+
+
+def activar_recaudo_nomina(conn: psycopg.Connection, session_key: str,
+                          tenant_id: str, args: dict) -> dict:
+    """Recaudo vía descuento de nómina — ventaja de persistencia estructural
+    de Colsubsidio (relación con el empleador del afiliado) frente a la
+    tarjeta, cuyo rechazo destruye carteras completas (ver
+    Nota_estrategica_Seguros_Colsubsidio.pdf §3). A diferencia de
+    `generar_link_pago`, no hay checkout externo que abrir: la inscripción ES
+    el compromiso de pago — se marca APPROVED de inmediato para no bloquear
+    la emisión, igual que el modo demo, pero registrado como su propio
+    proveedor ("nomina") para no mezclarlo en reportes con pagos simulados/
+    de prueba."""
+    try:
+        monto = round(float(args.get("monto_cop") or 0), 2)
+    except (TypeError, ValueError):
+        monto = 0.0
+    if monto <= 0:
+        return {"error": "falta el monto en COP; cotiza primero y usa la prima "
+                         "mensual de la opción elegida como monto_cop"}
+    concept = (args.get("descripcion") or "").strip() or "Primera mensualidad — Seguro Tequendama"
+
+    reference = f"SEG-{uuid.uuid4().hex[:10].upper()}"
+    tx_id = f"nomina-{reference}"
+    # Localmente (payment_session) ya nace APPROVED — es nuestra caché, y la
+    # inscripción es el compromiso. En Nest, CreatePaymentDto solo permite
+    # PENDING al crear: crea y confirma con un patch aparte (mismo patrón que
+    # el resto del módulo usa para el flujo demo).
+    _save(conn, reference, session_key=session_key, link_id=None, checkout_url=None,
+         amount_cop=monto, concept=concept, status="APPROVED",
+         transaction_id=tx_id, provider="nomina")
+    _backend_create(tenant_id, {
+        "reference": reference, "provider": "nomina", "amountCop": monto,
+        "concept": concept, "sessionKey": session_key})
+    _backend_patch(tenant_id, reference,
+                   {"status": "APPROVED", "transactionId": tx_id, "method": "nomina"})
+
+    row = _get(conn, reference) or {}
+    return _payment_out(row, nota="inscrito al descuento por nómina; el primer "
+                                  "descuento se aplica en el próximo ciclo de pago. "
+                                  "Puedes continuar con emitir_poliza "
+                                  "(payment_method='nomina').")
 
 
 def verificar_pago(conn: psycopg.Connection, session_key: str,

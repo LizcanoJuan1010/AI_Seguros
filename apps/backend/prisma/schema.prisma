@@ -25,10 +25,21 @@ enum UserStatus {
   @@map("user_status")
 }
 
+// Los 10 tipos reales del catálogo LATAM (ver data/market/catalogo_productos.json
+// y agent_core.py) — antes solo estaban VIDA/AUTO/SALUD, así que cualquier lead
+// de los otros 7 tipos se sincronizaba al backend sin tipo (ver
+// apps/ai/app/main.py::_INSURANCE_TYPE_TO_PRISMA, ya corregido junto con esto).
 enum InsuranceType {
   VIDA @map("vida")
   AUTO @map("auto")
   SALUD @map("salud")
+  HOGAR @map("hogar")
+  VIAJE @map("viaje")
+  PYME @map("pyme")
+  ACCIDENTES @map("accidentes")
+  EXEQUIAL @map("exequial")
+  MASCOTAS @map("mascotas")
+  MOVILIDAD @map("movilidad")
 
   @@map("insurance_type")
 }
@@ -110,6 +121,26 @@ enum ClaimStatus {
   @@map("claim_status")
 }
 
+// Canal de publicación del banner de campaña (genera Gemini en el servicio
+// IA, ver apps/ai/app/marketing_studio.py CHANNEL_SPECS — mismos 4 valores).
+enum CampaignChannel {
+  INSTAGRAM_POST @map("instagram_post")
+  INSTAGRAM_STORY @map("instagram_story")
+  LINKEDIN @map("linkedin")
+  EMAIL @map("email")
+
+  @@map("campaign_channel")
+}
+
+enum CampaignSendStatus {
+  PENDIENTE @map("pendiente")
+  ENVIADO @map("enviado")
+  FALLIDO @map("fallido")
+  OMITIDO @map("omitido")
+
+  @@map("campaign_send_status")
+}
+
 enum EventType {
   LLAMADA_SALIENTE @map("llamada_saliente")
   WHATSAPP @map("whatsapp")
@@ -118,6 +149,9 @@ enum EventType {
   NOTA @map("nota")
   CAMBIO_ESTADO @map("cambio_estado")
   REASIGNACION @map("reasignacion")
+  // Interacción con una publicación/Campaign (like/comentario/clic) ANTES de
+  // cualquier conversación real — ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  INTERES_SOCIAL @map("interes_social")
 
   @@map("event_type")
 }
@@ -155,6 +189,7 @@ model Team {
   payments  Payment[]
   aiCalls   AiCall[]
   claims    Claim[]
+  campaigns Campaign[]
 
   @@map("teams")
 }
@@ -203,12 +238,13 @@ model Customer {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  team      Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")
-  aiCalls   AiCall[]
-  leads     Lead[]
-  policies  Policy[]
-  claims    Claim[]
-  documents CustomerDocument[]
+  team          Team?              @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "customers_team_id_fkey")
+  aiCalls       AiCall[]
+  leads         Lead[]
+  policies      Policy[]
+  claims        Claim[]
+  documents     CustomerDocument[]
+  campaignSends CampaignSend[]
 
   @@unique([documentType, documentId])
   @@index([teamId], map: "idx_customers_team")
@@ -235,6 +271,27 @@ model CustomerDocument {
   @@map("customer_documents")
 }
 
+// Aseguradora real que emite/responde por la póliza (Colsubsidio/Tequendama
+// distribuyen, nunca emiten — ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.4).
+// `tipoIntegracion` describe CÓMO se le entrega el expediente al cerrar la
+// venta: hoy ninguna tiene una integración real conectada, es solo el campo
+// para cuando se decida (api/email/portal/manual, ver §3.4 y §5.2 del plan).
+model Insurer {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nombre          String   @unique
+  nit             String?
+  tipoIntegracion String?  @map("tipo_integracion")
+  contactEmail    String?  @map("contact_email")
+  apiConfig       Json?    @map("api_config") @db.JsonB
+  activa          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  productos Product[]
+  policies  Policy[]
+
+  @@map("insurers")
+}
+
 model Product {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   insuranceType  InsuranceType @map("insurance_type")
@@ -243,10 +300,13 @@ model Product {
   basePremiumCop Decimal?      @map("base_premium_cop") @db.Decimal(14, 2)
   coverageSchema Json?         @map("coverage_schema") @db.JsonB
   isActive       Boolean       @default(true) @map("is_active")
+  insurerId      String?       @map("insurer_id") @db.Uuid
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  quotes Quote[]
+  insurer Insurer? @relation(fields: [insurerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "products_insurer_id_fkey")
+  quotes  Quote[]
 
+  @@index([insurerId], map: "idx_products_insurer")
   @@map("products")
 }
 
@@ -298,6 +358,10 @@ model Lead {
   aiCallId       String?       @unique @map("ai_call_id") @db.Uuid
   agentId        String?       @map("agent_id") @db.Uuid
   insuranceType  InsuranceType? @map("insurance_type")
+  // Categoría de interés capturada en el primer contacto (ej. red social,
+  // antes de cualquier conversación) — distinto de `insuranceType`, que es
+  // lo YA cotizado. Ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  interesInicial InsuranceType? @map("interes_inicial")
   status         LeadStatus    @default(NUEVO)
   intent         LeadIntent    @default(TIBIO)
   assignedAt     DateTime?     @map("assigned_at") @db.Timestamptz(6)
@@ -331,6 +395,7 @@ model Lead {
   events   LeadEvent[]
   quotes   Quote[]
   alerts   Alert[]
+  campaignSends CampaignSend[]
 
   @@index([agentId, status], map: "idx_leads_agent_status")
   @@index([createdAt(sort: Desc)], map: "idx_leads_created_at")
@@ -340,18 +405,23 @@ model Lead {
 }
 
 model LeadEvent {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  leadId    String    @map("lead_id") @db.Uuid
-  agentId   String?   @map("agent_id") @db.Uuid
-  eventType EventType @map("event_type")
-  notes     String?
-  payload   Json?     @default("{}") @db.JsonB
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId     String    @map("lead_id") @db.Uuid
+  agentId    String?   @map("agent_id") @db.Uuid
+  eventType  EventType @map("event_type")
+  notes      String?
+  payload    Json?     @default("{}") @db.JsonB
+  // Qué Campaign disparó el evento (solo aplica a INTERES_SOCIAL por ahora) —
+  // ver docs/PLAN_CORRETAJE_ASEGURADORAS.md §3.2.
+  campaignId String?   @map("campaign_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  lead  Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
-  agent User? @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "lead_events_lead_id_fkey")
+  agent    User?     @relation(fields: [agentId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_agent_id_fkey")
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "lead_events_campaign_id_fkey")
 
   @@index([leadId, createdAt], map: "idx_lead_events_lead")
+  @@index([campaignId], map: "idx_lead_events_campaign")
   @@map("lead_events")
 }
 
@@ -385,6 +455,9 @@ model Policy {
   quoteId           String       @unique @map("quote_id") @db.Uuid
   customerId        String       @map("customer_id") @db.Uuid
   agentId           String?      @map("agent_id") @db.Uuid
+  // Aseguradora real que emitió ESTA póliza puntual — snapshot al emitir, no
+  // depende de si el producto cambia de aseguradora después (ver Insurer arriba).
+  insurerId         String?      @map("insurer_id") @db.Uuid
   policyNumber      String       @unique @map("policy_number")
   status            PolicyStatus @default(VIGENTE)
   startDate         DateTime     @map("start_date") @db.Date
@@ -396,10 +469,12 @@ model Policy {
   quote    Quote    @relation(fields: [quoteId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_quote_id_fkey")
   customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_customer_id_fkey")
   agent    User?    @relation(fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "policies_agent_id_fkey")
+  insurer  Insurer? @relation(fields: [insurerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "policies_insurer_id_fkey")
   claims   Claim[]
 
   @@index([agentId], map: "idx_policies_agent")
   @@index([teamId], map: "idx_policies_team")
+  @@index([insurerId], map: "idx_policies_insurer")
   @@map("policies")
 }
 
@@ -431,6 +506,55 @@ model Claim {
   @@index([teamId], map: "idx_claims_team")
   @@index([policyId], map: "idx_claims_policy")
   @@map("claims")
+}
+
+// Banner de campaña generado con Gemini (ver apps/ai/app/marketing_studio.py)
+// más su metadata administrativa. La imagen vive en disco del servicio IA
+// (bannerUrl apunta a GET /api/marketing/banners/{filename}); acá solo se
+// persisten los parámetros de generación y el rastro de envíos.
+model Campaign {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String?         @map("team_id") @db.Uuid
+  phrase        String
+  subtitle      String?
+  cta           String?
+  insuranceType InsuranceType?  @map("insurance_type")
+  channel       CampaignChannel
+  bannerUrl     String?         @map("banner_url")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  team       Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaigns_team_id_fkey")
+  sends      CampaignSend[]
+  leadEvents LeadEvent[]
+
+  @@index([teamId], map: "idx_campaigns_team")
+  @@map("campaigns")
+}
+
+// Envío individual de una Campaign a un Lead (segmentado por intent al
+// momento de disparar el envío — ver CampaignsService.send). Sin teamId
+// propio: el scoping multitenant va vía relación al Campaign padre (mismo
+// patrón que CallMessage -> AiCall).
+model CampaignSend {
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campaignId String             @map("campaign_id") @db.Uuid
+  leadId     String?            @map("lead_id") @db.Uuid
+  customerId String?            @map("customer_id") @db.Uuid
+  intent     LeadIntent?
+  status     CampaignSendStatus @default(PENDIENTE)
+  error      String?
+  sentAt     DateTime?          @map("sent_at") @db.Timestamptz(6)
+  createdAt  DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "campaign_sends_campaign_id_fkey")
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaign_sends_lead_id_fkey")
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "campaign_sends_customer_id_fkey")
+
+  @@unique([campaignId, leadId])
+  @@index([campaignId], map: "idx_campaign_sends_campaign")
+  @@index([status, createdAt], map: "idx_campaign_sends_status")
+  @@map("campaign_sends")
 }
 
 // Pago de una póliza vía pasarela (Polar sandbox) o simulado (provider "demo").

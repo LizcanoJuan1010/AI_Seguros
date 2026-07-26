@@ -59,10 +59,15 @@ interface PostCallWebhookData {
 function mapCallStatus(data: PostCallWebhookData): CallStatus {
   const reason = (data.metadata?.termination_reason ?? '').toLowerCase();
   if (reason.includes('transfer')) return CallStatus.TRANSFERIDA_HUMANO;
-  if (reason.includes('abandon') || reason.includes('no_answer') || reason.includes('no-answer')) {
+  if (
+    reason.includes('abandon') ||
+    reason.includes('no_answer') ||
+    reason.includes('no-answer')
+  ) {
     return CallStatus.ABANDONADA;
   }
-  if (reason.includes('error') || reason.includes('fail')) return CallStatus.FALLIDA;
+  if (reason.includes('error') || reason.includes('fail'))
+    return CallStatus.FALLIDA;
   if ((data.transcript?.length ?? 0) === 0) return CallStatus.FALLIDA;
   return CallStatus.COMPLETADA;
 }
@@ -79,7 +84,8 @@ function edadDesdeFecha(fecha: string | undefined): number | null {
   let edad = hoy.getFullYear() - nacimiento.getFullYear();
   const noHaCumplidoEsteAño =
     hoy.getMonth() < nacimiento.getMonth() ||
-    (hoy.getMonth() === nacimiento.getMonth() && hoy.getDate() < nacimiento.getDate());
+    (hoy.getMonth() === nacimiento.getMonth() &&
+      hoy.getDate() < nacimiento.getDate());
   if (noHaCumplidoEsteAño) edad -= 1;
   return edad;
 }
@@ -87,7 +93,7 @@ function edadDesdeFecha(fecha: string | undefined): number | null {
 // Defaults — el webhook de init NUNCA debe fallar de cara a ElevenLabs
 // (documentado: si el lead no existe, se responde con estos valores).
 const DYNAMIC_VARIABLE_DEFAULTS: Record<string, string | number> = {
-  nombre: 'cliente',
+  nombre_cliente: 'cliente',
   edad: 0,
   afiliacion: 'no disponible',
   dependientes: 0,
@@ -123,14 +129,21 @@ export class ElevenLabsService {
     phone: string,
     transcript: TranscriptTurn[],
   ): void {
-    const baseUrl = this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
-    const serviceKey = this.config.get<string>('SERVICE_API_KEY') ?? 'demo-service-2026';
+    const baseUrl =
+      this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
+    const serviceKey =
+      this.config.get<string>('SERVICE_API_KEY') ?? 'demo-service-2026';
     fetch(`${baseUrl}/api/profiling/from-call`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Service-Key': serviceKey },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Service-Key': serviceKey,
+      },
       body: JSON.stringify({ phone, tenant_id: tenantId, transcript }),
     }).catch((err: unknown) =>
-      this.logger.warn(`no se pudo disparar el perfilamiento post-llamada: ${String(err)}`),
+      this.logger.warn(
+        `no se pudo disparar el perfilamiento post-llamada: ${String(err)}`,
+      ),
     );
   }
 
@@ -143,15 +156,25 @@ export class ElevenLabsService {
    * registro de la llamada si el servicio IA no responde o el motor está
    * apagado (DOCKET_ENGINE_ENABLED=false del lado de apps/ai).
    */
-  private notifyDocketMotor(conversationId: string | null, transcript: TranscriptTurn[]): void {
-    const baseUrl = this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
-    const serviceKey = this.config.get<string>('SERVICE_API_KEY') ?? 'demo-service-2026';
+  private notifyDocketMotor(
+    conversationId: string | null,
+    transcript: TranscriptTurn[],
+  ): void {
+    const baseUrl =
+      this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
+    const serviceKey =
+      this.config.get<string>('SERVICE_API_KEY') ?? 'demo-service-2026';
     fetch(`${baseUrl}/api/docket/ingest`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Service-Key': serviceKey },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Service-Key': serviceKey,
+      },
       body: JSON.stringify({ conversation_id: conversationId, transcript }),
     }).catch((err: unknown) =>
-      this.logger.warn(`no se pudo sincronizar la llamada hacia docket: ${String(err)}`),
+      this.logger.warn(
+        `no se pudo sincronizar la llamada hacia docket: ${String(err)}`,
+      ),
     );
   }
 
@@ -161,8 +184,11 @@ export class ElevenLabsService {
    * cara a ElevenLabs — cualquier fallo (DB caída, lead no encontrado, dato
    * parcial) cae a los defaults; el try/catch envuelve TODO el método.
    *
-   * Mapeo (los nombres pedidos no existen 1:1 en ningún modelo — ver nota):
-   *   nombre             <- Customer.fullName
+   * Mapeo (los nombres pedidos no existen 1:1 en ningún modelo — ver nota).
+   * Las keys deben calzar EXACTO con los `{{...}}` del prompt (ver
+   * reference/elevenlabs_agent_prompt.md) y con `calls.py::_sale_context`
+   * (mismo agente para llamadas entrantes/salientes):
+   *   nombre_cliente     <- Customer.fullName
    *   edad               <- Customer.birthDate (o perfil.fecha_nacimiento)
    *   afiliacion         <- perfil.afiliado_colsubsidio (Sí/No -> texto)
    *   dependientes       <- perfil.dependientes (match exacto)
@@ -204,13 +230,18 @@ export class ElevenLabsService {
           include: { quote: { include: { product: true } } },
         });
         if (polizas.length) {
-          productosVigentes = polizas.map((p) => p.quote.product.name).join(', ');
+          productosVigentes = polizas
+            .map((p) => p.quote.product.name)
+            .join(', ');
         }
       }
 
       const tieneVehiculo = Boolean(perfil.placa);
       const dynamic_variables = {
-        nombre: customer?.fullName || (perfil.nombre_completo as string) || DYNAMIC_VARIABLE_DEFAULTS.nombre,
+        nombre_cliente:
+          customer?.fullName ||
+          (perfil.nombre_completo as string) ||
+          DYNAMIC_VARIABLE_DEFAULTS.nombre_cliente,
         edad:
           edadDesdeFecha(customer?.birthDate?.toISOString()) ??
           edadDesdeFecha(perfil.fecha_nacimiento as string | undefined) ??
@@ -221,18 +252,25 @@ export class ElevenLabsService {
             : perfil.afiliado_colsubsidio === false
               ? 'no afiliado'
               : DYNAMIC_VARIABLE_DEFAULTS.afiliacion,
-        dependientes: (perfil.dependientes as number) ?? DYNAMIC_VARIABLE_DEFAULTS.dependientes,
-        vivienda: (perfil.tenencia as string) || DYNAMIC_VARIABLE_DEFAULTS.vivienda,
+        dependientes:
+          (perfil.dependientes as number) ??
+          DYNAMIC_VARIABLE_DEFAULTS.dependientes,
+        vivienda:
+          (perfil.tenencia as string) || DYNAMIC_VARIABLE_DEFAULTS.vivienda,
         vehiculo: tieneVehiculo
           ? `${perfil.marca ?? ''} ${perfil.modelo_anio ?? ''}`.trim()
           : DYNAMIC_VARIABLE_DEFAULTS.vehiculo,
-        tipo_ingreso: (perfil.actividad_economica as string) || DYNAMIC_VARIABLE_DEFAULTS.tipo_ingreso,
+        tipo_ingreso:
+          (perfil.actividad_economica as string) ||
+          DYNAMIC_VARIABLE_DEFAULTS.tipo_ingreso,
         productos_vigentes: productosVigentes,
       };
 
       return { type: 'conversation_initiation_client_data', dynamic_variables };
     } catch (err) {
-      this.logger.warn(`init webhook: fallo buscando el lead, uso defaults: ${String(err)}`);
+      this.logger.warn(
+        `init webhook: fallo buscando el lead, uso defaults: ${String(err)}`,
+      );
       return fallback;
     }
   }
@@ -262,11 +300,15 @@ export class ElevenLabsService {
     const conversationId = data.conversation_id ?? null;
     if (conversationId) {
       const existing = await this.prisma.aiCall.findFirst({
-        where: { metadata: { path: ['conversationId'], equals: conversationId } },
+        where: {
+          metadata: { path: ['conversationId'], equals: conversationId },
+        },
         select: { id: true },
       });
       if (existing) {
-        this.logger.log(`webhook duplicado (conversation_id=${conversationId}), ya procesado — ignorado`);
+        this.logger.log(
+          `webhook duplicado (conversation_id=${conversationId}), ya procesado — ignorado`,
+        );
         return { received: true, processed: false, duplicate: true };
       }
     }
@@ -275,7 +317,9 @@ export class ElevenLabsService {
     // registro real (Customer/Lead/AiCall/transcript/scoring/profiling) no
     // debe demorar esa respuesta.
     this.processTranscription(data).catch((err: unknown) =>
-      this.logger.error(`error procesando webhook post-call en background: ${String(err)}`),
+      this.logger.error(
+        `error procesando webhook post-call en background: ${String(err)}`,
+      ),
     );
 
     return { received: true, processed: true };
@@ -286,7 +330,9 @@ export class ElevenLabsService {
       data.conversation_initiation_client_data?.dynamic_variables ?? {};
     const phone = dynamicVariables.phone;
     if (typeof phone !== 'string' || !phone.trim()) {
-      this.logger.warn('post-call webhook sin dynamic_variables.phone — no se puede asociar a un cliente');
+      this.logger.warn(
+        'post-call webhook sin dynamic_variables.phone — no se puede asociar a un cliente',
+      );
       return;
     }
     const tenantId = resolveTenantId(dynamicVariables.tenant_id);
@@ -296,7 +342,11 @@ export class ElevenLabsService {
       phone.trim(),
     );
     // Primer contacto real (o escalación a llamada de un lead ya existente).
-    await this.leads.findOrCreateOpenLead(tenantId, customer.id, Channel.VOICE_CALL);
+    await this.leads.findOrCreateOpenLead(
+      tenantId,
+      customer.id,
+      Channel.VOICE_CALL,
+    );
 
     const startedAt = data.metadata?.start_time_unix_secs
       ? new Date(data.metadata.start_time_unix_secs * 1000)

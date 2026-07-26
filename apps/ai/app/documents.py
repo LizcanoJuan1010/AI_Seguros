@@ -235,6 +235,27 @@ def _coverage_list(pdf: FPDF, items: list) -> None:
         pdf.ln(0.8)
 
 
+def _beneficios_section(pdf: FPDF, es_afiliado: bool) -> None:
+    """Beneficios de permanencia (vesting por meses de póliza vigente
+    continua — ver benefits.py / Nota_estrategica_Seguros_Colsubsidio.pdf
+    §4): se muestran en el PDF para que el cliente los vea como parte de la
+    oferta, no como una sorpresa por WhatsApp meses después. Dos escaleras
+    (afiliado/no afiliado) — misma red Colsubsidio, beneficio claramente
+    mayor para el afiliado."""
+    from .benefits import milestones_para
+    _section(pdf, "Beneficios por permanencia")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*MUTED)
+    intro = ("Por seguir tu póliza al día, sin interrupciones, vas desbloqueando esto:"
+             if es_afiliado else
+             "Por seguir tu póliza al día, sin interrupciones, vas desbloqueando esto "
+             "(afíliate a Colsubsidio y estos mismos beneficios se duplican):")
+    pdf.multi_cell(CONTENT_W, 5, _latin(intro), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+    _coverage_list(pdf, [f"Mes {mes}: {beneficio}"
+                        for mes, beneficio in milestones_para(es_afiliado)])
+
+
 def _legal_box(pdf: FPDF, text: str) -> None:
     pdf.ln(4)
     pdf.set_font("Helvetica", "I", 7.8)
@@ -297,7 +318,7 @@ def _new_folio(prefix: str) -> str:
 
 # -- documentos --------------------------------------------------------------
 
-def build_quote_pdf(quote: dict, lead: dict | None = None) -> str:
+def build_quote_pdf(quote: dict, lead: dict | None = None, *, es_afiliado: bool = False) -> str:
     """Genera el PDF de una cotización y devuelve la ruta del archivo."""
     folio = _new_folio("TQ-COT")
     pdf = BrandPDF("Cotización", folio)
@@ -332,6 +353,8 @@ def build_quote_pdf(quote: dict, lead: dict | None = None) -> str:
     _section(pdf, "Coberturas incluidas")
     _coverage_list(pdf, quote["coberturas"])
 
+    _beneficios_section(pdf, es_afiliado)
+
     _legal_box(pdf, (
         "Cotización referencial de pre-venta generada por el asistente digital de "
         f"{BRAND_NAME}. No constituye emisión de póliza ni oferta vinculante. La "
@@ -355,7 +378,8 @@ def _fmt_date(value: str) -> str:
         return str(value)[:10]
 
 
-def build_policy_pdf(policy: dict, customer: dict, coverage: dict | None = None) -> str:
+def build_policy_pdf(policy: dict, customer: dict, coverage: dict | None = None,
+                     *, es_afiliado: bool = False) -> str:
     """Genera el certificado/carátula de una póliza EMITIDA y devuelve la ruta.
 
     `policy`   : {policyNumber, insuranceType, monthlyPremiumCop, startDate, endDate,
@@ -427,6 +451,8 @@ def build_policy_pdf(policy: dict, customer: dict, coverage: dict | None = None)
         pdf.set_text_color(*MUTED)
         pdf.multi_cell(CONTENT_W, 5.6, _latin(str(coverage["resumen"])),
                        new_x="LMARGIN", new_y="NEXT")
+
+    _beneficios_section(pdf, es_afiliado)
 
     _legal_box(pdf, (
         "Certificado de póliza emitido de forma digital. Colsubsidio actúa como distribuidor; "

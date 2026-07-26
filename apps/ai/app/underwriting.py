@@ -33,13 +33,31 @@ DEFAULT_PREMIUM_REFER_COP = 500_000
 # Edad desde la cual un seguro de vida requiere suscripción humana.
 LIFE_REFER_AGE = 70
 
+# Edad máxima de ingreso para productos COLECTIVOS (aceptación garantizada):
+# sin suscripción individual, esta es la única palanca contra selección
+# adversa que queda del lado de underwriting (las otras son estructurales del
+# producto: carencias, tope de suma asegurada — ver
+# Nota_estrategica_Seguros_Colsubsidio.pdf §1).
+COLLECTIVE_MAX_ENTRY_AGE = 70
+
 
 def evaluate(perfil: dict[str, Any] | None, *, insurance_type: str,
-             monthly_premium_cop: float) -> dict[str, Any]:
+             monthly_premium_cop: float, modalidad: str = "individual") -> dict[str, Any]:
     """Evalúa la solicitud y devuelve `{decision, reasons, ...}` auditable.
 
     `perfil` es la salida de `profiling.build_profile` (puede ser None si no
     hay datos: en ese caso solo aplican las reglas de prima).
+
+    `modalidad` (del producto, ver `products.modalidad`/catálogo):
+    - "colectiva": póliza colectiva con Colsubsidio como tomador y el cliente
+      como asegurado, aceptación GARANTIZADA — no hay suscripción individual
+      ni declaración del estado del riesgo (Art. 1058 C. Co. neutralizado).
+      Se salta TODA la evaluación de riesgo individual de abajo; solo se
+      controla la edad máxima de ingreso.
+    - "asesor": producto de alta fricción (auto todo riesgo, vida con
+      ahorro...) que NO es autogestionable — declina por este canal siempre,
+      independiente del perfil.
+    - "individual" (default): flujo de suscripción de hoy, sin cambios.
     """
     perfil = perfil or {}
     tipo = (insurance_type or "").strip().upper() or "VIDA"
@@ -56,6 +74,24 @@ def evaluate(perfil: dict[str, Any] | None, *, insurance_type: str,
         return {"decision": DECLINE, "tipo": tipo, "prima_cop": prima,
                 "reasons": ["el tomador es menor de edad: no asegurable en este canal"],
                 "segmento_riesgo": segmento}
+
+    if modalidad == "asesor":
+        return {"decision": DECLINE, "tipo": tipo, "prima_cop": prima,
+                "segmento_riesgo": segmento,
+                "reasons": ["este producto requiere asesoría humana (alta fricción o "
+                           "decisión financiera compleja): no se ofrece por este "
+                           "canal autogestionado"]}
+
+    if modalidad == "colectiva":
+        if edad is not None and edad >= COLLECTIVE_MAX_ENTRY_AGE:
+            return {"decision": DECLINE, "tipo": tipo, "prima_cop": prima,
+                    "segmento_riesgo": segmento,
+                    "reasons": [f"edad {edad}: supera la edad máxima de ingreso "
+                               f"({COLLECTIVE_MAX_ENTRY_AGE} años) de este producto colectivo"]}
+        return {"decision": AUTO_APPROVE, "tipo": tipo, "prima_cop": prima,
+               "umbral_autoemision_cop": None, "segmento_riesgo": segmento,
+               "reasons": ["póliza colectiva con aceptación garantizada: sin "
+                          "suscripción individual ni declaración de riesgo"]}
 
     reasons: list[str] = []
     if "pep" in banderas:

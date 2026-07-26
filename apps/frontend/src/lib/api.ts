@@ -188,11 +188,44 @@ export type PortfolioFilters = {
   risk?: string
 }
 
+export type CampaignChannel = 'INSTAGRAM_POST' | 'INSTAGRAM_STORY' | 'LINKEDIN' | 'EMAIL'
+
+export type ApiCampaign = {
+  id: string
+  phrase: string
+  subtitle: string | null
+  cta: string | null
+  insuranceType: 'VIDA' | 'AUTO' | 'SALUD' | null
+  channel: CampaignChannel
+  bannerUrl: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type CreateCampaignInput = {
+  phrase: string
+  subtitle?: string
+  cta?: string
+  insuranceType?: 'VIDA' | 'AUTO' | 'SALUD'
+  channel: CampaignChannel
+  bannerUrl?: string
+}
+
+export type CampaignSendCount = {
+  status: 'PENDIENTE' | 'ENVIADO' | 'FALLIDO' | 'OMITIDO'
+  count: number
+}
+
+export type SendCampaignInput = { intent: 'CALIENTE' | 'TIBIO' | 'FRIO'; message: string }
+export type SendCampaignResult = { queued: number; campaignId: string }
+
+// GET /dashboard/leads-kpis (ya existía en el backend desde el motor de
+// scoring; no se consumía en ningún lado del frontend todavía).
 export type LeadsKpis = {
   avgFirstResponseHours: number | null
   avgCustomerResponseMinutes: number | null
   unresponsiveOver48h: { total: number; stale: number; pct: number }
-  intentDistribution: { intent: string; count: number }[]
+  intentDistribution: { intent: 'CALIENTE' | 'TIBIO' | 'FRIO'; count: number }[]
 }
 
 export type ChannelFunnel = {
@@ -501,6 +534,15 @@ export const api = {
     get<Paginated<HotLead>>('/dashboard/hot-leads-uncontacted', { limit: '20' }),
   claims: (teamId?: string) =>
     get<Paginated<ApiClaim>>('/claims', { teamId, limit: '20' }),
+  campaigns: () => get<Paginated<ApiCampaign>>('/campaigns', { limit: '50' }),
+  campaign: (id: string) => get<ApiCampaign>(`/campaigns/${id}`),
+  campaignSendsSummary: (id: string) =>
+    get<CampaignSendCount[]>(`/campaigns/${id}/sends-summary`),
+  createCampaign: (input: CreateCampaignInput) =>
+    post<ApiCampaign>('/campaigns', input),
+  sendCampaign: (id: string, input: SendCampaignInput) =>
+    post<SendCampaignResult>(`/campaigns/${id}/send`, input),
+  leadsKpis: () => get<LeadsKpis>('/dashboard/leads-kpis'),
 }
 
 /** Tenant seleccionado, compartido con módulos fuera de React (ej. chat SSE). */

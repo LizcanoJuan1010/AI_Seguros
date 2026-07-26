@@ -1,0 +1,20 @@
+# Solo aplica a builds con contexto en la RAÍZ del repo (hoy:
+# deploy/frontend.railway.Dockerfile para Railway) — los demás Dockerfiles
+# usan su propio directorio de app como contexto y ya excluyen esto por no
+# estar ahí dentro. Sin este archivo, un contexto en la raíz manda TODO
+# (node_modules de cada app, .venv de apps/ai, .git) al daemon de Docker —
+# lento y puede tirar el build por tamaño.
+.git
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+apps/ai/generated_docs
+apps/ai/generated_audio
+apps/ai/generated_banners
+.env
+**/.env
+openspec
+docs
+*.md
