@@ -130,6 +130,10 @@ services:
       # URL pública de este servicio (links de firma/KYC/documentos). Vacío =
       # rutas relativas, no abren bien fuera de la SPA (ver esign.py/kyc.py).
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      # URL pública del FRONTEND: links de activación del checklist
+      # (${FRONTEND_PUBLIC_URL}/activacion/<token>, ver checklist.py). Sin
+      # esta línea, el valor del .env jamás llegaba al contenedor.
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-}
       - ESIGN_LINK_TTL_MINUTES=${ESIGN_LINK_TTL_MINUTES:-60}
       # KYC (Didit). Sin DIDIT_API_KEY corre en modo demo (ver kyc.py).
       - DIDIT_API_KEY=${DIDIT_API_KEY:-}

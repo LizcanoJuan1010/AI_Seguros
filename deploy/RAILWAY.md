@@ -56,7 +56,15 @@ dejás en `false` no hace falta tocar nada acá).
   SERVICE_API_KEY=<generar uno real>
   AI_SERVICE_URL=http://ai.railway.internal:8085
   CORS_ORIGINS=https://<dominio-publico-del-frontend>
-  # Opcionales (dejar vacío = modo demo): POLAR_*, ELEVENLABS_*
+  # Opcionales EN DEMO, pero con dos trampas al activarlos:
+  # 1) ELEVENLABS_WEBHOOK_SECRET y ELEVENLABS_POSTCALL_SECRET son DOS secretos
+  #    DISTINTOS (init vs post-call); sus guards lanzan excepción si faltan.
+  # 2) POLAR_ACCESS_TOKEN sin POLAR_WEBHOOK_SECRET = el webhook de pagos se
+  #    ACEPTA SIN VERIFICAR FIRMA (agujero de seguridad, no modo demo).
+  #    Si configurás Polar, configurá los cuatro: POLAR_BASE_URL,
+  #    POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET, POLAR_SUCCESS_URL.
+  # PORT: fijalo en 3000 explícito — BACKEND_URL (ai) y BACKEND_INTERNAL_URL
+  # (frontend) apuntan a :3000 hardcodeado.
   ```
 - **Réplicas: dejá el backend en 1.** El tope de llamadas de voz anónimas
   simultáneas (`live-call.gateway.ts`, `MAX_ANON_POR_DISPOSITIVO`/
@@ -90,6 +98,11 @@ dejás en `false` no hace falta tocar nada acá).
   DEEPGRAM_API_KEY=<tu key real>
   DEEPGRAM_VOICE_MODEL=aura-2-celeste-es
   PUBLIC_BASE_URL=https://<dominio-publico-de-este-servicio-ai>
+  # OBLIGATORIA: los links de activación (checklist.py) se construyen como
+  # ${FRONTEND_PUBLIC_URL}/activacion/<token> — sin esta var salen como ruta
+  # relativa y el cliente recibe un LINK MUERTO por WhatsApp/correo, con solo
+  # un warning en logs (falla silenciosa).
+  FRONTEND_PUBLIC_URL=https://<dominio-publico-del-frontend>
   # Correo (informes, links de firma/KYC): usar RESEND, no SMTP — Railway
   # bloquea los puertos SMTP salientes. RESEND_FROM_EMAIL es OBLIGATORIA y su
   # dominio debe estar VERIFICADO en resend.com/domains: sin ella cae al
@@ -145,6 +158,17 @@ dejás en `false` no hace falta tocar nada acá).
 - `https://<dominio-frontend>/` → carga la SPA
 - Login real desde el frontend (ejercita `/api/v1/auth/login` vía el proxy)
 - Chat del asistente (ejercita SSE vía `/api/` → `ai`)
+
+## Disco efímero: PDFs y subidas se pierden en cada redeploy
+
+Railway no persiste el filesystem entre deploys, y hoy dos cosas escriben a
+disco: los PDFs generados por el servicio `ai` (`SEGURIA_DOCS_DIR`, horneado a
+`/app/state/generated_docs`) y las subidas de clientes del `backend`
+(`CUSTOMER_UPLOADS_DIR`). **Cada redeploy borra pólizas/cotizaciones en PDF y
+documentos subidos.** Para producción real: montá un Volume de Railway en esas
+rutas (Settings → Volumes del servicio), o mové los binarios a un object
+storage. Para demo, basta saber que un link de PDF viejo puede dar 404 tras
+un redeploy.
 
 ## Fuera de alcance de esta guía
 
