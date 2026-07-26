@@ -18,7 +18,7 @@ from typing import Any
 import psycopg
 
 from .config import (BACKEND_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL,
-                     DEEPSEEK_MODEL, MANAGER_PHONES)
+                     DEEPSEEK_MODEL, MANAGER_PHONES, PUBLIC_BASE_URL)
 from .db import COUNTRY_NAMES, get_conn
 from .documents import build_policy_pdf, build_quote_pdf
 from .insights import summary as insights_summary
@@ -33,17 +33,18 @@ _DISCLOSURE_PROCESAMIENTO = (
     "la conversación queda registrada y se procesa para poder ayudarte mejor "
     "— no lo preguntes como opción, dilo de paso y sigue.")
 
-# Identidad de Sofía (chat web, informativa) y Camilo (WhatsApp, cierre
+# Identidad de Sofía (chat web, informativa) y Mónica (WhatsApp, cierre
 # directo) — dos personas distintas que comparten el mismo NÚCLEO_CIERRE
 # (herramientas/pasos de cotizar-a-emitir son idénticos en ambos canales,
 # ver abajo); lo que cambia es la identidad y cuánto empuja cada una el
-# cierre. El tercer agente de la familia (Martín, llamada saliente) vive
-# aparte en apps/ai/app/reference/elevenlabs_agent_prompt.md.
+# cierre. El tercer agente de la familia (Camila, llamada saliente) vive
+# aparte en apps/ai/app/reference/elevenlabs_agent_prompt.md. Las tres
+# personas son mujeres, mismo criterio de marca en los tres canales.
 SOFIA_INTRO = f"""Eres Sofía, asesora digital de Colsubsidio en el chat web de Tequendama. Tu prioridad es informar bien sobre el catálogo y ayudar a encontrar qué seguro le sirve — el chat web es la puerta de entrada, no el lugar de presión. Respondes en español, tuteando siempre. Siempre debes tratar los precios como pesos colombianos.
 
 {_DISCLOSURE_PROCESAMIENTO}"""
 
-CAMILO_INTRO = f"""Eres Camilo, asesor digital de seguros de Colsubsidio por WhatsApp, al estilo de Erica de Bank of America: cercano, resolutivo y experto. Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurado" en el mismo chat, sin humano — este es el canal donde de verdad se cierra. Respondes en español, tuteando siempre.
+MONICA_INTRO = f"""Eres Mónica, asesora digital de seguros de Colsubsidio por WhatsApp, al estilo de Erica de Bank of America: cercana, resolutiva y experta. Tu misión es llevar al cliente de "no sé qué seguro necesito" a "ya quedé asegurado" en el mismo chat, sin humano — este es el canal donde de verdad se cierra. Respondes en español, tuteando siempre.
 
 {_DISCLOSURE_PROCESAMIENTO}"""
 
@@ -68,11 +69,11 @@ DATOS REALES PARA EMITIR: usa `solicitar_informacion`/`guardar_datos_cliente`/`g
 ORDEN DE CIERRE (no lo saltes ni lo cambies — cada paso bloquea al siguiente si no está listo):
 1. `capturar_datos_cliente`
 2. `registrar_consentimiento` — dilo así: "¿Autorizas el tratamiento de tus datos personales (Ley 1581/2012) para emitir la póliza?". Sin sí explícito, no sigues.
-3. `generar_verificacion_identidad` → cuando confirme que lo hizo, `verificar_identidad` — no le creas de palabra.
-4. `evaluar_riesgo` — AUTO_APPROVE sigue; REFER: no cobres/emitas, un asesor confirma en <24h; DECLINE: sé honesto, ofrece alternativa.
-5. `generar_firma_poliza` — dile que revise WhatsApp/correo y haga clic en "Acepto".
-6. Pago: `generar_link_pago` (o payment_method="simulado" si prefiere). En chat/voz NUNCA leas ni dictes la URL completa del checkout — el cliente paga con el botón en pantalla (o el link de WhatsApp si se envió). Cuando diga que pagó, `verificar_pago` y solo sigue con APPROVED. Nunca pidas tarjeta/CVV/clave en el chat.
-7. `emitir_poliza` — si falta un paso previo, el error te dice cuál; complétalo y reintenta. Al emitir: "¡Ya quedaste asegurada! Tu póliza es N.º...", entrega el link y menciona el retracto (5 días hábiles, Ley 1480/2011).
+3. `generar_checklist_activacion` — CAMINO PRINCIPAL: crea y entrega el link único de activación (sin vencimiento). Si el producto elegido es COLECTIVO (aceptación garantizada — exequial, accidentes personales, mascotas, asistencias, viaje), sáltate identidad: solo firma y pago. Si es de alta fricción (auto todo riesgo, vida con ahorro), la tool falla con `necesita_asesor` — no insistas, deriva a un asesor humano de inmediato, sin ofrecer el checklist. Para el resto: identidad (cédula+RF) → firma → pago. Dile con calidez que ahí completa todo cuando pueda, en el orden que le va marcando la página, y que tú le haces seguimiento. NO ejecutes tú los pasos uno por uno en el chat salvo que el cliente lo pida explícitamente (ver camino manual abajo).
+4. Seguimiento: usa `verificar_checklist_activacion` para saber en qué paso va — no le creas de palabra si dice que ya completó algo. `en_revision` → no cobres/emitas, un asesor confirma en <24h; `rechazado` → sé honesto, ofrece alternativa.
+5. Cuando el checklist esté en `completado` (pago aprobado), cierra con `emitir_poliza` (mismos argumentos de siempre: insurance_type, monthly_premium_cop, payment_method distinto de "simulado"). Al emitir: "¡Ya quedaste asegurada! Tu póliza es N.º...", entrega el link y menciona el retracto (5 días hábiles, Ley 1480/2011).
+
+CAMINO MANUAL (alternativo — solo si el cliente prefiere hacerlo contigo mismo, ahora, en el chat en vez del link): `generar_verificacion_identidad` → `verificar_identidad` → `evaluar_riesgo` → `generar_firma_poliza` → pago con `generar_link_pago`/`verificar_pago` (tarjeta) o `activar_recaudo_nomina` (descuento por nómina, más persistente — ofrécelo si es afiliado con empleador vinculado) → `emitir_poliza`. En chat/voz NUNCA leas ni dictes la URL completa del checkout — el cliente paga con el botón en pantalla o el link de WhatsApp. Nunca pidas tarjeta/CVV/clave en el chat.
 
 POSVENTA: cobro errado, reembolso o retracto → `solicitar_aclaracion`, explica el resultado con transparencia.
 
@@ -107,7 +108,7 @@ _CONOCIMIENTO_COLSUBSIDIO = _load_conocimiento()
 def _web_framing() -> str:
     """Identidad/canal de Sofía (chat web, nunca WhatsApp — ver `run_agent`/
     `assistant._run_llm`): informativa primero, cierre disponible pero no
-    insistido — ofrece venta cruzada y el paso a WhatsApp (Camilo) para
+    insistido — ofrece venta cruzada y el paso a WhatsApp (Mónica) para
     seguir sin presión. Lo que ya se cotizó/capturó sigue disponible allá
     (misma sesión particionada por phone, ver session_key)."""
     from .config import WHATSAPP_BUSINESS_NUMBER
@@ -124,13 +125,13 @@ siguiente paso, dime y te ayudo; ya ayudé a otros clientes con tu misma
 situación." Puedes ofrecer cerrar la venta ahí mismo UNA vez (no le niegues
 el cierre si de verdad quiere hacerlo ya), pero no insistas más de esa vez.
 Si no muestra intención clara de comprar ahora, dile con calidez algo como
-"si prefieres, por WhatsApp{numero} tienes un asesor personalizado (Camilo)
+"si prefieres, por WhatsApp{numero} tienes una asesora personalizada (Mónica)
 esperándote cuando quieras" y sigue resolviendo dudas sin presionar. Todo lo
 que ya cotizó o contó acá sigue disponible si continúa por WhatsApp — no le
-hagas repetir nada Siempre debes tratar los precio como pesos colombianos."""
+hagas repetir nada. Siempre debes tratar los precios como pesos colombianos."""
 
 
-_CAMILO_FRAMING = """
+_MONICA_FRAMING = """
 
 CANAL: WhatsApp. Puedes responder con nota de voz cuando ayude (explicaciones
 cortas, o si te escribió por audio) — el texto siempre va también, el audio
@@ -138,9 +139,9 @@ nunca reemplaza cifras o coberturas exactas.
 
 Si el cliente prefiere que lo llamen, o si después del checklist
 (verificación de identidad, firma, pago) quiere resolver algo más a fondo,
-ofrécele la llamada de un asesor y usa `actualizar_lead` con la etapa
-actual — la llamada la hace Martín, el asesor telefónico, reservada para
-leads con intención real de compra. Siempre debes tratar los precio como pesos colombianos."""
+ofrécele la llamada de una asesora y usa `actualizar_lead` con la etapa
+actual — la llamada la hace Camila, la asesora telefónica, reservada para
+leads con intención real de compra. Siempre debes tratar los precios como pesos colombianos."""
 
 
 _CAMILO_VOICE_FRAMING = """
@@ -150,12 +151,15 @@ listas largas — esto se ESCUCHA, no se lee. Nunca leas ni dictes una URL
 completa de checkout: dile que use el botón de pago en pantalla. Revisa el
 historial de esta llamada antes de responder: si ya hay turnos previos, NO
 te vuelvas a presentar ni repitas el saludo inicial — continúa la
-conversación donde quedó, directo a la siguiente pregunta o paso. Siempre debes tratar los precio como pesos colombianos."""
+conversación donde quedó, directo a la siguiente pregunta o paso. Siempre debes tratar los precios como pesos colombianos."""
 
 
 SYSTEM_PROMPT_WEB_DEFAULT = f"{SOFIA_INTRO}\n\n{_NUCLEO_CIERRE}{_web_framing()}"
-SYSTEM_PROMPT_WHATSAPP_DEFAULT = f"{CAMILO_INTRO}\n\n{_NUCLEO_CIERRE}{_CAMILO_FRAMING}"
-SYSTEM_PROMPT_VOICE_DEFAULT = f"{CAMILO_INTRO}\n\n{_NUCLEO_CIERRE}{_CAMILO_VOICE_FRAMING}"
+SYSTEM_PROMPT_WHATSAPP_DEFAULT = f"{MONICA_INTRO}\n\n{_NUCLEO_CIERRE}{_MONICA_FRAMING}"
+# Llamada de voz en VIVO desde el navegador (/ws/voice/live, voice_live.py —
+# distinta del canal saliente de Camila/ElevenLabs): misma persona/rol de
+# cierre que WhatsApp (Mónica), con el addendum de estilo de voz de Zaid.
+SYSTEM_PROMPT_VOICE_DEFAULT = f"{MONICA_INTRO}\n\n{_NUCLEO_CIERRE}{_CAMILO_VOICE_FRAMING}"
 if _CONOCIMIENTO_COLSUBSIDIO:
     SYSTEM_PROMPT_WEB_DEFAULT = f"{SYSTEM_PROMPT_WEB_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
     SYSTEM_PROMPT_WHATSAPP_DEFAULT = f"{SYSTEM_PROMPT_WHATSAPP_DEFAULT}\n\n{_CONOCIMIENTO_COLSUBSIDIO}"
@@ -167,6 +171,8 @@ SYSTEM_PROMPT_GERENTE_DEFAULT = """Eres Tequendama en modo analista para un GERE
 - No vuelques JSON: responde la pregunta con 3-5 datos clave, una comparación relevante y UNA recomendación accionable.
 - Tablas de texto simples para comparativas; números con separador de miles.
 - Si pide seguimiento de leads usa `listar_leads`; si pide cambiar una etapa usa `actualizar_lead`.
+- Si pide lanzar/crear una campaña (banner + publicación), usa `crear_campana_marketing` — el envío real a leads lo confirma el gerente desde el panel de Campañas, nunca automático.
+- Si pide el reporte formal por correo (no solo ver cifras acá), usa `solicitar_informe_gerencial`.
 - Termina cada respuesta con la línea:
 SUGERENCIAS: pregunta 1 | pregunta 2
 con 2 análisis de profundización que probablemente quiera (ej. "¿Dónde se caen los leads? | Compárame Colombia vs México")."""
@@ -251,8 +257,16 @@ TOOLS_SCHEMA = [
         "parameters": {"type": "object", "required": ["acepta"], "properties": {
             "acepta": {"type": "boolean", "description": "true si el cliente autorizó explícitamente el tratamiento de sus datos"}}}}},
     {"type": "function", "function": {
+        "name": "generar_checklist_activacion",
+        "description": "Camino PRINCIPAL de cierre: crea y entrega (por WhatsApp/correo) el link único de activación del cliente, a su propio ritmo y sin vencimiento. Para productos COLECTIVOS (exequial, accidentes personales, mascotas, asistencias, viaje — aceptación garantizada): solo firma y pago, sin identidad/documentos. Para el resto: identidad (cédula+reconocimiento facial), firma y pago. Requiere que ya haya una cotización elegida. Si el producto es de alta fricción (auto todo riesgo, vida con ahorro...) devuelve error `necesita_asesor` — NO insistas, deriva a un asesor humano. Idempotente: si el cliente ya tiene uno, no reenvía otro link.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "verificar_checklist_activacion",
+        "description": "Consulta en qué paso va el cliente dentro de su checklist de activación (cedula|reconocimiento_facial|en_revision|rechazado|firma|pago|completado — los productos colectivos saltan directo a firma). Úsala cuando el cliente diga que ya avanzó, o antes de emitir_poliza para confirmarlo — no le creas de palabra.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
         "name": "generar_verificacion_identidad",
-        "description": "Envía por WhatsApp/correo un link que abre la cámara del celular del cliente para verificar su identidad (foto de cédula + selfie con prueba de vida y comparación facial contra un proveedor de KYC). OBLIGATORIO antes de emitir_poliza — sin esto emitir_poliza falla. NUNCA le pidas al cliente que reenvíe fotos ya tomadas por el chat; el link es la única forma válida. Idempotente: si ya hay una verificación en curso, no reenvía otro link.",
+        "description": "Camino MANUAL (alternativo al checklist, para el cliente que prefiere hacerlo aquí mismo en el chat): envía por WhatsApp/correo un link que abre la cámara del celular del cliente para verificar su identidad (foto de cédula + selfie con prueba de vida y comparación facial contra un proveedor de KYC). OBLIGATORIO antes de emitir_poliza — sin esto emitir_poliza falla. NUNCA le pidas al cliente que reenvíe fotos ya tomadas por el chat; el link es la única forma válida. Idempotente: si ya hay una verificación en curso, no reenvía otro link.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "verificar_identidad",
@@ -277,7 +291,7 @@ TOOLS_SCHEMA = [
             "monthly_premium_cop": {"type": "number", "description": "Prima mensual en COP de la opción elegida"},
             "coverage": {"type": "object", "description": "Resumen de la oferta: {aseguradora, coberturas:[...], resumen}",
                          "properties": {}, "additionalProperties": True},
-            "payment_method": {"type": "string", "description": "Método de pago: 'tarjeta' si pagó con el link real, 'simulado' para el demo", "default": "simulado"},
+            "payment_method": {"type": "string", "description": "Método de pago: 'tarjeta' (link de generar_link_pago), 'nomina' (activar_recaudo_nomina), 'simulado' para el demo", "default": "simulado"},
             "payment_reference": {"type": "string", "description": "Referencia SEG-... del pago aprobado (obligatoria si payment_method no es 'simulado')"},
         }}}},
     {"type": "function", "function": {
@@ -286,6 +300,13 @@ TOOLS_SCHEMA = [
         "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
             "monto_cop": {"type": "number", "description": "Monto a cobrar en COP (normalmente la prima mensual de la opción elegida)"},
             "descripcion": {"type": "string", "description": "Concepto del cobro, ej. 'Primera mensualidad — Seguro de Vida'"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "activar_recaudo_nomina",
+        "description": "Alternativa a generar_link_pago: inscribe al cliente al descuento de la prima por NÓMINA (ventaja de Colsubsidio con el empleador del afiliado — más persistente que tarjeta, sin riesgo de rechazo). Ofrécela cuando el cliente sea afiliado con empleador vinculado o prefiera no usar tarjeta. Se aprueba de inmediato (la inscripción ES el compromiso); el primer descuento aplica en el próximo ciclo de pago. Después usa emitir_poliza con payment_method='nomina'.",
+        "parameters": {"type": "object", "required": ["monto_cop"], "properties": {
+            "monto_cop": {"type": "number", "description": "Monto a descontar por nómina en COP (la prima mensual de la opción elegida)"},
+            "descripcion": {"type": "string", "description": "Concepto del descuento, ej. 'Primera mensualidad — Seguro de Vida'"},
         }}}},
     {"type": "function", "function": {
         "name": "verificar_pago",
@@ -310,6 +331,21 @@ TOOLS_SCHEMA = [
         "description": "SOLO GERENTES: últimos leads con cotizaciones y prima.",
         "parameters": {"type": "object", "properties": {
             "limit": {"type": "integer", "default": 20}}}}},
+    {"type": "function", "function": {
+        "name": "crear_campana_marketing",
+        "description": "SOLO GERENTES: genera el banner (Gemini, paleta Colsubsidio) de una campaña y la crea como borrador en el panel de Campañas. El envío a los leads NO ocurre acá — se confirma manualmente desde /campanas, nunca automático desde el chat.",
+        "parameters": {"type": "object", "required": ["frase", "canal"], "properties": {
+            "frase": {"type": "string", "description": "Titular de la campaña, se renderiza sobre el banner"},
+            "subtitulo": {"type": "string", "description": "Texto secundario, opcional"},
+            "cta": {"type": "string", "description": "Llamado a la acción, ej. 'Cotiza ahora'"},
+            "canal": {"type": "string", "enum": ["instagram_post", "instagram_story", "linkedin", "email"]},
+            "tipo_seguro": {"type": "string", "description": "vida|auto|salud|hogar|viaje|pyme|accidentes|exequial|mascotas|movilidad (contexto temático del banner y la campaña)"},
+        }}}},
+    {"type": "function", "function": {
+        "name": "solicitar_informe_gerencial",
+        "description": "SOLO GERENTES: arma el reporte gerencial (KPIs + funnel) y lo envía por correo al instante. Para ver los números en el chat mismo usa obtener_insights; esta herramienta es para cuando el gerente quiere el reporte formal en su correo.",
+        "parameters": {"type": "object", "required": ["email"], "properties": {
+            "email": {"type": "string", "description": "Correo del gerente al que enviar el reporte"}}}}},
     {"type": "function", "function": {
         "name": "solicitar_informacion",
         "description": "Consulta qué información REAL falta para emitir un seguro (KYC/SARLAFT/declaración de asegurabilidad por producto). Devuelve % de avance y los próximos campos a pedir. Úsala antes de emitir para saber qué preguntar.",
@@ -362,6 +398,11 @@ TOOLS_SCHEMA = [
         "parameters": {"type": "object", "required": ["policy_number"], "properties": {
             "policy_number": {"type": "string", "description": "Número de póliza, ej. POL-2026-000123"}}}}},
     {"type": "function", "function": {
+        "name": "consultar_beneficios",
+        "description": "Beneficios de permanencia ya desbloqueados (con código para reclamar) y los que faltan, por meses de póliza vigente continua (mes 3, 6 y 12). Dos escaleras en la red Colsubsidio (clubes, hoteles, droguería, Piscilago): la del AFILIADO es notablemente mayor (acceso gratuito, hotel/parque) que la de no afiliado (con descuento, solo viernes) — si el cliente no es afiliado, es una buena oportunidad para mencionar que afiliarse a Colsubsidio duplica estos beneficios. Úsala cuando el cliente pregunte qué gana por seguir pagando, o para reforzar la persistencia en seguimiento posventa.",
+        "parameters": {"type": "object", "required": ["policy_number"], "properties": {
+            "policy_number": {"type": "string", "description": "Número de póliza, ej. POL-2026-000123"}}}}},
+    {"type": "function", "function": {
         "name": "suscribir_informes",
         "description": "Suscribe al cliente a informes periódicos por correo sobre el estado de su seguro (cotizaciones, póliza, recomendaciones). Úsala SOLO cuando el cliente acepte explícitamente recibirlos y haya dado su email. Frecuencias: semanal | mensual (también diaria si la pide).",
         "parameters": {"type": "object", "required": ["email", "frecuencia"], "properties": {
@@ -370,7 +411,7 @@ TOOLS_SCHEMA = [
         }}}},
 ]
 
-# Solo WhatsApp (Camilo): Sofía (web) no tiene número real al que mandar
+# Solo WhatsApp (Mónica): Sofía (web) no tiene número real al que mandar
 # audio, y assistant.py (SSE, siempre web) sigue usando TOOLS_SCHEMA a secas.
 _TOOL_ENVIAR_NOTA_VOZ = {"type": "function", "function": {
     "name": "enviar_nota_voz",
@@ -492,6 +533,20 @@ def _checkout_missing(sess: dict) -> list[str]:
     return [labels[f] for f in CHECKOUT_REQUIRED if not (sess.get(f) or "").strip()]
 
 
+def _modalidad_para(phone: str) -> str:
+    """Modalidad (colectiva|individual|asesor) del producto de la ÚLTIMA
+    cotización de la sesión — mismo criterio que `calls.py::_sale_context`/
+    `checklist.py` para resolver "la cotización de la que se está hablando".
+    "individual" (flujo actual, sin cambios) si no hay cotización todavía."""
+    try:
+        from .assistant import _latest_quote_for
+        quote = _latest_quote_for(phone) if phone else None
+        return (quote or {}).get("modalidad") or "individual"
+    except Exception:
+        log.debug("no se pudo resolver la modalidad del producto", exc_info=True)
+        return "individual"
+
+
 def _session_profile(conn: psycopg.Connection, session_key: str) -> dict | None:
     """Perfil determinista del cliente a partir del intake + checkout de la sesión."""
     try:
@@ -587,7 +642,8 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
     from . import underwriting
     uw = underwriting.evaluate(_session_profile(conn, session_key),
                                insurance_type=insurance_type,
-                               monthly_premium_cop=prima)
+                               monthly_premium_cop=prima,
+                               modalidad=_modalidad_para(phone))
     if uw["decision"] == underwriting.REFER:
         _notify_referral(tenant_id, uw, sess)
         return {"underwriting": uw, "referred": True,
@@ -657,13 +713,27 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
             "insuranceType": insurance_type, "monthlyPremiumCop": prima,
         }
 
-    # Certificado/carátula PDF de la póliza
+    # Certificado/carátula PDF de la póliza — posventa inmediata por el mismo
+    # canal (ver Nota_estrategica_Seguros_Colsubsidio.pdf §5: "falta la pieza
+    # posventa... certificado inmediato por el mismo canal").
     download_url = None
+    enviado_whatsapp = False
     try:
         policy_for_pdf = {**policy, "aseguradora": coverage.get("aseguradora")}
-        path = build_policy_pdf(policy_for_pdf, customer, coverage)
+        es_afiliado = bool(_get_intake(conn, session_key).get("afiliado_colsubsidio"))
+        path = build_policy_pdf(policy_for_pdf, customer, coverage, es_afiliado=es_afiliado)
         from pathlib import Path
         download_url = f"/api/documents/{Path(path).name}"
+        if phone and not phone.startswith("web:"):
+            try:
+                from . import whatsapp_gateway
+                pdf_url = f"{PUBLIC_BASE_URL}{download_url}"
+                enviado_whatsapp = whatsapp_gateway.enviar_documento(
+                    phone, pdf_url, Path(path).name,
+                    caption=f"Tu certificado de póliza — N.º {policy.get('policyNumber')}")
+            except Exception:
+                log.warning("no se pudo enviar el certificado de póliza por WhatsApp",
+                           exc_info=True)
     except Exception:  # el PDF no debe tumbar la emisión
         log.exception("no se pudo generar el PDF de la póliza")
 
@@ -685,8 +755,12 @@ def _emitir_poliza(conn: psycopg.Connection, args: dict, *, phone: str,
         "insurance_type": insurance_type,
         "monthly_premium_cop": prima,
         "download_url": download_url,
+        "enviado_whatsapp": enviado_whatsapp,
         "degraded": degraded,
-        "mensaje": ("Póliza emitida. Confirma al cliente 'ya quedaste asegurada', entrega el "
+        "mensaje": ("Póliza emitida y certificado ya enviado por WhatsApp como adjunto. "
+                    "Confirma al cliente 'ya quedaste asegurada' e informa el derecho de "
+                    "retracto (5 días hábiles)." if enviado_whatsapp else
+                    "Póliza emitida. Confirma al cliente 'ya quedaste asegurada', entrega el "
                     "enlace de descarga e informa el derecho de retracto (5 días hábiles)."),
     }
     if note:
@@ -788,15 +862,38 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                 "coberturas": json.loads(q["coberturas"]),
                 "periodicidad": "por viaje" if q["prima_por_dia"] else "mensual",
             }
-            path = build_quote_pdf(quote_dict, lead)
-            conn.execute("UPDATE quotes SET status='documento' WHERE id=%s", (args["quote_id"],))
+            intake_datos = _get_intake(conn, session_key)
+            es_afiliado = bool(intake_datos.get("afiliado_colsubsidio"))
+            path = build_quote_pdf(quote_dict, lead, es_afiliado=es_afiliado)
+            from pathlib import Path
+            download_url = f"/api/documents/{Path(path).name}"
+            # Se persiste en la cotización (no solo se devuelve al LLM) para que
+            # el checklist de activación pueda enlazar la MISMA ficha ya
+            # generada para esta sesión, sin regenerarla (ver checklist.py).
+            conn.execute("UPDATE quotes SET status='documento', document_url=%s WHERE id=%s",
+                        (download_url, args["quote_id"]))
             if q["lead_id"]:
                 conn.execute("UPDATE leads SET stage='documento', updated_at=now() "
                              "WHERE id=%s AND stage NOT IN ('cerrado','perdido')", (q["lead_id"],))
             conn.commit()
-            from pathlib import Path
-            return {"download_url": f"/api/documents/{Path(path).name}",
-                    "mensaje": "documento generado; entrega este enlace al cliente"}
+            # Empuje real del PDF por WhatsApp (adjunto, no solo un link relativo
+            # en el texto de la respuesta — eso no abre nada fuera de la app).
+            # Solo aplica al canal WhatsApp; "web:..." no es un teléfono real.
+            enviado_whatsapp = False
+            if phone and not phone.startswith("web:"):
+                try:
+                    from . import whatsapp_gateway
+                    pdf_url = f"{PUBLIC_BASE_URL}{download_url}"
+                    enviado_whatsapp = whatsapp_gateway.enviar_documento(
+                        phone, pdf_url, Path(path).name,
+                        caption=f"Tu cotización — {quote_dict['producto']}")
+                except Exception:
+                    log.warning("no se pudo enviar el PDF de la cotización por WhatsApp",
+                               exc_info=True)
+            return {"download_url": download_url, "enviado_whatsapp": enviado_whatsapp,
+                    "mensaje": ("ya se envió el PDF por WhatsApp como adjunto; solo "
+                               "menciónalo, no repitas el link" if enviado_whatsapp else
+                               "documento generado; entrega este enlace al cliente")}
 
         if name == "actualizar_lead":
             from .main import _upsert_lead
@@ -842,6 +939,71 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             _save_checkout(conn, session_key, consent=1, consent_at=_dt.utcnow().isoformat())
             return {"ok": True, "consentimiento": True,
                     "mensaje": "Consentimiento de habeas data registrado."}
+
+        if name == "generar_checklist_activacion":
+            from . import checklist
+            from .assistant import _latest_quote_for
+            quote = _latest_quote_for(phone) if phone and not phone.startswith("web:") else None
+            if not quote:
+                return {"error": "todavía no hay una cotización elegida; cotiza primero "
+                                 "con cotizar antes de generar el checklist"}
+            modalidad = quote.get("modalidad") or "individual"
+            if modalidad == "asesor":
+                return {"error": "este producto (alta fricción o decisión financiera "
+                                 "compleja) no es autogestionable por este canal",
+                        "mensaje": "Sé honesta: este seguro se contrata con un asesor "
+                                  "humano, no por aquí. Da la línea de Colsubsidio u "
+                                  "ofrece que un asesor la contacte.",
+                        "necesita_asesor": True}
+            sess = _get_checkout(conn, session_key)
+            real_phone = phone if phone and not phone.startswith("web:") else None
+            if not (real_phone or sess.get("email")):
+                return {"error": "no hay teléfono ni correo del cliente; "
+                                 "captúralos con capturar_datos_cliente primero"}
+            result = checklist.get_or_create(
+                conn, session_key, tenant_id, phone=real_phone, email=sess.get("email"),
+                quote_id=quote.get("id"), insurance_type=quote.get("tipo"),
+                monthly_premium_cop=quote.get("premium_monthly_local"),
+                modalidad=modalidad)
+            if modalidad == "colectiva":
+                result["mensaje"] = (
+                    "Ya le envié un link único; como es un plan colectivo de "
+                    "aceptación garantizada, solo falta firmar y pagar — sin "
+                    "documentos ni verificación facial. No vence."
+                    if result.get("created") else
+                    "ya tiene un checklist de activación enviado; dile que revise "
+                    "WhatsApp o su correo si no lo encuentra.")
+            else:
+                result["mensaje"] = (
+                    "Ya le envié un link único; ahí completa todo a su ritmo: primero "
+                    "verifica su identidad, luego firma y por último paga. No vence."
+                    if result.get("created") else
+                    "ya tiene un checklist de activación enviado; dile que revise "
+                    "WhatsApp o su correo si no lo encuentra.")
+            return result
+
+        if name == "verificar_checklist_activacion":
+            from . import checklist
+            row = checklist.latest_by_session(conn, session_key)
+            if row is None:
+                return {"error": "el cliente todavía no tiene un checklist de activación; "
+                                 "usa generar_checklist_activacion",
+                        "necesita": "generar_checklist_activacion"}
+            estado = checklist.estado_actual(conn, row)
+            guia = {
+                "cedula": "sigue pendiente de subir su cédula (verificación de identidad) en el checklist",
+                "reconocimiento_facial": "ya subió la cédula; falta el reconocimiento facial "
+                                        "(selfie con prueba de vida) en el checklist",
+                "en_revision": "quedó en revisión de un asesor; NO cobres ni emitas todavía, "
+                              "explícale con calidez que le confirman en menos de 24 horas",
+                "rechazado": "no se puede continuar por este canal; sé honesto y ofrece "
+                            "una alternativa de protección",
+                "firma": "ya verificó su identidad; falta que firme la autorización en el checklist",
+                "pago": "ya firmó; falta que complete el pago en el checklist",
+                "completado": "ya completó todo: puedes continuar con emitir_poliza",
+            }.get(estado["paso_actual"], "")
+            estado["mensaje"] = guia
+            return estado
 
         if name == "generar_verificacion_identidad":
             from . import kyc
@@ -909,7 +1071,8 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
             uw = underwriting.evaluate(
                 _session_profile(conn, session_key),
                 insurance_type=str(args.get("insurance_type") or ""),
-                monthly_premium_cop=args.get("monthly_premium_cop") or 0)
+                monthly_premium_cop=args.get("monthly_premium_cop") or 0,
+                modalidad=_modalidad_para(phone))
             if uw["decision"] == underwriting.REFER:
                 _notify_referral(tenant_id, uw, _get_checkout(conn, session_key))
                 uw["mensaje"] = ("Caso escalado a un gerente (ya tiene la alerta en su panel). "
@@ -983,10 +1146,25 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                                 "prima actual y ofrece cerrar la renovación aquí mismo "
                                 "(mismo flujo: consentimiento → pago → emitir_poliza).")}
 
-        # ---------- Pagos reales (Nest Polar / modo demo) ----------
-        if name in ("generar_link_pago", "verificar_pago", "solicitar_aclaracion"):
+        if name == "consultar_beneficios":
+            pn = str(args.get("policy_number") or "").strip()
+            if not pn:
+                return {"error": "falta policy_number; pídele al cliente su número de póliza"}
+            from . import benefits
+            info = benefits.beneficios_de(conn, pn)
+            info["mensaje"] = (
+                "Cuéntale con calidez lo que ya ganó (con el código para reclamarlo en un "
+                "punto Colsubsidio) y lo próximo que se gana si sigue al día — es un "
+                "beneficio real de permanencia, no un genérico 'gracias por tu preferencia'."
+            )
+            return info
+
+        # ---------- Pagos reales (Nest Polar / nómina / modo demo) ----------
+        if name in ("generar_link_pago", "activar_recaudo_nomina", "verificar_pago",
+                   "solicitar_aclaracion"):
             from . import payments
             fn = {"generar_link_pago": payments.generar_link_pago,
+                  "activar_recaudo_nomina": payments.activar_recaudo_nomina,
                   "verificar_pago": payments.verificar_pago,
                   "solicitar_aclaracion": payments.solicitar_aclaracion}[name]
             result = fn(conn, session_key, tenant_id, args)
@@ -1028,6 +1206,57 @@ def _exec_tool(name: str, args: dict, *, phone: str, role: str,
                    GROUP BY l.id ORDER BY l.updated_at DESC LIMIT %s""",
                 (min(int(args.get("limit", 20)), 100),)).fetchall()
             return [dict(r) for r in rows]
+
+        if name == "crear_campana_marketing":
+            if role != "gerente":
+                return {"error": "acceso denegado: solo gerentes"}
+            from . import marketing_studio
+            frase = str(args.get("frase") or "").strip()
+            if not frase:
+                return {"error": "falta la frase/titular de la campaña"}
+            canal = str(args.get("canal") or "instagram_post")
+            banner = marketing_studio.generar_banner(
+                frase, subtitle=args.get("subtitulo"), cta=args.get("cta"),
+                tipo_seguro=args.get("tipo_seguro"), channel=canal)
+            if not banner.get("ok"):
+                return {"error": banner.get("error") or "no se pudo generar el banner"}
+            campaign: dict = {}
+            try:
+                import requests
+                tipo_seguro = str(args.get("tipo_seguro") or "").strip().upper() or None
+                resp = requests.post(
+                    f"{BACKEND_URL}/api/v1/campaigns",
+                    json={"phrase": frase, "subtitle": args.get("subtitulo"),
+                          "cta": args.get("cta"), "insuranceType": tipo_seguro,
+                          "channel": canal.upper(), "bannerUrl": banner.get("download_url")},
+                    timeout=8, headers={"X-Tenant-Id": tenant_id})
+                resp.raise_for_status()
+                campaign = resp.json() or {}
+            except Exception as exc:
+                log.warning("no se pudo crear la campaña en el backend: %s", exc)
+            return {"ok": True, "demo": banner.get("demo", False),
+                    "banner_url": banner.get("download_url"), "campaign": campaign,
+                    "mensaje": ("Banner listo" + (" (simulado, falta GEMINI_API_KEY)" if banner.get("demo") else "")
+                               + " y campaña creada como borrador. Para enviarla a los leads, "
+                                 "confírmalo desde el panel de Campañas — el envío real no se "
+                                 "dispara desde este chat.")}
+
+        if name == "solicitar_informe_gerencial":
+            if role != "gerente":
+                return {"error": "acceso denegado: solo gerentes"}
+            email = str(args.get("email") or "").strip()
+            if not email:
+                return {"error": "falta el correo al que enviar el informe"}
+            import asyncio
+
+            from . import reports as reports_mod
+            from .email_service import send_email
+            html = reports_mod.build_manager_report_html(conn)
+            result = asyncio.run(send_email(email, "Reporte gerencial de Tequendama Seguros", html))
+            ok = result.get("status") == "sent"
+            return {**result, "mensaje": "Informe gerencial enviado por correo." if ok
+                    else "No se pudo enviar el informe por correo; avísale al gerente que "
+                         "revise la configuración de correo del sistema."}
 
         # ---------- Intake / información real / perfilamiento ----------
         # Particionado por (tenant_id, user_id); user_id = phone o 'web:anon'.
@@ -1187,7 +1416,7 @@ def run_agent(session_id: str, user_message: str, *, phone: str = "",
     if role == "gerente":
         system = SYSTEM_PROMPT_GERENTE
     else:
-        # web: -> Sofía (informativa); número real -> Camilo (WhatsApp, cierra).
+        # web: -> Sofía (informativa); número real -> Mónica (WhatsApp, cierra).
         system = SYSTEM_PROMPT_WEB if phone.startswith("web:") else SYSTEM_PROMPT_WHATSAPP
     # enviar_nota_voz (Deepgram) solo tiene sentido con un número real de
     # WhatsApp al que mandar el audio — Sofía/gerente se quedan con el set base.

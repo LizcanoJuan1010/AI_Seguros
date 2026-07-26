@@ -31,6 +31,8 @@ curl -s ${SEGURIA_API_URL:-http://localhost:8085}/api/proactive -H "X-API-Key: $
 
 ## Límites anti-spam (obligatorios)
 - Máximo UN mensaje proactivo por cliente por día, y máximo 3 por cotización.
-- Nunca proactivo antes de las 9:00 ni después de las 20:00 hora local del país.
+- Ventana legal (Ley 2300 de 2023, Colombia — aplica a aseguradoras): SOLO
+  lunes a viernes 7:00–19:00 y sábados 8:00–15:00, hora de Colombia. Nunca
+  domingo, nunca fuera de esa franja aunque el cliente esté en otro país.
 - Si el cliente respondió "no me interesa" o similar: marca etapa `perdido`
   (`POST /api/leads`, header `X-Service-Key: $SERVICE_API_KEY`) y no vuelvas a contactarlo.

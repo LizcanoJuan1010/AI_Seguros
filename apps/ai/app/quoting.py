@@ -109,6 +109,10 @@ def quote_product(conn: psycopg.Connection, product: dict, *,
         "coberturas": coberturas,
         "breakdown": breakdown,
         "periodicidad": "por viaje" if product["prima_por_dia"] else "mensual",
+        # colectiva (aceptación garantizada, sin biometría/underwriting individual)
+        # | individual (flujo completo actual) | asesor (no autogestionable, se
+        # deriva a un humano) — ver underwriting.py/checklist.py.
+        "modalidad": product.get("modalidad") or "individual",
     }
 
 

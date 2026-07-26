@@ -145,9 +145,37 @@ def policy_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[di
     return nudges
 
 
+def checklist_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
+    """Checklists de activación (identidad→firma→pago) estancados hace
+    `CHECKLIST_STALL_HOURS` o más — leads YA calientes (pasaron por
+    generar_checklist_activacion) que dejaron de avanzar. Prioridad alta
+    siempre: es la señal para que Camila (llamada saliente) reactive, no para
+    un mensaje de texto de nutrición (ver skill `reactivar-checklist`)."""
+    from . import checklist
+    nudges: list[dict] = []
+    for r in checklist.stalled(conn):
+        if phone and r.get("phone") != phone:
+            continue
+        # Estado preciso (cedula|reconocimiento_facial|en_revision|rechazado|
+        # firma|pago|completado) en vez de adivinar solo con underwriting_decision.
+        try:
+            paso = checklist.estado_actual(conn, r)["paso_actual"]
+        except Exception:
+            conn.rollback()
+            paso = "desconocido"
+        nudges.append({
+            "phone": r.get("phone"), "tipo": "checklist_estancado", "prioridad": "alta",
+            "contexto": {"paso_actual": paso,
+                         "horas_sin_avanzar": round(r["horas_sin_avanzar"], 1)},
+            "sugerencia": "Lead caliente sin avanzar en su checklist de activación: "
+                          "llamar para retomar y resolver lo que lo frena (Camila).",
+        })
+    return nudges
+
+
 def all_nudges(conn: psycopg.Connection, phone: str | None = None) -> list[dict[str, Any]]:
-    """Funnel de venta + pólizas emitidas, ordenados por prioridad."""
-    merged = client_nudges(conn, phone) + policy_nudges(conn, phone)
+    """Funnel de venta + pólizas emitidas + checklists estancados, ordenados por prioridad."""
+    merged = client_nudges(conn, phone) + policy_nudges(conn, phone) + checklist_nudges(conn, phone)
     merged.sort(key=lambda n: _PRIO[n["prioridad"]])
     return merged
 

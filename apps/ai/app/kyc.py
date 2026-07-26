@@ -201,11 +201,18 @@ def _deliver(link_url: str, *, phone: str | None, email: str | None) -> dict:
 
 
 def request_verification(conn: psycopg.Connection, session_key: str, tenant_id: str, *,
-                         phone: str | None = None, email: str | None = None) -> dict:
+                         phone: str | None = None, email: str | None = None,
+                         include_url: bool = False) -> dict:
     """Crea la verificación, arma el link a NUESTRA página (`/kyc/{token}`,
     consentimiento) y lo entrega. La sesión de Didit se crea después, recién
     cuando el cliente consienta (ver `create_didit_session`) — así no se gasta
-    una sesión de Didit por cada link que se manda y nunca se abre."""
+    una sesión de Didit por cada link que se manda y nunca se abre.
+
+    `include_url`: por defecto el `link_url` de la respuesta solo viaja si el
+    push por WhatsApp/correo falló (Mónica no necesita pegarlo en el chat, ya
+    llegó por su cuenta). El checklist de activación (ver `checklist.py`) sí
+    necesita mostrar el botón "continuar" del paso en su propia página aunque
+    el push haya funcionado — pasa `include_url=True` para eso."""
     _tables(conn)
     verification_id = f"kyc_{uuid.uuid4().hex[:12]}"
     token = secrets.token_urlsafe(32)
@@ -224,7 +231,7 @@ def request_verification(conn: psycopg.Connection, session_key: str, tenant_id: 
                 (LINK_SENT, verification_id))
     conn.commit()
     return {"verification_id": verification_id, "sent_via": delivery["sent_via"],
-           "link_url": link_url if not delivery["sent_via"] else None}
+           "link_url": link_url if (include_url or not delivery["sent_via"]) else None}
 
 
 def record_consent(conn: psycopg.Connection, token: str, *, ip: str | None,
@@ -281,11 +288,20 @@ def _ensure_workflow(conn: psycopg.Connection) -> str:
 
 def _demo_session(conn: psycopg.Connection, row: dict) -> dict:
     """Sin DIDIT_API_KEY no hay página de Didit real a la que redirigir —
-    aprueba directo con datos simulados, como el resto del stack en demo."""
+    aprueba directo con datos simulados, como el resto del stack en demo.
+
+    Puebla también liveness/face_match (no solo document_number): el checklist
+    de activación (checklist.py::_pasos) trata cédula y reconocimiento facial
+    como checkpoints DISTINTOS dentro de esta misma sesión — sin esto, el modo
+    demo quedaría "aprobado" pero atascado mostrando el RF como pendiente."""
     conn.execute(
         """UPDATE kyc_verifications SET status=%s, decision=%s,
                full_name=COALESCE(full_name, 'Cliente Demo'),
-               document_number=COALESCE(document_number, '100000000'), updated_at=now()
+               document_number=COALESCE(document_number, '100000000'),
+               liveness_status=COALESCE(liveness_status, 'Approved'),
+               liveness_score=COALESCE(liveness_score, 95),
+               face_match_status=COALESCE(face_match_status, 'Approved'),
+               face_match_score=COALESCE(face_match_score, 95), updated_at=now()
            WHERE verification_id=%s""",
         (APROBADO, APROBADO, row["verification_id"]))
     conn.commit()
@@ -348,10 +364,6 @@ def refresh_decision(conn: psycopg.Connection, row: dict) -> dict:
         log.info("no se pudo consultar la decisión de Didit todavía: %s", exc)
         return row
 
-    mapped = _DIDIT_STATUS_MAP.get(data.get("status"))
-    if not mapped:
-        return row  # "Not Started"/"In Progress": el cliente sigue en la captura
-
     # Didit cruza documento<->selfie SOLO (misma sesión, un id_verification y un
     # face_match); no expone un id de referencia explícito entre ambos porque no
     # hace falta — nosotros solo guardamos los resultados para auditoría/revisión
@@ -360,6 +372,28 @@ def refresh_decision(conn: psycopg.Connection, row: dict) -> dict:
     live = (data.get("liveness_checks") or [{}])[0] if data.get("liveness_checks") else {}
     fm = (data.get("face_matches") or [{}])[0] if data.get("face_matches") else {}
     full_name = idv.get("full_name") or f"{idv.get('first_name', '')} {idv.get('last_name', '')}".strip()
+
+    mapped = _DIDIT_STATUS_MAP.get(data.get("status"))
+    if not mapped:
+        # "Not Started"/"In Progress": Didit ya puede traer resultados PARCIALES
+        # (ej. cédula/OCR lista pero selfie todavía no) — guárdalos igual, para
+        # que el checklist de activación pueda mostrar "ya hizo la cédula" antes
+        # de que termine el reconocimiento facial (ver checklist.py::_pasos).
+        if idv.get("document_number") or live.get("status") or fm.get("status"):
+            conn.execute(
+                """UPDATE kyc_verifications SET
+                       full_name=COALESCE(NULLIF(%s,''), full_name),
+                       document_number=COALESCE(%s, document_number),
+                       liveness_status=COALESCE(%s, liveness_status),
+                       liveness_score=COALESCE(%s, liveness_score),
+                       face_match_status=COALESCE(%s, face_match_status),
+                       face_match_score=COALESCE(%s, face_match_score), updated_at=now()
+                   WHERE verification_id=%s""",
+                (full_name, idv.get("document_number"), live.get("status"), live.get("score"),
+                 fm.get("status"), fm.get("score"), row["verification_id"]))
+            conn.commit()
+            return get_verification(conn, row["verification_id"])
+        return row
 
     conn.execute(
         """UPDATE kyc_verifications SET status=%s, decision=%s,

@@ -17,14 +17,12 @@ from pydantic import BaseModel, Field
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
-# TEMPORAL: campaign_broadcast.py/marketing_studio.py no existen en disco
-# ahora mismo (otro trabajo en curso, no de esta sesión) — sin esto el import
-# rompe el arranque para cualquiera. Comentado, no borrado; se puede
-# restaurar en cuanto esos archivos vuelvan a existir.
-# from .campaign_broadcast import router as campaign_broadcast_router
+from .campaign_broadcast import router as campaign_broadcast_router
+from .checklist import router as checklist_router
+from .landing_callback import router as landing_callback_router
 from .embedded import router as embedded_router
+from .marketing_studio import router as marketing_router
 from .voice_live import router as voice_live_router
-# from .marketing_studio import router as marketing_router
 from .auth import resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
                      MANAGER_PHONES, SERVICE_API_KEY, WA_GATEWAY_WEBHOOK_SECRET)
@@ -60,9 +58,11 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
+app.include_router(marketing_router)  # POST /api/marketing/banner (Gemini, requiere gerente)
+app.include_router(campaign_broadcast_router)  # POST /api/marketing/campaigns/broadcast (servicio-a-servicio)
 app.include_router(voice_live_router)  # WS /ws/voice/live (llamada en vivo, Deepgram STT/TTS)
-# app.include_router(marketing_router)  # ver nota TEMPORAL arriba
-# app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
+app.include_router(checklist_router)  # /api/checklist/{token} (público, checklist de activación)
+app.include_router(landing_callback_router)  # POST /api/callback/solicitar ("déjanos tu número")
 
 
 class ChatRequest(BaseModel):
@@ -403,9 +403,14 @@ _STAGE_TO_LEAD_STATUS = {
     "nuevo": "NUEVO", "descubrimiento": "CONTACTADO", "cotizado": "COTIZADO",
     "documento": "NEGOCIACION", "cerrado": "CERRADO_GANADO", "perdido": "CERRADO_PERDIDO",
 }
-# El catálogo LATAM de Python tiene más tipos (hogar, viaje, pyme...) que el
-# InsuranceType de Prisma (solo VIDA/AUTO/SALUD) — se omite si no mapea 1:1.
-_INSURANCE_TYPE_TO_PRISMA = {"vida": "VIDA", "auto": "AUTO", "salud": "SALUD"}
+# Los 10 tipos del catálogo LATAM ya tienen equivalente 1:1 en el
+# InsuranceType de Prisma (antes solo tenía VIDA/AUTO/SALUD y los otros 7 se
+# sincronizaban sin tipo — ver migración 20260725120000_insurers).
+_INSURANCE_TYPE_TO_PRISMA = {
+    "vida": "VIDA", "auto": "AUTO", "salud": "SALUD", "hogar": "HOGAR",
+    "viaje": "VIAJE", "pyme": "PYME", "accidentes": "ACCIDENTES",
+    "exequial": "EXEQUIAL", "mascotas": "MASCOTAS", "movilidad": "MOVILIDAD",
+}
 
 
 def _sync_lead_to_backend(local_lead_id: int, tenant_id: str, phone: str,
@@ -929,6 +934,38 @@ def outbound_call(req: OutboundCallRequest,
     tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
     return calls.iniciar_llamada(req.phone, tenant_id, first_message=req.first_message,
                                  dynamic_variables=req.dynamic_variables)
+
+
+class ChecklistCallRequest(BaseModel):
+    phone: str = Field(..., description="Número E.164 del cliente con checklist estancado")
+    tenant_id: str | None = Field(None, description="Si falta, se usa el tenant demo")
+
+
+@app.post("/api/calls/checklist", dependencies=[Depends(require_service)])
+def checklist_reactivation_call(req: ChecklistCallRequest,
+                                x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> dict:
+    """Llamada de reactivación de Camila para un checklist de activación
+    estancado (ver `proactive.checklist_nudges`). La usa la skill de Hermes
+    `reactivar-checklist` — no el chat del cliente. Reenvía primero el link
+    vigente del checklist (rota su token) y luego dispara la llamada."""
+    from . import calls
+    tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
+    return calls.iniciar_llamada_reactivacion_checklist(req.phone, tenant_id)
+
+
+@app.post("/api/benefits/check", dependencies=[Depends(require_service)])
+def benefits_check() -> dict:
+    """Corre el vesting de beneficios (ver `benefits.py` — 2 entradas a parque
+    en el mes 3, bono de droguería en el mes 6, noche de hotel en el mes 12
+    de póliza vigente continua) y entrega lo recién desbloqueado por WhatsApp.
+    La usa la skill de Hermes `beneficios-vesting` (cron diario)."""
+    from . import benefits
+    conn = get_conn()
+    try:
+        entregados = benefits.check_and_unlock(conn)
+        return {"entregados": entregados, "n": len(entregados)}
+    finally:
+        conn.close()
 
 
 @app.post("/api/profiling/from-call", dependencies=[Depends(require_service)])
