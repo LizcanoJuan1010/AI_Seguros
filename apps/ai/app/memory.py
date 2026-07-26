@@ -85,7 +85,7 @@ async def init_pool() -> None:
     try:
         _pool = await asyncpg.create_pool(
             config.DATABASE_URL, min_size=1, max_size=5,
-            timeout=10, command_timeout=10)
+            timeout=10, command_timeout=10, statement_cache_size=0)
         async with _pool.acquire() as conn:
             await conn.execute(CREATE_SQL)
             await conn.execute(MIGRATE_SQL)  # partición dura (tenant_id, user_id), idempotente

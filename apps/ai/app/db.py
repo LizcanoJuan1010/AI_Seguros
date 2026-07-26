@@ -165,6 +165,10 @@ def get_conn() -> psycopg.Connection:
     return psycopg.connect(
         _dsn(), row_factory=dict_row,
         options=f"-c search_path={schema}", connect_timeout=10,
+        # El Postgres gestionado de Railway multiplexa por pgbouncer en modo
+        # transacción: el autoprepare de psycopg3 (_pg3_0, _pg3_1...) choca
+        # entre conexiones físicas distintas. prepare_threshold=None lo desactiva.
+        prepare_threshold=None,
     )
 
 
