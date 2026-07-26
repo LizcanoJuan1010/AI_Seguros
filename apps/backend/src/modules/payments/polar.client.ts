@@ -29,7 +29,7 @@ export class PolarClient {
   /**
    * Producto one-time (prima en COP) + checkout session.
    * Polar no permite montos libres en precios fijos: cada cobro crea su propio
-   * producto hidden con metadata.reference para correlacionar el webhook.
+   * producto private con metadata.reference para correlacionar el webhook.
    */
   async createCheckout(
     amountCop: number,
@@ -58,7 +58,7 @@ export class PolarClient {
       body: JSON.stringify({
         name,
         recurring_interval: null,
-        visibility: 'hidden',
+        visibility: 'private',
         metadata: { reference },
         prices: [
           {
