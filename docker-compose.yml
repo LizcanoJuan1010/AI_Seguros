@@ -109,12 +109,19 @@ services:
       - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
       - ELEVENLABS_AGENT_PHONE_NUMBER_ID=${ELEVENLABS_AGENT_PHONE_NUMBER_ID:-}
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-}
-      # Voz (Deepgram STT+TTS como tools, ver app/voice_deepgram.py). Mismo
-      # proveedor/modelos que deepgram-outbound, reusado acá. Sin API key = demo.
+      # Voz con Deepgram — la MISMA key alimenta dos cosas de este servicio:
+      # la llamada en vivo del navegador (/ws/voice/live, junto con
+      # DEEPSEEK_API_KEY: sin ambas responde "Voice Agent no configurado") y
+      # las tools STT/TTS de notas de voz (app/voice_deepgram.py, demo sin key).
+      # Definila UNA sola vez: compose aplica "la última gana" y un duplicado
+      # más abajo pisaría esta línea en silencio.
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
       - DEEPGRAM_STT_MODEL=${DEEPGRAM_STT_MODEL:-nova-3}
       - DEEPGRAM_STT_LANGUAGE=${DEEPGRAM_STT_LANGUAGE:-es}
       - DEEPGRAM_VOICE_MODEL=${DEEPGRAM_VOICE_MODEL:-aura-2-celeste-es}
+      # think.endpoint del Voice Agent (URL del LLM compatible-OpenAI). Sin
+      # esta línea el contenedor ignoraba un DEEPSEEK_BASE_URL custom del .env.
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       # Canal WhatsApp (gateway Baileys multi-tenant reusado). Vacío = demo.
       - WA_GATEWAY_URL=${WA_GATEWAY_URL:-}
       - WA_GATEWAY_WEBHOOK_SECRET=${WA_GATEWAY_WEBHOOK_SECRET:-}
@@ -141,9 +148,6 @@ services:
       - PARTNER_API_KEYS=${PARTNER_API_KEYS:-demo-partner-2026}
       - TTS_URL=${TTS_URL:-http://seguria-tts:8880}
       - TTS_VOICE=${TTS_VOICE:-ef_dora}
-      # STT/TTS en tiempo real para /ws/voice/live (LiveAiCallPage). Sin key,
-      # el endpoint no puede abrir las conexiones a Deepgram.
-      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
     volumes:
       - ./apps/ai/data/market:/data/market:ro
       - seguria-state:/app/state

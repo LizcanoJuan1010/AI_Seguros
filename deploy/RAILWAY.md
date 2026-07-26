@@ -58,6 +58,12 @@ dejás en `false` no hace falta tocar nada acá).
   CORS_ORIGINS=https://<dominio-publico-del-frontend>
   # Opcionales (dejar vacío = modo demo): POLAR_*, ELEVENLABS_*
   ```
+- **Réplicas: dejá el backend en 1.** El tope de llamadas de voz anónimas
+  simultáneas (`live-call.gateway.ts`, `MAX_ANON_POR_DISPOSITIVO`/
+  `MAX_ANON_TOTAL`) es un Map en memoria por proceso: con N réplicas el tope
+  real pasa a ser N veces el configurado y un mismo device_id puede abrir N
+  llamadas a la vez, cada una facturando Deepgram. Mover eso a Redis es
+  requisito previo para escalar horizontalmente.
   `PORT`: NO lo definas vos — Railway lo inyecta solo y `main.ts` ya lo
   respeta (`process.env.PORT ?? 3001`). Para que `AI_SERVICE_URL` de
   arriba sea estable, fijá manualmente el `PORT` del servicio `ai` (ver
@@ -79,7 +85,10 @@ dejás en `false` no hace falta tocar nada acá).
   CORS_ORIGINS=https://<dominio-publico-del-frontend>
   DEEPSEEK_API_KEY=<tu key real>
   DEEPSEEK_MODEL=deepseek-v4-flash
-  DEEPGRAM_API_KEY=<tu key real, si usás voz>
+  # La llamada en vivo del navegador (/llamada) exige AMBAS keys — Deepgram
+  # Y DeepSeek — o responde "Voice Agent no configurado" (no tiene modo demo).
+  DEEPGRAM_API_KEY=<tu key real>
+  DEEPGRAM_VOICE_MODEL=aura-2-celeste-es
   PUBLIC_BASE_URL=https://<dominio-publico-de-este-servicio-ai>
   ```
   Fijá `PORT=8085` a mano (no lo dejes que Railway lo asigne solo) — el

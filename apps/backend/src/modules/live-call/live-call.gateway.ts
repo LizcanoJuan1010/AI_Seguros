@@ -12,6 +12,33 @@ import { CallStatus } from '../../generated/prisma/enums';
 import { LiveCallService } from './live-call.service';
 
 const AUTH_TIMEOUT_MS = 10_000;
+const PYTHON_HANDSHAKE_TIMEOUT_MS = 8_000;
+// Cada 30 s sin pong el cliente se da por muerto. Sin heartbeat, un TCP que
+// muere sin FIN (laptop suspendida, cambio de red móvil) dejaba el relay, el
+// socket a Python y la sesión de Deepgram vivos Y FACTURANDO — y con
+// MAX_ANON_POR_DISPOSITIVO=1, ese device quedaba sin poder volver a llamar
+// hasta que nginx cortara por proxy_read_timeout: una hora.
+const HEARTBEAT_MS = 30_000;
+
+/** Promise con techo: `ws` no emite nada en varios modos de colgada (upgrade
+ *  que no completa, servidor que no contesta) y el timeout de connect del SO
+ *  (~130 s) no aplica una vez el TCP conectó. */
+function conTimeout<T>(p: Promise<T>, ms: number, que: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout ${que} (${ms}ms)`)), ms);
+    t.unref?.();
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e: unknown) => {
+        clearTimeout(t);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
 
 // El cliente final NO tiene usuario: su identidad es el `device_id` anónimo
 // del navegador (lib/clientIdentity.ts), el mismo que ya ancla memoria y leads
@@ -146,6 +173,8 @@ export class LiveCallRelay {
   private closed = false;
   /** device_id si la llamada es anónima (para devolver el cupo al cerrar). */
   private anonDeviceId: string | null = null;
+  private heartbeat: NodeJS.Timeout | null = null;
+  private pongPendiente = false;
 
   constructor(
     private readonly client: WebSocket,
@@ -160,9 +189,33 @@ export class LiveCallRelay {
     this.authTimer = setTimeout(() => {
       this.rejectAuth('timeout esperando el frame de autenticación');
     }, AUTH_TIMEOUT_MS);
+    // Detección de cliente muerto (ver HEARTBEAT_MS). terminate() y no
+    // close(): un peer que no contesta pongs tampoco va a completar el
+    // handshake de cierre. unref: que un timer vivo no retenga el proceso.
+    this.client.on('pong', () => {
+      this.pongPendiente = false;
+    });
+    this.heartbeat = setInterval(() => {
+      if (this.client.readyState !== WebSocket.OPEN) return;
+      if (this.pongPendiente) {
+        this.logger.warn('cliente sin pong: terminando la llamada');
+        this.client.terminate();
+        return;
+      }
+      this.pongPendiente = true;
+      this.client.ping();
+    }, HEARTBEAT_MS);
+    this.heartbeat.unref?.();
     this.client.once('message', (raw, isBinary) => {
       void this.handleFirstMessage(raw, isBinary);
     });
+  }
+
+  private pararHeartbeat(): void {
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
   }
 
   private async handleFirstMessage(
@@ -243,12 +296,14 @@ export class LiveCallRelay {
         userSub,
       );
     } catch (err) {
+      // Degradar, no tumbar: la voz (navegador->Nest->Python->Deepgram) no
+      // necesita Postgres. Con aiCallId=null, peekForPersistence y finalize
+      // ya hacen no-op solos — la llamada corre, solo no queda el transcript
+      // en el CRM. La memoria del lado Python es independiente.
       this.logger.error(
-        `no se pudo abrir la sesión de la llamada: ${String(err)}`,
+        `llamada sin persistencia (openSession falló): ${String(err)}`,
       );
-      this.sendJson('error', { message: 'No se pudo abrir la sesión' });
-      this.client.close(1011);
-      return;
+      this.aiCallId = null;
     }
 
     this.sendJson('auth_ok', {});
@@ -274,38 +329,62 @@ export class LiveCallRelay {
     }
 
     const httpBase =
-      this.config.get<string>('AI_SERVICE_URL') ?? 'http://localhost:8085';
+      // Mismo default que elevenlabs.service/campaigns.service: dentro de
+      // Docker, `localhost` sería el propio contenedor de Nest.
+      this.config.get<string>('AI_SERVICE_URL') ?? 'http://seguria-ai:8085';
     const wsBase = httpBase.replace(/^http/, 'ws');
     const socket = new WebSocket(`${wsBase}/ws/voice/live`);
     this.pythonSocket = socket;
-    await new Promise<void>((resolve, reject) => {
-      socket.once('open', () => resolve());
-      socket.once('error', reject);
-    });
+    try {
+      // Con timeout los DOS pasos: un Python que acepta el TCP pero nunca
+      // completa el upgrade (o nunca contesta auth_ok) no dispara 'open' ni
+      // 'error' JAMÁS — sin esto el relay quedaba colgado para siempre, el
+      // usuario en "Conectando…" y el cupo anónimo reservado.
+      await conTimeout(
+        new Promise<void>((resolve, reject) => {
+          socket.once('open', () => resolve());
+          socket.once('error', reject);
+        }),
+        PYTHON_HANDSHAKE_TIMEOUT_MS,
+        'abriendo el WS al servicio de voz',
+      );
 
-    // Python autentica igual que acá: token de staff, o device_id anónimo.
-    socket.send(
-      JSON.stringify({
-        type: 'auth',
-        data: rawToken ? { token: rawToken } : { device_id: deviceId },
-      }),
-    );
-    await new Promise<void>((resolve, reject) => {
-      socket.once('message', (raw) => {
-        const msg = parseJsonFrame(raw);
-        if (msg?.type === 'auth_ok') {
-          resolve();
-        } else {
-          reject(
-            new Error(
-              stringField(msg?.data, 'reason') ||
-                'auth rechazada por el servicio de voz',
-            ),
-          );
-        }
-      });
-      socket.once('error', reject);
-    });
+      // Python autentica igual que acá: token de staff, o device_id anónimo.
+      socket.send(
+        JSON.stringify({
+          type: 'auth',
+          data: rawToken ? { token: rawToken } : { device_id: deviceId },
+        }),
+      );
+      await conTimeout(
+        new Promise<void>((resolve, reject) => {
+          socket.once('message', (raw) => {
+            const msg = parseJsonFrame(raw);
+            if (msg?.type === 'auth_ok') {
+              resolve();
+            } else {
+              reject(
+                new Error(
+                  stringField(msg?.data, 'reason') ||
+                    'auth rechazada por el servicio de voz',
+                ),
+              );
+            }
+          });
+          socket.once('error', reject);
+        }),
+        PYTHON_HANDSHAKE_TIMEOUT_MS,
+        'esperando auth_ok del servicio de voz',
+      );
+    } catch (err) {
+      // El socket colgado no se cierra solo: sin esto quedaba vivo apuntado
+      // por this.pythonSocket (Python lo mataría a los ~10 s por su timeout
+      // de auth, pero mejor no depender del otro lado).
+      socket.removeAllListeners();
+      socket.close();
+      this.pythonSocket = null;
+      throw err;
+    }
 
     socket.on('message', (raw, isBinary) =>
       this.relayPythonMessage(raw, isBinary),
@@ -388,6 +467,7 @@ export class LiveCallRelay {
 
   handleClientDisconnect(): void {
     this.liberarCupo();
+    this.pararHeartbeat();
     if (this.closed) return;
     this.closed = true;
     if (this.authTimer) clearTimeout(this.authTimer);
@@ -399,6 +479,7 @@ export class LiveCallRelay {
    * debería quedar en curso si el motor de voz se cayó a mitad de camino. */
   private handlePythonDisconnect(): void {
     this.liberarCupo();
+    this.pararHeartbeat();
     if (this.closed) return;
     this.closed = true;
     this.sendJson('error', {

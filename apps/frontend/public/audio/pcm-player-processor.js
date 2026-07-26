@@ -21,6 +21,18 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
         float32[i] = s < 0 ? s / 0x8000 : s / 0x7fff
       }
       this.queue.push(float32)
+      // Tope de ~2 s de backlog (24 kHz mono). Con el contexto suspendido
+      // (entrar por F5/URL directa, sin gesto aún) process() no corre pero
+      // los chunks TTS siguen llegando: sin tope, el primer click reproducía
+      // TODO el acumulado desde el principio, segundos detrás de la
+      // conversación en vivo. Se descarta lo más viejo — al despertar, la
+      // voz retoma casi al presente.
+      let total = 0
+      for (const c of this.queue) total += c.length
+      while (total > 48000 && this.queue.length > 1) {
+        total -= this.queue.shift().length
+        this.readOffset = 0
+      }
     }
   }
 
