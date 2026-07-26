@@ -229,7 +229,12 @@ export function useLiveVoiceCall() {
 
   const startPlayback = useCallback(async (): Promise<void> => {
     const ctx = new AudioContext({ sampleRate: 24000 })
-    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
+    // Sin gesto de usuario previo (entrar a /llamada por URL directa o F5),
+    // la promesa de resume() queda PENDIENTE para siempre — esperarla colgaba
+    // todo start() en "Conectando..." sin llegar siquiera a abrir el WS. No
+    // se espera: el worklet carga igual en 'suspended' y el primer click
+    // despierta el contexto (listener de pointerdown en start()).
+    void ctx.resume()
     await ctx.audioWorklet.addModule('/audio/pcm-player-processor.js')
     const player = new AudioWorkletNode(ctx, 'pcm-player-processor', {
       outputChannelCount: [1],
@@ -243,7 +248,7 @@ export function useLiveVoiceCall() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     streamRef.current = stream
     const ctx = new AudioContext({ sampleRate: 16000 })
-    await ctx.resume() // los AudioContext nacen 'suspended' por autoplay policy
+    void ctx.resume() // sin gesto previo quedaría pendiente — ver startPlayback
     await ctx.audioWorklet.addModule('/audio/mic-processor.js')
     const source = ctx.createMediaStreamSource(stream)
     const mic = new AudioWorkletNode(ctx, 'mic-processor')
@@ -268,6 +273,15 @@ export function useLiveVoiceCall() {
     const gen = ++startGenRef.current
     setStatus('connecting')
     setError(null)
+    // El rescate de autoplay se registra ANTES de crear los AudioContext: el
+    // primer click despierta lo que haya nacido 'suspended'. Registrarlo al
+    // final (como antes) significaba que si algo se colgaba en el camino, el
+    // listener nunca existía y la pantalla moría en "Conectando...".
+    if (!resumeListenerRef.current) {
+      const onFirstPointerDown = () => resumeSuspendedContexts()
+      resumeListenerRef.current = onFirstPointerDown
+      document.addEventListener('pointerdown', onFirstPointerDown, { once: true })
+    }
     try {
       // Staff con sesión -> JWT. Cliente final -> device_id anónimo: la
       // landing enlaza /llamada directo y un lead no debería tener que
@@ -312,8 +326,13 @@ export function useLiveVoiceCall() {
       }
       ws.onclose = () => {
         if (gen !== startGenRef.current) return
-        startingRef.current = false
         setStatus((s) => (s === 'error' ? s : 'ended'))
+        // Cierre iniciado por el SERVIDOR (error del servicio de voz, fin de
+        // sesión): sin este cleanup, `wsRef` queda apuntando al socket muerto
+        // y el guard de `start()` bloquea cualquier reintento — el botón
+        // "Volver a llamar" no haría nada. (El cierre iniciado por nosotros
+        // ya pasó por cleanup(), que invalida `gen` y no entra aquí.)
+        cleanup()
       }
 
       await startCapture(ws)
@@ -323,9 +342,6 @@ export function useLiveVoiceCall() {
       }
 
       resumeSuspendedContexts()
-      const onFirstPointerDown = () => resumeSuspendedContexts()
-      resumeListenerRef.current = onFirstPointerDown
-      document.addEventListener('pointerdown', onFirstPointerDown, { once: true })
     } catch (err) {
       if (gen !== startGenRef.current) return
       setError((err as Error)?.message ?? 'No se pudo iniciar la llamada')

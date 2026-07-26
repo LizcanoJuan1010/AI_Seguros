@@ -103,7 +103,10 @@ export function LiveAiCallPage() {
   return (
     <div
       className={`relative h-full min-h-[560px] overflow-hidden ${
-        ended ? 'call-leaving' : ''
+        // Solo el colgado LIMPIO se disuelve (rumbo al chat). En `error` la
+        // página debe quedarse visible: desvanecerla dejaba al usuario ante
+        // una pantalla en blanco, sin el mensaje ni forma de reintentar.
+        status === 'ended' ? 'call-leaving' : ''
       }`}
     >
       {/* Fondo: video de bruma detrás de la animación */}
@@ -127,7 +130,11 @@ export function LiveAiCallPage() {
           </h1>
           <div className="rounded-full bg-primary/10 px-2.5 py-0.5 backdrop-blur-sm">
             <span className="text-label-sm uppercase text-primary">
-              {ended ? 'Finalizada' : 'IA en vivo'}
+              {status === 'error'
+                ? 'Sin conexión'
+                : ended
+                  ? 'Finalizada'
+                  : 'IA en vivo'}
             </span>
           </div>
         </div>
@@ -175,19 +182,34 @@ export function LiveAiCallPage() {
                       : 'animate-pulse bg-primary/60'
                 }`}
               />
-              {ended
-                ? 'Llamada finalizada'
-                : muted
-                  ? 'Silenciado'
-                  : aiSpeaking
-                    ? 'Hablando...'
-                    : status === 'connecting'
-                      ? 'Conectando...'
-                      : 'Escuchando...'}
+              {status === 'error'
+                ? 'No pudimos conectar la llamada'
+                : ended
+                  ? 'Llamada finalizada'
+                  : muted
+                    ? 'Silenciado'
+                    : aiSpeaking
+                      ? 'Hablando...'
+                      : status === 'connecting'
+                        ? 'Conectando...'
+                        : 'Escuchando...'}
               {sentNote ? ' · Correo marcado' : ''}
             </p>
             {error && (
               <p className="mt-2 text-label-sm text-error">{error}</p>
+            )}
+            {status === 'error' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSeconds(0)
+                  void start()
+                }}
+                className="mt-4 inline-flex items-center gap-2 rounded-md bg-primary px-5 py-2.5 text-label-md font-bold text-on-primary shadow-md transition-all hover:opacity-90 active:scale-95"
+              >
+                <Icon name="refresh" className="text-[20px]" />
+                Volver a llamar
+              </button>
             )}
           </div>
         </div>
@@ -260,12 +282,16 @@ export function LiveAiCallPage() {
         </div>
       )}
 
-      <CallControls
-        muted={muted}
-        onMuteToggle={toggleMute}
-        onEnd={endCall}
-        onSend={() => setSentNote(true)}
-      />
+      {/* En error la llamada ya no existe: Silenciar/Finalizar no hacen nada
+          y la barra fija taparía (e interceptaría) el botón "Volver a llamar". */}
+      {status !== 'error' && (
+        <CallControls
+          muted={muted}
+          onMuteToggle={toggleMute}
+          onEnd={endCall}
+          onSend={() => setSentNote(true)}
+        />
+      )}
     </div>
   )
 }
