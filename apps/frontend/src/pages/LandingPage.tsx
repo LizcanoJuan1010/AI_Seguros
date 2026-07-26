@@ -4,6 +4,7 @@ import { TrustStrip } from '../features/landing/TrustStrip'
 import { ProductCards } from '../features/landing/ProductCards'
 import { FeatureShowcase } from '../features/landing/FeatureShowcase'
 import { HowItWorks } from '../features/landing/HowItWorks'
+import { CallMeBack } from '../features/landing/CallMeBack'
 import { InsightSection } from '../features/landing/InsightSection'
 import { Testimonials } from '../features/landing/Testimonials'
 import { FaqSection } from '../features/landing/FaqSection'
@@ -22,6 +23,7 @@ export function LandingPage() {
         <ProductCards />
         <FeatureShowcase />
         <HowItWorks />
+        <CallMeBack />
         <InsightSection />
         <Testimonials />
         <FaqSection />

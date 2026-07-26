@@ -1126,6 +1126,47 @@ def emitir(req: EmitirReq) -> dict:
     finally:
         conn.close()
 
+
+# ---------- "Te llamamos": solicitud de llamada desde la landing (PÚBLICO) ----------
+# Sin API key a propósito: la dispara un visitante anónimo de la página de
+# inicio. Toda la contención (validación, consentimiento, topes por hora) vive
+# en app/callback.py — leer ahí antes de tocar esto.
+
+class CallbackRequest(BaseModel):
+    telefono: str = Field(..., description="Celular colombiano; acepta '300 123 4567' o '+57...'")
+    nombre: str = Field("", description="Nombre del visitante (opcional)")
+    interes: str = Field("", description="vida|auto|salud|hogar|otro (opcional)")
+    device_id: str = Field("", description="device_id del navegador, para cruzar con el chat")
+    consent: bool = Field(False, description="Autorización explícita para llamar (Ley 1581/2012)")
+
+
+@app.post("/api/callback/solicitar")
+def callback_solicitar(req: CallbackRequest, request: Request) -> dict:
+    """Registra la solicitud y dispara la llamada saliente al número del visitante.
+
+    Responde 200 incluso cuando rechaza (número inválido, sin consentimiento,
+    tope por hora): el front pinta `mensaje` bajo el campo. Solo un fallo real de
+    infraestructura es 5xx."""
+    from . import callback as callback_mod
+    conn = get_conn()
+    try:
+        return callback_mod.solicitar(
+            conn, telefono=req.telefono, nombre=req.nombre, interes=req.interes,
+            device_id=req.device_id, tenant_id=DEMO_TENANT_ID, consent=req.consent,
+            ip=request.client.host if request.client else "",
+            user_agent=request.headers.get("user-agent", ""))
+    finally:
+        conn.close()
+
+
+@app.get("/api/callback/opciones")
+def callback_opciones() -> dict:
+    """Ramos que ofrece el formulario de "te llamamos" — el front los pinta como
+    chips en vez de tenerlos duplicados en el bundle."""
+    from .callback import INTERESES
+    return {"intereses": [{"id": k, "label": v} for k, v in INTERESES.items()]}
+
+
 # Notas de voz educativas: cuando el turno pidió/registró un dato sensible,
 # además del texto se manda un audio corto explicando POR QUÉ se pide (nunca
 # cifras/coberturas — esas siempre van en texto, ver skills/voz/SKILL.md).

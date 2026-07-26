@@ -187,6 +187,21 @@ BRAND_LOGO = Path(os.getenv("BRAND_LOGO", BASE_DIR / "assets" / "logo.png"))
 # (app/kyc.py con Didit, app/esign.py). Ver agent_core._emitir_poliza.
 KYC_ENFORCE = os.getenv("SEGURIA_KYC_ENFORCE", "true").lower() not in ("0", "false", "no")
 
+# ---------- "Te llamamos" desde la landing pública (ver app/callback.py) ----------
+# Indicativo que se asume cuando el visitante escribe su celular sin "+".
+DEFAULT_COUNTRY_CODE = os.getenv("SEGURIA_DEFAULT_COUNTRY_CODE", "57")
+# Topes por hora del endpoint anónimo. Son la ÚNICA contención contra el abuso
+# hasta que exista verificación por OTP — no los subas sin agregarla antes.
+CALLBACK_MAX_POR_TELEFONO = int(os.getenv("SEGURIA_CALLBACK_MAX_TELEFONO", "3"))
+CALLBACK_MAX_POR_DISPOSITIVO = int(os.getenv("SEGURIA_CALLBACK_MAX_DISPOSITIVO", "5"))
+CALLBACK_MAX_POR_IP = int(os.getenv("SEGURIA_CALLBACK_MAX_IP", "20"))
+# Horario hábil (hora Colombia). Default APAGADO: el demo tiene que poder correr
+# de madrugada. Enciéndelo en producción para no llamar a nadie a las 3 a.m.
+CALLBACK_HORARIO_ENFORCE = os.getenv(
+    "SEGURIA_CALLBACK_HORARIO", "false").lower() not in ("0", "false", "no")
+CALLBACK_HORA_INICIO = int(os.getenv("SEGURIA_CALLBACK_HORA_INICIO", "8"))
+CALLBACK_HORA_FIN = int(os.getenv("SEGURIA_CALLBACK_HORA_FIN", "19"))
+
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 

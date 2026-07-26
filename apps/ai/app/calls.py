@@ -12,6 +12,7 @@ Sin ELEVENLABS_API_KEY/AGENT_ID/AGENT_PHONE_NUMBER_ID corre en modo demo
 limpio con `{"demo": True}` en vez de romper el flujo.
 """
 import logging
+from typing import Any
 
 import requests
 
