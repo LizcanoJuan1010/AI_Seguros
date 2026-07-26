@@ -17,13 +17,18 @@ python-pptx>=1.0
 xlrd>=2.0
 Pillow>=10.0
 
-# Verificación biométrica de identidad (cédula ↔ selfie) con YuNet + SFace de
-# OpenCV Zoo. headless = sin dependencias de GUI, ideal para servidor/CPU.
-opencv-python-headless>=4.9
 numpy>=1.26
 
 # informes por correo (patrón Paloma: SMTP primario, Resend fallback)
 resend>=2.0
+
+# estudio de banners de marketing (Gemini, gemini-2.5-flash-image)
+google-genai>=1.0
+
+# motor de versionado/QA de prompts (docket-motor adaptado, ver app/docket_engine/)
+sentence-transformers>=3.0
+hdbscan>=0.8.38
+numpy>=1.26
 
 # solo para pruebas
 pytest>=8.0

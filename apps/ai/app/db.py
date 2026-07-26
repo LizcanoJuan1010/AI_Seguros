@@ -100,45 +100,6 @@ CREATE TABLE IF NOT EXISTS intake_session (
     datos TEXT DEFAULT '{}',
     updated_at TIMESTAMPTZ DEFAULT now()
 );
--- Documentos KYC que el cliente envía para poder emitir la póliza (cédula por
--- ambas caras, autorización firmada, selfie...). El archivo físico vive en el
--- store de uploads (app/files.py); aquí queda el registro auditable, ligado a la
--- sesión (session_key = tenant_id:phone). UNIQUE(session_key,tipo): un doc vigente
--- por tipo por sesión (reenviar reemplaza).
-CREATE TABLE IF NOT EXISTS kyc_document (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_key TEXT NOT NULL,
-    phone TEXT,
-    tipo TEXT NOT NULL,             -- cedula_frente|cedula_reverso|selfie|autorizacion_firmada|comprobante_pago|otro
-    file_id TEXT,
-    path TEXT,
-    filename TEXT,
-    mime TEXT,
-    status TEXT DEFAULT 'recibido', -- recibido|verificado|rechazado
-    extracted TEXT DEFAULT '{}',    -- JSON con campos OCR (numero_documento, nombre...)
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (session_key, tipo)
-);
--- Veredicto de la verificación biométrica cédula ↔ selfie (YuNet + SFace, ver
--- app/identity.py). Historial: cada intento inserta una fila; el gate usa el más
--- reciente. decision ∈ aprobado|rechazado|revision|no_disponible.
-CREATE TABLE IF NOT EXISTS identity_verification (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_key TEXT NOT NULL,
-    phone TEXT,
-    doc_file_id TEXT,
-    selfie_file_id TEXT,
-    decision TEXT NOT NULL,
-    score DOUBLE PRECISION,
-    threshold DOUBLE PRECISION,
-    method TEXT DEFAULT 'yunet_sface',
-    detail TEXT DEFAULT '{}',       -- JSON con motivos y scores de detección
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_kyc_document_session ON kyc_document (session_key);
-CREATE INDEX IF NOT EXISTS idx_identity_verification_session
-    ON identity_verification (session_key, created_at DESC);
 CREATE TABLE IF NOT EXISTS chat_history (
     session_id TEXT,
     seq INTEGER,

@@ -9,6 +9,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  downloadMediaMessage,
 } = require("baileys");
 const QRCode = require("qrcode");
 const pino = require("pino");
@@ -25,6 +26,14 @@ const API_KEY = process.env.API_KEY || "";
 const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
 const AUTH_DIR = process.env.AUTH_DIR || "/data/instances";
 const logger = pino({ level: process.env.LOG_LEVEL || "warn" });
+// Reusa la infra de Tequendama (proyecto seguria-ai/apps/ai/app/whatsapp_gateway.py):
+// mismo API_KEY sirve como el "webhook secret" que ese lado ya manda/exige.
+// Un solo secreto compartido en las dos direcciones, no hace falta un tercero.
+const TEQUENDAMA_INBOUND_URL = process.env.TEQUENDAMA_INBOUND_URL || "";
+// Instancia única que este bridge mantiene para Tequendama (no multi-tenant
+// real como el de Diache): si está seteada, se crea/reconecta sola al arrancar
+// aunque todavía no tenga sesión pareada (para poder pedir el QR de una vez).
+const DEFAULT_INSTANCE = process.env.DEFAULT_INSTANCE || "";
 
 // ---- Fail-fast: API_KEY es obligatoria y debe tener suficiente entropia ----
 // Sin esto, cualquiera que alcance el puerto puede crear instancias, leer QR,
@@ -51,14 +60,18 @@ app.get("/health", (req, res) => {
 });
 
 // ---- Auth middleware (timing-safe comparison) ----
+// Acepta DOS convenciones de header con el MISMO secreto (API_KEY):
+//   - `apikey` (estilo Evolution API, las rutas /instance/* y /message/*)
+//   - `x-webhook-secret` (estilo Diache/Tequendama, las rutas planas /send*)
+// para que whatsapp_gateway.py de Tequendama no tenga que cambiar cómo llama.
+function _safeEqual(provided) {
+  const buf = Buffer.from(String(provided || ""), "utf8");
+  return buf.length === API_KEY_BUF.length && crypto.timingSafeEqual(buf, API_KEY_BUF);
+}
+
 app.use((req, res, next) => {
-  const provided = req.headers.apikey || req.query.apikey || "";
-  const providedBuf = Buffer.from(String(provided), "utf8");
-  // timingSafeEqual exige mismo length; pad/truncate para evitar distinct-length leak
-  const ok =
-    providedBuf.length === API_KEY_BUF.length &&
-    crypto.timingSafeEqual(providedBuf, API_KEY_BUF);
-  if (!ok) {
+  const provided = req.headers.apikey || req.query.apikey || req.headers["x-webhook-secret"] || "";
+  if (!_safeEqual(provided)) {
     return res.status(401).json({ status: 401, error: "Unauthorized" });
   }
   next();
@@ -74,6 +87,68 @@ async function sendWebhook(event, instanceName, data) {
     });
   } catch (err) {
     logger.warn({ event, instance: instanceName, err: err.message }, "Webhook delivery failed");
+  }
+}
+
+// ---- Forwarder hacia Tequendama (seguria-ai) ----
+// Traduce el mensaje crudo de Baileys al shape EXACTO que
+// `apps/ai/app/main.py::WaGatewayInbound` espera — el mismo que ya manda
+// wa-gateway/server.js de Diache — para no tener que tocar el lado Python.
+function _textoDe(msg) {
+  const m = msg.message || {};
+  return (
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    m.videoMessage?.caption ||
+    ""
+  );
+}
+
+// Notas de voz (audioMessage/ptt): se descargan y desencriptan con Baileys
+// (downloadMediaMessage pide un re-upload solo si el link original ya
+// expiró, por eso necesita `sock.updateMediaMessage`) y se mandan en base64.
+// `apps/ai/app/main.py::whatsapp_inbound` las transcribe con Deepgram antes
+// de pasarlas al agente — sin transcodificar acá: Deepgram soporta ogg/opus
+// directo, que es el formato nativo de las notas de voz de WhatsApp.
+async function _audioDe(sock, msg) {
+  const audioMsg = msg.message?.audioMessage;
+  if (!audioMsg) return null;
+  try {
+    const buffer = await downloadMediaMessage(
+      msg, "buffer", {}, { logger, reuploadRequest: sock.updateMediaMessage }
+    );
+    return { base64: buffer.toString("base64"), mimetype: audioMsg.mimetype || "audio/ogg" };
+  } catch (err) {
+    logger.warn({ err: err.message }, "no se pudo descargar la nota de voz");
+    return null;
+  }
+}
+
+async function forwardToTequendama(sock, msg) {
+  if (!TEQUENDAMA_INBOUND_URL) return;          // sin configurar = no reenvía (demo)
+  if (msg.key?.fromMe) return;                  // eco de nuestros propios envíos
+  const jid = msg.key?.remoteJid || "";
+  if (jid.endsWith("@g.us") || jid === "status@broadcast") return;  // grupos/estados, no clientes
+  const texto = _textoDe(msg).trim();
+  const audio = texto ? null : await _audioDe(sock, msg);
+  if (!texto && !audio) return;                  // reacciones/protocolo/otros tipos sin texto ni audio
+  const from = jid.split("@")[0];
+  const payload = { from, text: texto, id: msg.key?.id || null };
+  if (audio) {
+    payload.audio_base64 = audio.base64;
+    payload.audio_mimetype = audio.mimetype;
+  }
+  try {
+    await axios.post(
+      TEQUENDAMA_INBOUND_URL,
+      { messages: [payload] },
+      // timeout más largo que el de texto: audio pesa más y Tequendama
+      // transcribe (llamada real a Deepgram) antes de responder al webhook.
+      { headers: { "Content-Type": "application/json", "x-webhook-secret": API_KEY }, timeout: 20000 }
+    );
+  } catch (err) {
+    logger.warn({ from, err: err.message }, "no se pudo reenviar el mensaje a Tequendama");
   }
 }
 
@@ -162,6 +237,7 @@ async function createBaileysConnection(instanceName) {
     if (type !== "notify") return;
     for (const msg of messages) {
       sendWebhook("messages.upsert", instanceName, msg);
+      forwardToTequendama(sock, msg);
     }
   });
 
@@ -384,6 +460,57 @@ app.post("/message/sendPoll/:instanceName", async (req, res) => {
   }
 });
 
+// ---- API plana estilo Diache ({tenant,to,...}, no /:instanceName) ----
+// `apps/ai/app/whatsapp_gateway.py` (proyecto Tequendama) llama a este
+// gateway con esta forma — se agregó para que este bridge pueda sustituir
+// directo al gateway Baileys de Diache reusado en producción, sin tener que
+// tocar código de ese otro proyecto. `tenant` == `instanceName` de este bridge.
+
+app.post("/send", async (req, res) => {
+  const { tenant, to, text } = req.body;
+  if (!tenant || !to || !text) {
+    return res.status(400).json({ status: 400, error: "tenant, to, text required" });
+  }
+  const inst = getInstanceState(tenant);
+  if (!inst?.sock || inst.state !== "open") {
+    return res.status(400).json({ status: 400, error: "Instance not connected" });
+  }
+  const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
+  try {
+    const result = await inst.sock.sendMessage(jid, { text });
+    res.json({ key: result.key, status: "PENDING" });
+  } catch (err) {
+    res.status(500).json({ status: 500, error: err.message });
+  }
+});
+
+app.post("/send-audio", async (req, res) => {
+  // Nota de voz (ptt): `audio_base64` viaja en base64 (mp3 de Kokoro-FastAPI,
+  // ver apps/ai/app/whatsapp_gateway.py::enviar_nota_voz). Baileys transcodifica
+  // a ogg/opus con ffmpeg (ver Dockerfile) para que WhatsApp lo muestre como
+  // nota de voz real, no como adjunto genérico.
+  const { tenant, to, audio_base64, mimetype } = req.body;
+  if (!tenant || !to || !audio_base64) {
+    return res.status(400).json({ status: 400, error: "tenant, to, audio_base64 required" });
+  }
+  const inst = getInstanceState(tenant);
+  if (!inst?.sock || inst.state !== "open") {
+    return res.status(400).json({ status: 400, error: "Instance not connected" });
+  }
+  const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
+  try {
+    const buffer = Buffer.from(audio_base64, "base64");
+    const result = await inst.sock.sendMessage(jid, {
+      audio: buffer,
+      ptt: true,
+      mimetype: mimetype || "audio/mpeg",
+    });
+    res.json({ key: result.key, status: "PENDING" });
+  } catch (err) {
+    res.status(500).json({ status: 500, error: err.message });
+  }
+});
+
 // ---- Contacts ----
 
 app.post("/chat/whatsappNumbers/:instanceName", async (req, res) => {
@@ -455,15 +582,26 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Baileys Bridge running on port ${PORT}`);
 
   // Reconnect saved instances on startup
+  const restored = new Set();
   if (fs.existsSync(AUTH_DIR)) {
     for (const dir of fs.readdirSync(AUTH_DIR)) {
       const credsFile = path.join(AUTH_DIR, dir, "creds.json");
       if (fs.existsSync(credsFile)) {
         logger.info({ instance: dir }, "Restoring saved instance");
+        restored.add(dir);
         createBaileysConnection(dir).catch((err) => {
           logger.error({ instance: dir, err: err.message }, "Failed to restore instance");
         });
       }
     }
+  }
+  // Instancia única de Tequendama: si no había sesión pareada todavía, la crea
+  // igual para que el QR quede disponible de inmediato en
+  // GET /instance/connect/:instanceName sin tener que llamar /instance/create a mano.
+  if (DEFAULT_INSTANCE && !restored.has(DEFAULT_INSTANCE)) {
+    logger.info({ instance: DEFAULT_INSTANCE }, "Creando instancia por defecto (sin pareo previo)");
+    createBaileysConnection(DEFAULT_INSTANCE).catch((err) => {
+      logger.error({ instance: DEFAULT_INSTANCE, err: err.message }, "Failed to create default instance");
+    });
   }
 });

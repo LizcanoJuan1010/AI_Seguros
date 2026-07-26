@@ -3,19 +3,25 @@
 Consumida por las skills del agente Hermes (vía HTTP) y por la SPA (chat + panel gerencial).
 """
 import json
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import (BackgroundTasks, Depends, FastAPI, File, Header,
-                     HTTPException, Response, UploadFile)
+                     HTTPException, Request, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
+# TEMPORAL: campaign_broadcast.py/marketing_studio.py no existen en disco
+# ahora mismo (otro trabajo en curso, no de esta sesión) — sin esto el import
+# rompe el arranque para cualquiera. Comentado, no borrado; se puede
+# restaurar en cuanto esos archivos vuelvan a existir.
+# from .campaign_broadcast import router as campaign_broadcast_router
 from .embedded import router as embedded_router
 from .auth import is_staff_token, resolve_identity
 from .config import (CORS_ORIGINS, DEMO_TENANT_ID, MANAGER_API_KEY,
@@ -52,6 +58,8 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS or [],
                    allow_methods=["*"], allow_headers=["*"])
 app.include_router(assistant_router)  # POST /api/assistant/chat/stream (SSE)
 app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliados)
+# app.include_router(marketing_router)  # ver nota TEMPORAL arriba
+# app.include_router(campaign_broadcast_router)  # ver nota TEMPORAL arriba
 
 
 class ChatRequest(BaseModel):
@@ -99,13 +107,12 @@ def intake_requisitos(tipo: str) -> dict:
 
 @app.post("/api/assistant/upload")
 async def assistant_upload(file: UploadFile = File(...), session_id: str = "",
-                           phone: str = "", tipo: str = "") -> dict:
-    """El cliente sube un documento (cédula, tarjeta de propiedad, selfie, RUT...); se
-    guarda y queda disponible para que el agente lo lea con `analizar_documento`.
+                           phone: str = "") -> dict:
+    """El cliente sube un documento (tarjeta de propiedad, RUT, examen...); se guarda
+    y queda disponible para que el agente lo lea con `analizar_documento`.
 
-    Si se pasa `tipo` (cedula_frente|cedula_reverso|selfie|autorizacion_firmada|
-    tarjeta_propiedad...) y un `phone` real, además queda REGISTRADO en el expediente
-    KYC de esa sesión — así el canal WhatsApp (Hermes) sube la foto y la fija de una vez."""
+    Nota: la verificación de identidad (cédula + selfie + prueba de vida) NO pasa por
+    aquí — va por el link de Didit (`generar_verificacion_identidad`, ver app/kyc.py)."""
     try:
         from . import files as files_mod
     except Exception as exc:
@@ -114,27 +121,10 @@ async def assistant_upload(file: UploadFile = File(...), session_id: str = "",
     saved = files_mod.save_upload(file.filename or "documento", content)
     # lectura inmediata (best-effort) para dar feedback al cliente
     parsed = files_mod.parse_document(saved["path"], file.filename or "")
-    registrado = None
-    if tipo and phone and not phone.startswith("web:"):
-        try:
-            from . import kyc
-            conn = get_conn()
-            try:
-                kyc.register_document(conn, _kyc_key(phone), tipo=tipo,
-                                      file_id=saved["file_id"], path=saved["path"],
-                                      filename=saved.get("filename"), mime=saved.get("mime"),
-                                      extracted=parsed.get("campos_extraidos") or {},
-                                      phone=_norm_phone(phone))
-                registrado = tipo
-            finally:
-                conn.close()
-        except Exception:
-            registrado = None  # el registro KYC es best-effort; la subida no falla por él
     return {"file_id": saved["file_id"], "filename": saved.get("filename"),
             "tipo_detectado": parsed.get("tipo_detectado"),
             "campos_extraidos": parsed.get("campos_extraidos", {}),
-            "resumen": parsed.get("resumen"),
-            "documento_kyc_registrado": registrado}
+            "resumen": parsed.get("resumen")}
 
 
 # ---------- Voz: TTS de la respuesta (proxy al Kokoro del perfil `voz`) ----------
@@ -328,11 +318,15 @@ class ConversationLog(BaseModel):
 
 
 class WaGatewayMessage(BaseModel):
-    """Shape exacto que ya manda apps/services (Diache) wa-gateway/server.js:
-    {"messages":[{"from","text","id"}]} — no inventado, verificado contra el código."""
+    """Shape que manda apps/services/baileys-bridge/index.js::forwardToTequendama.
+    `text` viene vacío cuando el mensaje es una nota de voz — en ese caso trae
+    `audio_base64`/`audio_mimetype` en su lugar (ver whatsapp_inbound, que la
+    transcribe con Deepgram antes de pasarla al agente)."""
     from_: str = Field(..., alias="from")
     text: str = ""
     id: str | None = None
+    audio_base64: str | None = None
+    audio_mimetype: str | None = None
 
 
 class WaGatewayInbound(BaseModel):
@@ -353,6 +347,15 @@ class CallProfilingRequest(BaseModel):
     transcript: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Transcript de ElevenLabs: [{role, message, time_in_call_secs}]")
+
+
+class DocketIngestRequest(BaseModel):
+    """Shape mínimo para alimentar el motor de versionado/QA de prompts
+    (docket, ver app/docket_engine/) con una llamada real ya terminada."""
+    conversation_id: str | None = Field(None, description="conversation_id de ElevenLabs, si existe")
+    transcript: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Igual shape que CallProfilingRequest.transcript: [{role, message}]")
 
 
 # ---------- Catálogo ----------
@@ -732,6 +735,265 @@ def download_document(filename: str) -> FileResponse:
     return FileResponse(path, media_type="application/pdf", filename=filename)
 
 
+# ---------- Voz (Deepgram): dos tools, transcribir/generar, ver voice_deepgram.py ----------
+
+@app.post("/api/voice/transcribe", dependencies=[Depends(require_service)])
+async def voice_transcribe(file: UploadFile | None = File(default=None),
+                          audio_url: str = "") -> dict:
+    """Tool STT: nota de voz -> texto. Pasa un archivo (multipart, ej. la nota
+    de voz que Hermes ya descargó de WhatsApp) o `audio_url` si es accesible
+    por Deepgram directo. Siempre devuelve JSON, nunca lanza excepción."""
+    from . import voice_deepgram
+    if file is not None:
+        content = await file.read()
+        return voice_deepgram.transcribir(
+            audio_bytes=content,
+            content_type=file.content_type or "audio/ogg")
+    if audio_url:
+        return voice_deepgram.transcribir(audio_url=audio_url)
+    raise HTTPException(400, "Falta 'file' (multipart) o 'audio_url'")
+
+
+class VoiceGenerateRequest(BaseModel):
+    texto: str = Field(..., description="Texto a convertir en nota de voz")
+
+
+@app.post("/api/voice/generar", dependencies=[Depends(require_service)])
+def voice_generar(req: VoiceGenerateRequest) -> dict:
+    """Tool TTS: texto -> nota de voz (mp3). Devuelve {"audio_url": "/api/voice/audio/..."}
+    para que quien lo llama (Hermes) la descargue y la mande por WhatsApp."""
+    from . import voice_deepgram
+    return voice_deepgram.generar_audio(req.texto)
+
+
+@app.get("/api/voice/audio/{filename}")
+def voice_audio(filename: str) -> FileResponse:
+    from .config import AUDIO_DIR
+    path = (AUDIO_DIR / filename).resolve()
+    if not path.is_file() or path.parent != AUDIO_DIR.resolve():
+        raise HTTPException(404, "Audio no encontrado")
+    return FileResponse(path, media_type="audio/mpeg", filename=filename)
+
+
+def _clickwrap_html(token: str, sig: dict) -> str:
+    """Página pública (sin auth: el magic-link ES la credencial) que muestra
+    los términos exactos y captura el clic. Ver apps/ai/app/esign.py."""
+    import html as _html
+    title = "Autorización de tu póliza — Tequendama Seguros"
+    body = _html.escape(sig["terms_text"])
+    status = sig["status"]
+    done = status in ("signed", "declined", "expired")
+    if status == "signed":
+        estado_msg = "✅ Ya autorizaste la emisión. Puedes cerrar esta ventana."
+    elif status == "declined":
+        estado_msg = "Registramos que NO autorizas por ahora. Escríbenos si cambias de opinión."
+    elif status == "expired":
+        estado_msg = "Este link venció. Pídele a tu asesora IA que te envíe uno nuevo."
+    else:
+        estado_msg = ""
+    tok = _html.escape(token)
+    buttons = "" if done else f"""
+      <button id="agree" style="background:#0a7a2f;color:#fff;border:0;border-radius:8px;
+              padding:12px 20px;font-size:16px;margin-right:10px;cursor:pointer">Acepto</button>
+      <button id="decline" style="background:#f1f1f1;color:#333;border:0;border-radius:8px;
+              padding:12px 20px;font-size:16px;cursor:pointer">No acepto</button>"""
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:40px auto;
+             padding:0 16px;color:#141e17">
+<h2 style="color:#083911">{title}</h2>
+<p style="background:#f1fdf0;border:1px solid #c1c9bd;border-radius:12px;padding:16px">{body}</p>
+<p id="estado" style="font-weight:bold">{estado_msg}</p>
+<div id="botones">{buttons}</div>
+<script>
+async function act(path) {{
+  const a = document.getElementById('agree'), d = document.getElementById('decline');
+  if (a) a.disabled = true; if (d) d.disabled = true;
+  const r = await fetch(`/sign/{tok}/${{path}}`, {{ method: 'POST' }});
+  if (r.ok) location.reload();
+  else {{ if (a) a.disabled = false; if (d) d.disabled = false; }}
+}}
+const a = document.getElementById('agree'), d = document.getElementById('decline');
+if (a) a.addEventListener('click', () => act('accept'));
+if (d) d.addEventListener('click', () => act('decline'));
+</script>
+</body></html>"""
+
+
+@app.get("/sign/{token}", response_class=HTMLResponse)
+def sign_page(token: str) -> str:
+    """Página clickwrap que abre el magic link de `generar_firma_poliza`."""
+    from . import esign
+    conn = get_conn()
+    row = esign.get_by_token(conn, token)
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return _clickwrap_html(token, row)
+
+
+@app.post("/sign/{token}/accept")
+def sign_accept(token: str, request: Request) -> dict:
+    from . import esign
+    conn = get_conn()
+    row = esign.sign(conn, token, agree=True,
+                     ip=request.client.host if request.client else None,
+                     user_agent=request.headers.get("user-agent"))
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return esign.public_view(row)
+
+
+@app.post("/sign/{token}/decline")
+def sign_decline(token: str, request: Request) -> dict:
+    from . import esign
+    conn = get_conn()
+    row = esign.sign(conn, token, agree=False,
+                     ip=request.client.host if request.client else None,
+                     user_agent=request.headers.get("user-agent"))
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de firma inválido o desconocido")
+    return esign.public_view(row)
+
+
+def _kyc_html(token: str, row: dict) -> str:
+    """Página de verificación de identidad: consentimiento biométrico (NUESTRO)
+    -> redirige a la sesión hosteada de Didit (captura de cédula + selfie +
+    liveness, interfaz de ellos) -> Didit vuelve a `/kyc/{token}/callback` con
+    el resultado. Ver apps/ai/app/kyc.py para por qué la captura vive en Didit
+    y no en una página propia (tier gratis + mejor liveness que un JS casero)."""
+    import html as _html
+
+    from . import kyc as _kyc_mod
+    tok = _html.escape(token)
+    status = row["status"]
+    consented = bool(row.get("consent_biometrico"))
+    done = status in ("aprobado", "revision_manual", "rechazado", "expirado")
+    redirigiendo = status == "redirigido" and row.get("session_url")
+    resultado_msg = {
+        "aprobado": "✅ Identidad verificada. Puedes cerrar esta ventana y volver al chat.",
+        "revision_manual": "🕐 Tu verificación quedó en revisión de un asesor. Te confirmamos en menos de 24 horas.",
+        "rechazado": "No pudimos verificar tu identidad por este medio. Un asesor te contactará.",
+        "expirado": "Este link venció. Pídele a tu asesora IA que te envíe uno nuevo.",
+    }.get(status, "")
+    consentimiento_txt = _html.escape(_kyc_mod.CONSENTIMIENTO_BIOMETRICO)
+    session_url = _html.escape(row.get("session_url") or "")
+
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verifica tu identidad — Tequendama Seguros</title>
+<style>
+body{{font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:24px auto;padding:0 16px;color:#141e17}}
+h2{{color:#083911}}
+.card{{background:#f1fdf0;border:1px solid #c1c9bd;border-radius:12px;padding:16px;margin:12px 0}}
+button,a.btn{{background:#0a7a2f;color:#fff;border:0;border-radius:8px;padding:12px 20px;font-size:16px;
+       margin:6px 6px 6px 0;cursor:pointer;display:inline-block;text-decoration:none}}
+button.secondary{{background:#f1f1f1;color:#333}}
+#estado{{font-weight:bold}}
+.oculto{{display:none}}
+</style></head>
+<body>
+<h2>Verifica tu identidad</h2>
+<div id="paso-consentimiento" class="{'oculto' if consented or done else ''}">
+  <div class="card">{consentimiento_txt}</div>
+  <button id="btn-acepto">Acepto</button>
+  <button id="btn-no-acepto" class="secondary">No acepto</button>
+</div>
+<div id="paso-redirigiendo" class="{'oculto' if not redirigiendo else ''}">
+  <p>Te llevamos a la verificación segura (cédula + selfie)...</p>
+  <a class="btn" id="link-continuar" href="{session_url}">Continuar verificación</a>
+</div>
+<div id="paso-resultado" class="{'oculto' if not done else ''}">
+  <p id="estado">{resultado_msg}</p>
+</div>
+<p id="error" style="color:#a33"></p>
+<script>
+const TOKEN = "{tok}";
+function err(msg) {{ document.getElementById('error').textContent = msg; }}
+
+document.getElementById('btn-acepto')?.addEventListener('click', async () => {{
+  const r = await fetch(`/kyc/${{TOKEN}}/consent`, {{method: 'POST'}});
+  const data = await r.json();
+  if (r.ok && data.session_url) {{
+    window.location.href = data.session_url;   // directo a Didit, sin paso intermedio
+  }} else if (r.ok) {{
+    location.reload();   // modo demo: ya quedó resuelto, muestra el resultado
+  }} else {{
+    err(data.error || 'No se pudo iniciar la verificación.');
+  }}
+}});
+document.getElementById('btn-no-acepto')?.addEventListener('click', () => {{
+  document.getElementById('paso-consentimiento').innerHTML =
+    '<p>Sin tu autorización no podemos verificar tu identidad ni emitir la póliza. ' +
+    'Escríbele a tu asesora IA si cambias de opinión.</p>';
+}});
+{"window.location.href = " + repr(session_url) + ";" if redirigiendo else ""}
+</script>
+</body></html>"""
+
+
+@app.get("/kyc/{token}", response_class=HTMLResponse)
+def kyc_page(token: str) -> str:
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    conn.close()
+    if row is None:
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    return _kyc_html(token, row)
+
+
+@app.post("/kyc/{token}/consent")
+def kyc_consent(token: str, request: Request) -> dict:
+    """Registra el consentimiento biométrico y de una vez crea la sesión de
+    Didit — el frontend redirige con la `session_url` que devuelve."""
+    from . import kyc
+    conn = get_conn()
+    row = kyc.record_consent(conn, token, ip=request.client.host if request.client else None,
+                             user_agent=request.headers.get("user-agent"))
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    if row["status"] != "consentido":
+        conn.close()
+        return kyc.public_view(row)
+    result = kyc.create_didit_session(conn, token)
+    conn.close()
+    return result
+
+
+@app.get("/kyc/{token}/callback", response_class=HTMLResponse)
+def kyc_callback(token: str) -> str:
+    """A donde Didit redirige el navegador del cliente al terminar su sesión
+    (captura de cédula/selfie). Refresca el veredicto (`GET .../decision/`,
+    ver kyc.refresh_decision) y muestra el resultado."""
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    row = kyc.refresh_decision(conn, row)
+    conn.close()
+    return _kyc_html(token, row)
+
+
+@app.get("/kyc/{token}/status")
+def kyc_status(token: str) -> dict:
+    from . import kyc
+    conn = get_conn()
+    row = kyc.get_by_token(conn, token)
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Link de verificación inválido o desconocido")
+    row = kyc.refresh_decision(conn, row)
+    conn.close()
+    return kyc.public_view(row)
+
+
 @app.post("/api/leads", dependencies=[Depends(require_service)])
 def update_lead(req: LeadUpdate, background_tasks: BackgroundTasks) -> dict:
     conn = get_conn()
@@ -765,9 +1027,10 @@ def role_for_phone(phone: str) -> dict:
             "role": "gerente" if normalized in MANAGER_PHONES else "cliente"}
 
 
-# ---------- KYC / Identidad / Cierre (canal WhatsApp/Hermes vía HTTP) ----------
-# Estas rutas exponen por HTTP el mismo cierre KYC que el cerebro web (run_agent)
-# hace con tools, para que la skill `cierre-kyc` de Hermes lo maneje con curl. La
+# ---------- Datos / consentimiento / emisión (canal WhatsApp/Hermes vía HTTP) ----------
+# Estas rutas exponen por HTTP los mismos pasos de cierre que el cerebro web
+# (run_agent) hace con tools, para que las skills de Hermes los manejen con curl.
+# La identidad va aparte, por el link de Didit (ver `/kyc/{token}` arriba). La
 # sesión se particiona por `{DEMO_TENANT_ID}:{phone}` (igual que en agent_core).
 
 def _norm_phone(phone: str) -> str:
@@ -785,62 +1048,6 @@ def _norm_phone(phone: str) -> str:
 
 def _kyc_key(phone: str) -> str:
     return f"{DEMO_TENANT_ID}:{_norm_phone(phone)}"
-
-
-class KycDocRegister(BaseModel):
-    phone: str
-    tipo: str = Field(..., description="cedula_frente|cedula_reverso|selfie|autorizacion_firmada|tarjeta_propiedad|comprobante_pago|otro")
-    file_id: str = Field(..., description="file_id devuelto por POST /api/assistant/upload")
-
-
-@app.post("/api/kyc/documento", dependencies=[Depends(require_service)])
-def kyc_registrar_documento(req: KycDocRegister) -> dict:
-    """Registra en el expediente KYC un archivo ya subido (por file_id)."""
-    from . import kyc
-    try:
-        from . import files as files_mod
-        path = files_mod.path_for(req.file_id)
-    except Exception:
-        path = req.file_id
-    conn = get_conn()
-    try:
-        skey = _kyc_key(req.phone)
-        kyc.register_document(conn, skey, tipo=req.tipo, file_id=req.file_id,
-                              path=path, phone=req.phone)
-        return kyc.status(conn, skey, None)
-    finally:
-        conn.close()
-
-
-class IdentidadVerificar(BaseModel):
-    phone: str
-    doc_file_id: str | None = None
-    selfie_file_id: str | None = None
-
-
-@app.post("/api/identidad/verificar", dependencies=[Depends(require_service)])
-def identidad_verificar(req: IdentidadVerificar) -> dict:
-    """Verificación biométrica cédula↔selfie de la sesión (YuNet + SFace). Devuelve
-    el veredicto (aprobado|rechazado|revision|no_disponible) y lo persiste."""
-    from . import kyc
-    conn = get_conn()
-    try:
-        return kyc.run_verification(conn, _kyc_key(req.phone), phone=req.phone,
-                                    doc_file_id=req.doc_file_id,
-                                    selfie_file_id=req.selfie_file_id)
-    finally:
-        conn.close()
-
-
-@app.get("/api/kyc/estado/{phone}", dependencies=[Depends(require_service)])
-def kyc_estado(phone: str, insurance_type: str = "") -> dict:
-    """Checklist del cierre: qué datos/documentos faltan, identidad y consentimiento."""
-    from . import kyc
-    conn = get_conn()
-    try:
-        return kyc.status(conn, _kyc_key(phone), insurance_type or None)
-    finally:
-        conn.close()
 
 
 class DatosClienteReq(BaseModel):
@@ -919,6 +1126,24 @@ def emitir(req: EmitirReq) -> dict:
     finally:
         conn.close()
 
+# Notas de voz educativas: cuando el turno pidió/registró un dato sensible,
+# además del texto se manda un audio corto explicando POR QUÉ se pide (nunca
+# cifras/coberturas — esas siempre van en texto, ver skills/voz/SKILL.md).
+# Reglas deterministas (no lo redacta el LLM) para que el motivo sea siempre
+# el correcto y no dependa de que el modelo lo mencione en su respuesta.
+_EDUCACION_VOZ = {
+    "capturar_datos_cliente": ("Te pedimos tu nombre completo y tu número de "
+        "documento porque son obligatorios para poder emitir tu póliza a tu "
+        "nombre. Sin estos dos datos no podemos activar tu seguro."),
+    "registrar_consentimiento": ("Te pedimos autorizar el tratamiento de tus "
+        "datos personales porque la ley 1581 de 2012, de habeas data, exige "
+        "tu consentimiento explícito antes de poder procesar tu información "
+        "para emitir la póliza."),
+    "generar_firma_poliza": ("Te acabamos de enviar un link para autorizar tu "
+        "póliza con un solo clic. Es tu firma electrónica: tiene la misma "
+        "validez legal que una firma escrita a mano."),
+}
+
 
 @app.post("/channels/whatsapp/inbound/tequendama",
          dependencies=[Depends(require_wa_gateway)])
@@ -935,6 +1160,24 @@ def whatsapp_inbound(req: WaGatewayInbound,
     for m in req.messages:
         phone = m.from_ if m.from_.startswith("+") else f"+{m.from_}"
         text = (m.text or "").strip()
+
+        if not text and m.audio_base64:
+            from . import voice_deepgram
+            import base64
+            audio_bytes = base64.b64decode(m.audio_base64)
+            transcripcion = voice_deepgram.transcribir(
+                audio_bytes=audio_bytes, content_type=m.audio_mimetype or "audio/ogg")
+            text = (transcripcion.get("texto") or "").strip()
+            if not text:
+                # Sin DEEPGRAM_API_KEY (demo), falla o silencio real: no hay
+                # texto que darle al agente — se lo decimos y seguimos con el
+                # siguiente mensaje, nunca rompe el webhook.
+                from . import whatsapp_gateway
+                background_tasks.add_task(
+                    whatsapp_gateway.enviar_whatsapp, phone,
+                    "No pude escuchar bien tu nota de voz — ¿me la escribes?")
+                continue
+
         if not text:
             continue
         accepted += 1
@@ -953,6 +1196,11 @@ def whatsapp_inbound(req: WaGatewayInbound,
                                       "WHATSAPP", "asistente", reply)
             from . import whatsapp_gateway
             background_tasks.add_task(whatsapp_gateway.enviar_whatsapp, phone, reply)
+
+            tools_del_turno = {a.get("tool") for a in (result.get("actions") or [])}
+            explicacion = next((v for k, v in _EDUCACION_VOZ.items() if k in tools_del_turno), None)
+            if explicacion:
+                background_tasks.add_task(whatsapp_gateway.enviar_nota_voz, phone, explicacion)
 
     return {"received": True, "accepted": accepted}
 
@@ -1021,6 +1269,50 @@ def profiling_from_call(req: CallProfilingRequest,
     from . import call_profiling
     tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
     return call_profiling.profile_from_call(tenant_id, req.phone, req.transcript)
+
+
+@app.post("/api/docket/ingest", dependencies=[Depends(require_service)])
+def docket_ingest(req: DocketIngestRequest) -> dict:
+    """Registra el transcript de una llamada de ElevenLabs ya terminada en el
+    motor de versionado/QA de prompts (`docket.calls`, campaña
+    `tequendama-cliente`) — la llama el backend justo después de procesar el
+    webhook post-call. Sin DOCKET_ENGINE_ENABLED, no hace nada (demo)."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED or not req.transcript:
+        return {"ok": True, "demo": True}
+    from .docket_engine import store as docket_store
+    turns = [{"role": "customer" if (t.get("role") or "").lower() != "agent" else "agent",
+             "text": t.get("message") or ""} for t in req.transcript]
+    transcript_text = "\n".join(f"{t['role']}: {t['text']}" for t in turns if t["text"])
+    external_id = req.conversation_id or str(uuid.uuid4())
+    c = docket_store.conn()
+    try:
+        call_id = docket_store.insert_call(c, "tequendama-cliente", external_id, transcript_text, turns)
+        c.commit()
+    finally:
+        c.close()
+    return {"ok": True, "demo": False, "call_id": call_id}
+
+
+@app.post("/api/docket/recompute", dependencies=[Depends(require_service)])
+def docket_recompute() -> dict:
+    """Corre cluster → judge → optimize una vez para ambas campañas
+    (tequendama-cliente/tequendama-gerente). Se dispara a mano cuando quieras
+    iterar el prompt — no corre en cron. Sin DOCKET_ENGINE_ENABLED, no hace
+    nada (demo)."""
+    from .config import DOCKET_ENGINE_ENABLED
+    if not DOCKET_ENGINE_ENABLED:
+        return {"ok": True, "demo": True}
+    from .docket_engine import cluster as docket_cluster
+    from .docket_engine import judge as docket_judge
+    from .docket_engine import optimize as docket_optimize
+    from .docket_engine import seed as docket_seed
+    seeded = docket_seed.run_all()
+    clusters = docket_cluster.run_all()
+    scores = docket_judge.run_all()
+    versions = docket_optimize.run_all(list(docket_seed.CAMPAIGNS))
+    return {"ok": True, "demo": False, "seeded": seeded, "clusters": clusters,
+            "scores": scores, "versions": versions}
 
 
 @app.get("/api/insights/leads", dependencies=[Depends(require_manager)])

@@ -1,0 +1,21 @@
+{
+  "_status": "draft — redactado por el asistente, pendiente de tu revisión antes de confiar en estos puntajes",
+  "_comment": "Rubric del juez (base 03) para SegurIA en modo gerente (analista de negocio sobre KPIs/funnel/leads). Adaptado del template de docket-motor.",
+  "criteria": [
+    {
+      "key": "precision_analitica",
+      "description": "¿La respuesta usa solo cifras reales (vía herramienta de insights) y nunca inventa un dato o una tendencia?",
+      "scale": "1 = inventa o generaliza sin datos, 5 = toda cifra citada viene de una herramienta real"
+    },
+    {
+      "key": "accionabilidad",
+      "description": "¿La respuesta termina en UNA recomendación concreta y accionable, no solo una descripción de los números?",
+      "scale": "1 = solo describe datos, 5 = una recomendación clara y priorizada"
+    },
+    {
+      "key": "tono_analista_senior",
+      "description": "¿El estilo es directo, sin relleno, sin volcar JSON crudo, con comparativas simples en texto?",
+      "scale": "1 = verboso o técnico en exceso, 5 = directo y fácil de escanear"
+    }
+  ]
+}
