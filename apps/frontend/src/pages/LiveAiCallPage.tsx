@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AiVisualizerStub, type AiOrbState } from '../features/call/AiVisualizerStub'
 import { CallControls } from '../features/call/CallControls'
 import { Icon } from '../components/ui/Icon'
@@ -22,6 +23,7 @@ export function LiveAiCallPage() {
     toggleMute,
     endCall,
   } = useLiveVoiceCall()
+  const navigate = useNavigate()
   const [sentNote, setSentNote] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [displayCards, setDisplayCards] = useState<CallCard[] | null>(null)
@@ -48,6 +50,19 @@ export function LiveAiCallPage() {
     const id = window.setInterval(() => setSeconds((s) => s + 1), 1000)
     return () => window.clearInterval(id)
   }, [status])
+
+  // Al colgar, la pantalla se disuelve en la bruma (clase `call-leaving`, 0.85s)
+  // y ~1s después volvemos al chat, que es donde la persona sigue la
+  // conversación por texto — estilo modo voz de Gemini/Claude. Sin esto la
+  // pantalla se queda muerta en "Llamada finalizada" y hay que navegar a mano.
+  //
+  // Solo en el colgado LIMPIO (`ended`), no en `error`: si la llamada falló hay
+  // un mensaje que la persona necesita leer, y redirigir lo taparía.
+  useEffect(() => {
+    if (status !== 'ended') return
+    const id = window.setTimeout(() => navigate('/asistente'), 1000)
+    return () => window.clearTimeout(id)
+  }, [status, navigate])
 
   // Proyección de cards: entran cuando el turno trae tool_result y se
   // desvanecen cuando arranca el turno siguiente (mismo timing que el guion
@@ -86,7 +101,11 @@ export function LiveAiCallPage() {
   const captionIsUser = !ended && !muted && caption?.speaker === 'user'
 
   return (
-    <div className="relative h-full min-h-[560px] overflow-hidden">
+    <div
+      className={`relative h-full min-h-[560px] overflow-hidden ${
+        ended ? 'call-leaving' : ''
+      }`}
+    >
       {/* Fondo: video de bruma detrás de la animación */}
       <video
         src="/assets/bg-mist.mp4"
