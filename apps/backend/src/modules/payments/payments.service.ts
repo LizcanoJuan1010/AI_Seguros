@@ -1,22 +1,31 @@
-import { createHmac, timingSafeEqual } from 'crypto';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
 import { PaymentStatus } from '../../generated/prisma/enums';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreatePaymentDto, UpdatePaymentDto } from './payments.dto';
+import {
+  CreateCheckoutDto,
+  CreatePaymentDto,
+  UpdatePaymentDto,
+} from './payments.dto';
+import { PolarClient } from './polar.client';
 
 /**
  * Sistema de registro de pagos del cierre autónomo (Polar sandbox o demo).
  *
- * El servicio IA crea el pago al generar el checkout (pending) y lo consulta
- * antes de emitir la póliza. El estado lo actualizan dos caminos que convergen
- * aquí: los webhooks de Polar (fuente primaria — `order.paid`, `order.refunded`,
- * `refund.*`, `checkout.*` — firmados según Standard Webhooks con
- * POLAR_WEBHOOK_SECRET) y el polling de `verificar_pago` cuando el webhook no
- * alcanza a llegar (p. ej. entorno local sin URL pública).
+ * Nest es el único dueño de Polar HTTP (create checkout + webhook). El servicio
+ * IA llama `POST /payments/checkout` y consulta estado vía GET/PATCH. El estado
+ * lo actualizan: webhooks Polar (HMAC fail-closed fuera de demo) y el agente
+ * vía PATCH (p.ej. auto-APPROVE en modo demo).
  *
- * Correlación: `linkId` guarda el checkout_id de Polar, `transactionId` el id
- * de la orden y `reference` la referencia SEG-... que viaja en metadata.
+ * Correlación: `linkId` = checkout_id Polar, `transactionId` = order id,
+ * `reference` = SEG-... en metadata. Nunca se confía en teamId del body Polar.
  */
 
 type PolarWebhookPayload = {
@@ -38,7 +47,84 @@ const STATUS_RANK: Record<PaymentStatus, number> = {
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly polar: PolarClient,
+  ) {}
+
+  /** Modo demo: sin POLAR_ACCESS_TOKEN no hay HTTP a Polar. */
+  isDemoMode(): boolean {
+    return !this.polar.isConfigured();
+  }
+
+  /**
+   * Crea checkout Polar (o demo) y persiste Payment con teamId + checkoutUrl.
+   * → `{reference, checkoutUrl, linkId, provider, status, amountCop, concept, demo}`
+   */
+  async createCheckout(tenantId: string, dto: CreateCheckoutDto) {
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('tenant requerido');
+    }
+    const amount = Number(dto.amountCop);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('amountCop debe ser un número positivo');
+    }
+    const concept =
+      (dto.concept || '').trim() || 'Primera mensualidad — Seguro Tequendama';
+    const reference = `SEG-${randomBytes(5).toString('hex').toUpperCase()}`;
+
+    let linkId: string;
+    let checkoutUrl: string | null;
+    let provider: string;
+    let demo: boolean;
+
+    if (this.isDemoMode()) {
+      linkId = `demo-${reference}`;
+      checkoutUrl = null;
+      provider = 'demo';
+      demo = true;
+    } else {
+      try {
+        const created = await this.polar.createCheckout(
+          amount,
+          concept,
+          reference,
+        );
+        linkId = created.checkoutId;
+        checkoutUrl = created.checkoutUrl;
+        provider = 'polar';
+        demo = false;
+      } catch (err) {
+        this.logger.error(
+          `Polar createCheckout falló: ${(err as Error).message}`,
+        );
+        throw new BadRequestException(
+          `la pasarela no pudo crear el link de pago: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const payment = await this.create(tenantId, {
+      reference,
+      provider,
+      linkId,
+      checkoutUrl: checkoutUrl ?? undefined,
+      amountCop: amount,
+      concept,
+      sessionKey: dto.sessionKey,
+    });
+
+    return {
+      reference: payment.reference,
+      checkoutUrl: payment.checkoutUrl,
+      linkId: payment.linkId,
+      provider: payment.provider,
+      status: payment.status,
+      amountCop: Number(payment.amountCop),
+      concept: payment.concept,
+      demo,
+    };
+  }
 
   /** Upsert por reference: el agente puede reintentar la herramienta sin duplicar. */
   create(tenantId: string, dto: CreatePaymentDto) {
@@ -78,7 +164,7 @@ export class PaymentsService {
 
   async update(reference: string, dto: UpdatePaymentDto) {
     await this.get(reference);
-    // Los null del polling (p. ej. transactionId aún desconocido) no deben
+    // Los null del polling (p.ej. transactionId aún desconocido) no deben
     // borrar valores que el webhook ya escribió.
     const data = Object.fromEntries(
       Object.entries(dto).filter(([, v]) => v !== null && v !== undefined),
@@ -90,18 +176,38 @@ export class PaymentsService {
   }
 
   /**
-   * Webhook de Polar. Siempre responde 200 (aunque el evento se ignore) para
-   * cortar los reintentos; la autenticidad se valida con la firma Standard
-   * Webhooks (HMAC-SHA256 de `id.timestamp.rawBody` con el secreto).
+   * Webhook de Polar.
+   * - Non-demo (POLAR_ACCESS_TOKEN set): exige POLAR_WEBHOOK_SECRET y firma
+   *   válida; rechaza con 401 (fail-closed).
+   * - Demo (sin token): puede aceptar sin secreto (política documentada).
+   * Responde 200 en eventos válidos/ignorados para cortar reintentos.
    */
   async handleWebhook(
     rawBody: Buffer | undefined,
     headers: Record<string, string | string[] | undefined>,
     payload: PolarWebhookPayload,
   ) {
-    if (!this.verifySignature(rawBody, headers)) {
-      this.logger.warn('webhook de Polar con firma inválida: ignorado');
-      return { received: true, ignored: 'firma inválida' };
+    if (!this.isDemoMode()) {
+      const secret = process.env.POLAR_WEBHOOK_SECRET?.trim() ?? '';
+      if (!secret || !this.verifySignature(rawBody, headers, secret)) {
+        this.logger.warn(
+          'webhook de Polar rechazado (fail-closed: secreto/firma inválidos)',
+        );
+        throw new UnauthorizedException(
+          'Firma de webhook inválida o secreto no configurado',
+        );
+      }
+    } else {
+      const secret = process.env.POLAR_WEBHOOK_SECRET?.trim() ?? '';
+      if (secret && !this.verifySignature(rawBody, headers, secret)) {
+        this.logger.warn('webhook demo con firma inválida: ignorado');
+        return { received: true, ignored: 'firma inválida' };
+      }
+      if (!secret) {
+        this.logger.warn(
+          'POLAR_WEBHOOK_SECRET no configurado (demo): webhook aceptado sin verificar',
+        );
+      }
     }
 
     const type = payload?.type ?? '';
@@ -109,12 +215,14 @@ export class PaymentsService {
     const metadata = (data?.metadata ?? {}) as Record<string, unknown>;
     const reference =
       typeof metadata.reference === 'string' ? metadata.reference : undefined;
+    // Nunca usar teamId / tenant del body Polar — solo reference|linkId|tx.
 
     switch (type) {
       case 'order.paid':
         return this.applyStatus(
           {
-            linkId: typeof data.checkout_id === 'string' ? data.checkout_id : undefined,
+            linkId:
+              typeof data.checkout_id === 'string' ? data.checkout_id : undefined,
             reference,
           },
           PaymentStatus.APPROVED,
@@ -193,6 +301,7 @@ export class PaymentsService {
 
     await this.prisma.payment.update({
       where: { id: payment.id },
+      // No reasignar teamId desde el webhook — solo status / tx / method.
       data: {
         status,
         transactionId:
@@ -209,22 +318,13 @@ export class PaymentsService {
 
   /**
    * Standard Webhooks: `webhook-signature` = "v1,<base64(HMAC-SHA256)>" sobre
-   * `${webhook-id}.${webhook-timestamp}.${rawBody}`. El secreto del dashboard
-   * puede venir en crudo o codificado base64 (con o sin prefijo whsec_): se
-   * prueban ambas interpretaciones.
+   * `${webhook-id}.${webhook-timestamp}.${rawBody}`.
    */
   private verifySignature(
     rawBody: Buffer | undefined,
     headers: Record<string, string | string[] | undefined>,
+    secret: string,
   ): boolean {
-    const secret = process.env.POLAR_WEBHOOK_SECRET ?? '';
-    if (!secret) {
-      // Modo demo sin secreto configurado: se acepta, pero queda avisado.
-      this.logger.warn(
-        'POLAR_WEBHOOK_SECRET no configurado: webhook aceptado sin verificar',
-      );
-      return true;
-    }
     const first = (v: string | string[] | undefined) =>
       Array.isArray(v) ? v[0] : v;
     const id = first(headers['webhook-id']);

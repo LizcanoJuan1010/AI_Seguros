@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from . import backend_client, config, memory
 from .auth import resolve_identity
 from .agent_core import (MAX_TOOL_ROUNDS, SUGERENCIAS_RE, SYSTEM_PROMPT_GERENTE,
-                         SYSTEM_PROMPT_WEB, TOOLS_SCHEMA,
+                         SYSTEM_PROMPT_VOICE, SYSTEM_PROMPT_WEB, TOOLS_SCHEMA,
                          _append_history, _exec_tool, _load_history)
 from .config import MANAGER_PHONES
 from .db import COUNTRY_NAMES, get_conn, log_conversation
@@ -41,6 +41,26 @@ class StreamChatRequest(BaseModel):
 def _frame(event: str, data: dict) -> str:
     """Serializa un frame SSE `event: X\\ndata: {json}\\n\\n`."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _history_user_message(message: str, history_content: str | None) -> dict:
+    """Mensaje `user` a persistir en `chat_history`: el texto crudo
+    (`history_content`) si se dio, o `message` tal cual si no. La llamada de
+    voz manda por separado el texto con hint de canal (lo que ve el LLM) del
+    transcript real (lo que se persiste) — así el hint no queda mezclado con
+    el habla real del cliente en el historial."""
+    return {"role": "user", "content": history_content if history_content is not None else message}
+
+
+def _select_system_prompt(role: str, channel: str) -> str:
+    """System prompt según rol/canal: gerente siempre analista, cliente por
+    voz usa la persona de cierre (Camilo, igual que WhatsApp — la llamada en
+    vivo también debe cerrar la venta, no solo informar como Sofía)."""
+    if role == "gerente":
+        return SYSTEM_PROMPT_GERENTE
+    if channel == "voice":
+        return SYSTEM_PROMPT_VOICE
+    return SYSTEM_PROMPT_WEB
 
 
 class _MarkerBuffer:
@@ -223,21 +243,22 @@ def _checkout_frames(name: str, result) -> list[str]:
 # ---------- Runner con DeepSeek (streaming real) ----------
 
 async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
-                   user_id: str, tenant_id: str, out: dict) -> AsyncIterator[str]:
+                   user_id: str, tenant_id: str, out: dict,
+                   channel: str = "web", history_content: str | None = None) -> AsyncIterator[str]:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=config.DEEPSEEK_API_KEY,
                          base_url=config.DEEPSEEK_BASE_URL, timeout=60.0, max_retries=1)
-    # Este endpoint SSE es exclusivamente el canal web (WhatsApp entra por
-    # agent_core.run_agent) — la identidad de Sofía ya trae la framing "más
-    # informativa, no insiste" incluida (ver agent_core.SYSTEM_PROMPT_WEB).
-    system = SYSTEM_PROMPT_GERENTE if role == "gerente" else SYSTEM_PROMPT_WEB
+    # `channel` distingue el chat web (Sofía, default) de la llamada de voz
+    # en vivo ("voice", Camilo — cierra la venta igual que WhatsApp). WhatsApp
+    # en sí no pasa por acá (entra por `agent_core.run_agent`).
+    system = _select_system_prompt(role, channel)
     if mem_ctx:
         system = f"{system}\n\n{mem_ctx}"
     hist_key = f"{tenant_id}:{session_id}"  # historial particionado por (tenant_id, sesión)
     history = await asyncio.to_thread(_load_history, hist_key)
     messages = [{"role": "system", "content": system}, *history,
                 {"role": "user", "content": message}]
-    new_msgs: list[dict] = [{"role": "user", "content": message}]
+    new_msgs: list[dict] = [_history_user_message(message, history_content)]
     reply_text = ""
 
     for _round in range(MAX_TOOL_ROUNDS):
@@ -299,7 +320,7 @@ async def _run_llm(session_id: str, message: str, mem_ctx: str, role: str,
             if (name not in _CHECKOUT_TOOLS and isinstance(result, dict)
                     and result.get("download_url")):
                 yield _frame("document", {"download_url": result["download_url"],
-                                          "title": "Cotización SegurIA"})
+                                          "title": "Cotización Tequendama"})
             tool_msg = {"role": "tool", "tool_call_id": tc["id"] or f"call_{i}",
                         "content": json.dumps(result, ensure_ascii=False, default=str)[:6000]}
             messages.append(tool_msg)
@@ -460,7 +481,8 @@ async def _emit_checkout_tool(tool: str, args: dict, role: str, user_id: str,
 
 
 async def _run_demo_close(session_id: str, message: str, role: str, user_id: str,
-                          tenant_id: str, out: dict, quote: dict) -> AsyncIterator[str]:
+                          tenant_id: str, out: dict, quote: dict,
+                          history_content: str | None = None) -> AsyncIterator[str]:
     """Ejecuta el cierre REAL en modo demo: datos → consentimiento → emisión."""
     name, doc, _consent = _parse_customer(message)
     name = name or "Cliente Demo"
@@ -516,18 +538,24 @@ async def _run_demo_close(session_id: str, message: str, role: str, user_id: str
     out["reply"] = (intro + closing).strip()
     yield _frame("quick_replies", {"items": qr})
     await asyncio.to_thread(_append_history, f"{tenant_id}:{session_id}",
-                            [{"role": "user", "content": message},
+                            [_history_user_message(message, history_content),
                              {"role": "assistant", "content": out["reply"]}])
 
 
 async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
-                    user_id: str, tenant_id: str, out: dict) -> AsyncIterator[str]:
+                    user_id: str, tenant_id: str, out: dict,
+                    channel: str = "web", history_content: str | None = None) -> AsyncIterator[str]:
+    # `channel` no cambia el guion (no hay prompt de LLM que seleccionar en
+    # modo demo); se acepta solo para que `runner(...)` en voice_live.py pueda
+    # llamar a `_run_llm`/`_run_demo` indistintamente con los mismos kwargs.
+    del channel
     # Cierre autónomo: si el cliente quiere comprar y ya hubo cotización, cierra de verdad.
     if role == "cliente" and _is_close_intent(message):
         quote = await asyncio.to_thread(_latest_quote_for, user_id)
         if quote:
             async for f in _run_demo_close(session_id, message, role, user_id,
-                                           tenant_id, out, quote):
+                                           tenant_id, out, quote,
+                                           history_content=history_content):
                 yield f
             return
 
@@ -561,7 +589,7 @@ async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
                 yield _frame("tool_result", {"tool": "generar_documento",
                                              "summary": d_summary, "meta": d_meta})
                 yield _frame("document", {"download_url": doc["download_url"],
-                                          "title": f"Cotización {top.get('producto', 'SegurIA')}"})
+                                          "title": f"Cotización {top.get('producto', 'Tequendama')}"})
             closing = ("\n\nRecuerda que la emisión final de la póliza la realiza un asesor "
                        "licenciado. ¿Quieres que uno te contacte para cerrarla?")
             async for f in _stream_text(closing):
@@ -577,13 +605,19 @@ async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
             qr = ["Seguro de vida", "Seguro de salud", "Seguro de auto"]
             out["reply"] = (intro + msg).strip()
     else:
+        # Sin re-saludo: si ya hay historial real en esta sesión, no es el
+        # primer turno — nunca repitas la presentación inicial.
+        has_history = bool(await asyncio.to_thread(_load_history, f"{tenant_id}:{session_id}"))
         if tipo:
-            ask = (f"¡Hola! Soy SegurIA, tu asesora digital de seguros. Me encanta que "
+            ask = (f"Sigamos con tu seguro de {tipo}. Para cotizarte a tu medida, cuéntame: "
+                   f"¿en qué país estás y qué edad tienes?") if has_history else (
+                   f"¡Hola! Soy Tequendama, tu asesora digital de seguros. Me encanta que "
                    f"pienses en un seguro de {tipo}. Para cotizarte a tu medida, cuéntame: "
                    f"¿en qué país estás y qué edad tienes?")
             qr = ["Estoy en Colombia", "Estoy en México", "Tengo 30 años"]
         else:
-            ask = ("¡Hola! Soy SegurIA, tu asesora digital de seguros. Estoy aquí para "
+            ask = ("Cuéntame, ¿qué te gustaría asegurar y en qué país estás?") if has_history else (
+                   "¡Hola! Soy Tequendama, tu asesora digital de seguros. Estoy aquí para "
                    "ayudarte a proteger lo que más importa. Para empezar, cuéntame: ¿qué te "
                    "gustaría asegurar y en qué país estás?")
             qr = ["Seguro de vida", "Seguro de salud", "Seguro de auto"]
@@ -593,7 +627,7 @@ async def _run_demo(session_id: str, message: str, mem_ctx: str, role: str,
 
     yield _frame("quick_replies", {"items": qr})
     await asyncio.to_thread(_append_history, f"{tenant_id}:{session_id}",
-                            [{"role": "user", "content": message},
+                            [_history_user_message(message, history_content),
                              {"role": "assistant", "content": out["reply"]}])
 
 

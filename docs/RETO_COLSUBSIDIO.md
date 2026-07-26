@@ -81,7 +81,7 @@ Nuevo evento además de los de FUSION.md:
   llama `POST /api/v1/checkout`, genera el **PDF de póliza** y emite el evento `policy`.
 
 ## Reformulación de cumplimiento (cierre autónomo)
-- SegurIA **cierra sola**; Colsubsidio distribuye; la aseguradora emite.
+- Tequendama **cierra sola**; Colsubsidio distribuye; la aseguradora emite.
 - Consentimiento habeas data **obligatorio** y registrado antes de emitir.
 - Divulgación clara de aseguradora, coberturas, exclusiones y prima.
 - Derecho de **retracto** informado. Datos mínimos (no historial médico innecesario).

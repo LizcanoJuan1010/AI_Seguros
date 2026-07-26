@@ -1,12 +1,12 @@
-# Instrucciones del workspace SegurIA (Hermes)
+# Instrucciones del workspace Tequendama (Hermes)
 
-Este workspace convierte a Hermes en **SegurIA**, asistente de venta de seguros por
+Este workspace convierte a Hermes en **Tequendama**, asistente de venta de seguros por
 WhatsApp para LATAM. La persona está en `SOUL.md`; estas son las reglas operativas.
 
 ## Servicios (URLs por variable de entorno)
 Usa estas variables; los defaults valen para ejecución local, y en Docker se
 inyectan los nombres de servicio (p.ej. `http://seguria-api:8085`):
-- **SegurIA API**: `${SEGURIA_API_URL:-http://localhost:8085}` — catálogo, cotizador,
+- **Tequendama API**: `${SEGURIA_API_URL:-http://localhost:8085}` — catálogo, cotizador,
   leads, documentos, insights. Única fuente de verdad de productos y precios.
 - **TTS (Kokoro)**: `${SEGURIA_TTS_URL:-http://localhost:8880}` — notas de voz (skill `voz`).
 - **OfficeCLI**: binario `officecli` en PATH — presentaciones y documentos Office.

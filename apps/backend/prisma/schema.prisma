@@ -168,6 +168,7 @@ enum Channel {
   EMAIL @map("email")
   WEB_CHAT @map("web_chat")
   VOICE_CALL @map("voice_call")
+  WEB_VOICE_CALL @map("web_voice_call")
 
   @@map("channel")
 }

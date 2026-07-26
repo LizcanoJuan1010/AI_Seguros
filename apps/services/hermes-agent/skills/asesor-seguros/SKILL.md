@@ -1,6 +1,6 @@
 ---
 name: asesor-seguros
-description: Flujo de venta consultiva de seguros - descubrir necesidad, cotizar con la API de SegurIA y presentar opciones a la medida. Usar en toda conversación con rol cliente.
+description: Flujo de venta consultiva de seguros - descubrir necesidad, cotizar con la API de Tequendama y presentar opciones a la medida. Usar en toda conversación con rol cliente.
 ---
 
 # Asesor de seguros (clientes)

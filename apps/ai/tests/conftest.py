@@ -43,11 +43,13 @@ _PG_OK, _PG_REASON = _pg_available()
 
 
 def pytest_collection_modifyitems(config, items):
-    """Sin Postgres: salta toda la suite con un motivo accionable en vez de fallar."""
+    """Sin Postgres: salta tests de integración; los marcados `unit` sí corren."""
     if _PG_OK:
         return
     skip = pytest.mark.skip(reason=f"{_PG_REASON}. Córrelos con: {_RUN_HINT}")
     for item in items:
+        if "unit" in item.keywords:
+            continue
         item.add_marker(skip)
 
 

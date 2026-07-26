@@ -1,4 +1,4 @@
-# Fusión SegurIA × Tequendama — arquitectura y contrato
+# Arquitectura y contrato — Tequendama
 
 > Decisión (confirmada por el usuario): **arquitectura polyglot** + **slice vertical
 > end-to-end demoable** como primer hito.

@@ -151,7 +151,7 @@ export class ElevenLabsService {
    * Alimenta el motor de versionado/QA de prompts (docket, adaptado de
    * docket-motor — ver apps/ai/app/docket_engine/) con el transcript real de
    * la llamada, para que cluster.py/judge.py/optimize.py puedan medir y
-   * mejorar el prompt de SegurIA con datos reales. Mismo patrón
+   * mejorar el prompt de Tequendama con datos reales. Mismo patrón
    * fire-and-forget que `notifyCallProfiling`: nunca bloquea ni rompe el
    * registro de la llamada si el servicio IA no responde o el motor está
    * apagado (DOCKET_ENGINE_ENABLED=false del lado de apps/ai).

@@ -15,6 +15,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ElevenLabsModule } from './modules/elevenlabs/elevenlabs.module';
 import { LeadEventsModule } from './modules/lead-events/lead-events.module';
 import { LeadsModule } from './modules/leads/leads.module';
+import { LiveCallModule } from './modules/live-call/live-call.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PoliciesModule } from './modules/policies/policies.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -38,6 +39,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ProductsModule,
     AiCallsModule,
     CallMessagesModule,
+    LiveCallModule,
     LeadsModule,
     LeadEventsModule,
     CampaignsModule,
