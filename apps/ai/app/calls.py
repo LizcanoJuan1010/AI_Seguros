@@ -12,9 +12,7 @@ Sin ELEVENLABS_API_KEY/AGENT_ID/AGENT_PHONE_NUMBER_ID corre en modo demo
 limpio con `{"demo": True}` en vez de romper el flujo.
 """
 import logging
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -24,24 +22,6 @@ from .config import (ELEVENLABS_AGENT_ID, ELEVENLABS_AGENT_PHONE_NUMBER_ID,
 log = logging.getLogger("seguria.calls")
 
 _TIMEOUT = 15
-
-# Ley 2300 de 2023 (Colombia): contacto comercial SOLO lunes a viernes
-# 7:00-19:00 y sábados 8:00-15:00, por canales autorizados — nunca domingo.
-# Aplica explícitamente a aseguradoras (ver
-# Nota_estrategica_Seguros_Colsubsidio.pdf §6). Único choque legal para TODA
-# llamada saliente (venta nueva o reactivación de checklist), sin importar
-# el país del cliente — la operación comercial (Camila) es colombiana.
-_TZ_COLOMBIA = ZoneInfo("America/Bogota")
-
-
-def _dentro_ventana_legal(ahora: datetime | None = None) -> bool:
-    ahora = (ahora or datetime.now(_TZ_COLOMBIA)).astimezone(_TZ_COLOMBIA)
-    dia, hora = ahora.weekday(), ahora.hour + ahora.minute / 60
-    if dia == 6:  # domingo: nunca
-        return False
-    if dia == 5:  # sábado
-        return 8 <= hora < 15
-    return 7 <= hora < 19  # lunes(0) a viernes(4)
 
 
 def enabled() -> bool:
@@ -170,12 +150,6 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
     checklist). Pasa uno distinto para un flujo con OTRO prompt sin tocar el
     agente real — ver `ELEVENLABS_LANDING_AGENT_ID` / `landing_callback.py`.
     """
-    if not _dentro_ventana_legal():
-        log.info("fuera de la ventana legal de contacto (Ley 2300/2023): no se llama a %s", phone)
-        return {"ok": False, "demo": False,
-               "error": "fuera de la ventana horaria legal de contacto comercial "
-                        "(Ley 2300/2023: lun-vie 7:00-19:00, sáb 8:00-15:00, hora Colombia)"}
-
     variables = {"phone": phone, "tenant_id": tenant_id,
                  **_sale_context(phone, tenant_id), **(dynamic_variables or {})}
 

@@ -612,6 +612,18 @@ def insights_product_ideas(tenant_id: str = Depends(require_manager_flex)) -> di
     return product_ideas(tenant_id)
 
 
+@app.get("/api/insights/combos")
+def insights_combos(_tenant_id: str = Depends(require_manager_flex)) -> dict:
+    """Combos de seguros más comprados: combinaciones de tipos que un mismo
+    cliente tiene vigentes a la vez (cross-sell real), rankeadas por
+    frecuencia. Ver insights.by_combo."""
+    conn = get_conn()
+    try:
+        return {"combos": insights_mod.by_combo(conn)}
+    finally:
+        conn.close()
+
+
 # ---------- Cotización + leads ----------
 
 def _upsert_lead(conn, phone: str | None, name: str | None, country: str,

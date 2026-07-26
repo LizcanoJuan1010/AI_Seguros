@@ -84,6 +84,7 @@ const ETAPA_LABEL: Record<string, string> = {
 
 /** Etiquetas del intake (datos declarados) que se muestran, en este orden. */
 const INTAKE_FIELDS: { key: string; label: string; format?: (v: unknown) => string }[] = [
+  { key: 'afiliado_colsubsidio', label: 'Afiliado a Colsubsidio' },
   { key: 'estado_civil', label: 'Estado civil' },
   { key: 'dependientes', label: 'Hijos / dependientes' },
   { key: 'ocupacion', label: 'Ocupación' },
