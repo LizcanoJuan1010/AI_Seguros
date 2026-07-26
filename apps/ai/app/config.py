@@ -117,7 +117,7 @@ WA_GATEWAY_TENANT = os.getenv("WA_GATEWAY_TENANT", "tequendama")
 
 # Número de WhatsApp del negocio (el ya emparejado con el gateway Baileys) que
 # el chat WEB (Sofía) le ofrece al cliente cuando prefiere continuar por ahí
-# con Camilo (ver agent_core._web_framing). Solo texto para mostrar, ej.
+# con Mónica (ver agent_core._web_framing). Solo texto para mostrar, ej.
 # "+57 300 000 0000".
 WHATSAPP_BUSINESS_NUMBER = os.getenv("WHATSAPP_BUSINESS_NUMBER", "")
 
@@ -143,6 +143,17 @@ DIDIT_BASE_URL = os.getenv("DIDIT_BASE_URL", "https://verification.didit.me")
 DIDIT_LIVENESS_MIN_SCORE = int(os.getenv("DIDIT_LIVENESS_MIN_SCORE", "70"))
 DIDIT_FACE_MATCH_MIN_SCORE = int(os.getenv("DIDIT_FACE_MATCH_MIN_SCORE", "70"))
 KYC_LINK_TTL_MINUTES = int(os.getenv("KYC_LINK_TTL_MINUTES", "60"))
+
+# Checklist de activación (ver app/checklist.py): a diferencia de KYC/esign/pago,
+# el link del checklist NO vence — el cliente lo retoma cuando quiera. Horas sin
+# avanzar de paso antes de que Camila (llamada saliente) reciba el aviso de
+# reactivación (ver proactive.checklist_nudges).
+CHECKLIST_STALL_HOURS = int(os.getenv("CHECKLIST_STALL_HOURS", "48"))
+
+# URL pública del FRONTEND (apps/frontend, la SPA de React) — distinta de
+# PUBLIC_BASE_URL (ese apunta a este servicio, seguria-ai). El checklist es una
+# ruta de React (/activacion/{token}), no un endpoint de este FastAPI.
+FRONTEND_PUBLIC_URL = os.getenv("FRONTEND_PUBLIC_URL", "").rstrip("/")
 
 # Voz (Deepgram): tools de STT/TTS (voice_deepgram.py / deepgram-outbound) y
 # la llamada en vivo /ws/voice/live (voice_live.py). Sin DEEPGRAM_API_KEY corre

@@ -12,7 +12,9 @@ Sin ELEVENLABS_API_KEY/AGENT_ID/AGENT_PHONE_NUMBER_ID corre en modo demo
 limpio con `{"demo": True}` en vez de romper el flujo.
 """
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -22,6 +24,24 @@ from .config import (ELEVENLABS_AGENT_ID, ELEVENLABS_AGENT_PHONE_NUMBER_ID,
 log = logging.getLogger("seguria.calls")
 
 _TIMEOUT = 15
+
+# Ley 2300 de 2023 (Colombia): contacto comercial SOLO lunes a viernes
+# 7:00-19:00 y sábados 8:00-15:00, por canales autorizados — nunca domingo.
+# Aplica explícitamente a aseguradoras (ver
+# Nota_estrategica_Seguros_Colsubsidio.pdf §6). Único choque legal para TODA
+# llamada saliente (venta nueva o reactivación de checklist), sin importar
+# el país del cliente — la operación comercial (Camila) es colombiana.
+_TZ_COLOMBIA = ZoneInfo("America/Bogota")
+
+
+def _dentro_ventana_legal(ahora: datetime | None = None) -> bool:
+    ahora = (ahora or datetime.now(_TZ_COLOMBIA)).astimezone(_TZ_COLOMBIA)
+    dia, hora = ahora.weekday(), ahora.hour + ahora.minute / 60
+    if dia == 6:  # domingo: nunca
+        return False
+    if dia == 5:  # sábado
+        return 8 <= hora < 15
+    return 7 <= hora < 19  # lunes(0) a viernes(4)
 
 
 def enabled() -> bool:
@@ -102,6 +122,24 @@ def _sale_context(phone: str, tenant_id: str) -> dict[str, Any]:
             ctx["vehiculo"] = f"{intake.get('marca', '')} {intake.get('modelo_anio', '')}".strip()
         ctx["tipo_ingreso"] = intake.get("actividad_economica") or ""
         ctx["productos_vigentes"] = _productos_vigentes(phone)
+
+        from . import checklist
+        conn2 = get_conn()
+        try:
+            chk = checklist.latest_by_session(conn2, session_key)
+            if chk:
+                estado = checklist.estado_actual(conn2, chk)
+                ctx["paso_checklist"] = estado["paso_actual"]
+                updated = chk.get("updated_at")
+                if updated:
+                    from datetime import datetime as _dt, timezone as _tz
+                    ahora = _dt.now(_tz.utc)
+                    if updated.tzinfo is None:
+                        updated = updated.replace(tzinfo=_tz.utc)
+                    ctx["dias_sin_avanzar"] = max(0, (ahora - updated).days)
+        finally:
+            conn2.close()
+
         if quote:
             ctx["tipo_seguro"] = quote.get("tipo") or ""
             ctx["producto"] = quote.get("producto") or ""
@@ -127,6 +165,12 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
     WhatsApp/web sin tener que preguntarla de nuevo; lo que pase explícito en
     `dynamic_variables` gana sobre lo auto-completado.
     """
+    if not _dentro_ventana_legal():
+        log.info("fuera de la ventana legal de contacto (Ley 2300/2023): no se llama a %s", phone)
+        return {"ok": False, "demo": False,
+               "error": "fuera de la ventana horaria legal de contacto comercial "
+                        "(Ley 2300/2023: lun-vie 7:00-19:00, sáb 8:00-15:00, hora Colombia)"}
+
     variables = {"phone": phone, "tenant_id": tenant_id,
                  **_sale_context(phone, tenant_id), **(dynamic_variables or {})}
 
@@ -165,3 +209,27 @@ def iniciar_llamada(phone: str, tenant_id: str, *, first_message: str | None = N
     except Exception as exc:
         log.warning("no se pudo iniciar la llamada a %s: %s", phone, exc)
         return {"ok": False, "demo": False, "error": str(exc)}
+
+
+def iniciar_llamada_reactivacion_checklist(phone: str, tenant_id: str) -> dict:
+    """Llamada de reactivación para un checklist estancado (ver
+    `proactive.checklist_nudges` / skill `reactivar-checklist`).
+
+    A diferencia de `iniciar_llamada`, primero reenvía el link del checklist
+    (rotando su token — el crudo no es recuperable de la fila, ver
+    `checklist.reenviar_paso_actual`) para que un WhatsApp fresco le llegue al
+    cliente justo antes/durante la llamada; Camila puede decir "te acabo de
+    reenviar el link" en vez de leer una URL en voz."""
+    from . import checklist
+    from .db import get_conn
+
+    session_key = f"{tenant_id}:{phone}"
+    conn = get_conn()
+    try:
+        row = checklist.latest_by_session(conn, session_key)
+        if row is None:
+            return {"ok": False, "error": "el cliente no tiene un checklist de activación"}
+        checklist.reenviar_paso_actual(conn, row)
+    finally:
+        conn.close()
+    return iniciar_llamada(phone, tenant_id)

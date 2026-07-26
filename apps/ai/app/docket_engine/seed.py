@@ -2,7 +2,7 @@
 
 Siembra los prompts actuales de las 3 identidades cliente-facing que viven en
 código (`agent_core.SYSTEM_PROMPT_WEB_DEFAULT`/`_WHATSAPP_DEFAULT`/
-`_GERENTE_DEFAULT` — Sofía, Camilo y el analista gerencial; Martín, la llamada
+`_GERENTE_DEFAULT` — Sofía, Mónica y el analista gerencial; Camila, la llamada
 saliente, vive aparte en `apps/ai/app/reference/elevenlabs_agent_prompt.md`,
 fuera de este motor) como `version_number=1, source='seed'`, una campaña por
 identidad. Idempotente — no reinserta si la v1 ya existe. Importa

@@ -18,6 +18,7 @@ from . import backend_client, insights as insights_mod
 from . import memory
 from .assistant import router as assistant_router
 from .campaign_broadcast import router as campaign_broadcast_router
+from .checklist import router as checklist_router
 from .embedded import router as embedded_router
 from .marketing_studio import router as marketing_router
 from .voice_live import router as voice_live_router
@@ -59,6 +60,7 @@ app.include_router(embedded_router)   # /api/embedded/* (quote & bind para aliad
 app.include_router(marketing_router)  # POST /api/marketing/banner (Gemini, requiere gerente)
 app.include_router(campaign_broadcast_router)  # POST /api/marketing/campaigns/broadcast (servicio-a-servicio)
 app.include_router(voice_live_router)  # WS /ws/voice/live (llamada en vivo, Deepgram STT/TTS)
+app.include_router(checklist_router)  # /api/checklist/{token} (público, checklist de activación)
 
 
 class ChatRequest(BaseModel):
@@ -930,6 +932,38 @@ def outbound_call(req: OutboundCallRequest,
     tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
     return calls.iniciar_llamada(req.phone, tenant_id, first_message=req.first_message,
                                  dynamic_variables=req.dynamic_variables)
+
+
+class ChecklistCallRequest(BaseModel):
+    phone: str = Field(..., description="Número E.164 del cliente con checklist estancado")
+    tenant_id: str | None = Field(None, description="Si falta, se usa el tenant demo")
+
+
+@app.post("/api/calls/checklist", dependencies=[Depends(require_service)])
+def checklist_reactivation_call(req: ChecklistCallRequest,
+                                x_tenant_id: str = Header(default="", alias="X-Tenant-Id")) -> dict:
+    """Llamada de reactivación de Camila para un checklist de activación
+    estancado (ver `proactive.checklist_nudges`). La usa la skill de Hermes
+    `reactivar-checklist` — no el chat del cliente. Reenvía primero el link
+    vigente del checklist (rota su token) y luego dispara la llamada."""
+    from . import calls
+    tenant_id = req.tenant_id or x_tenant_id or DEMO_TENANT_ID
+    return calls.iniciar_llamada_reactivacion_checklist(req.phone, tenant_id)
+
+
+@app.post("/api/benefits/check", dependencies=[Depends(require_service)])
+def benefits_check() -> dict:
+    """Corre el vesting de beneficios (ver `benefits.py` — 2 entradas a parque
+    en el mes 3, bono de droguería en el mes 6, noche de hotel en el mes 12
+    de póliza vigente continua) y entrega lo recién desbloqueado por WhatsApp.
+    La usa la skill de Hermes `beneficios-vesting` (cron diario)."""
+    from . import benefits
+    conn = get_conn()
+    try:
+        entregados = benefits.check_and_unlock(conn)
+        return {"entregados": entregados, "n": len(entregados)}
+    finally:
+        conn.close()
 
 
 @app.post("/api/profiling/from-call", dependencies=[Depends(require_service)])

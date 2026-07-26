@@ -511,6 +511,33 @@ app.post("/send-audio", async (req, res) => {
   }
 });
 
+app.post("/send-document", async (req, res) => {
+  // Documento (ficha PDF de cotización/póliza, ver
+  // apps/ai/app/whatsapp_gateway.py::enviar_documento): a diferencia de
+  // /send-audio, viaja por URL (no base64) — el PDF ya está hosteado en
+  // apps/ai (`GET /api/documents/{filename}`), Baileys lo descarga solo.
+  const { tenant, to, url, filename, caption } = req.body;
+  if (!tenant || !to || !url) {
+    return res.status(400).json({ status: 400, error: "tenant, to, url required" });
+  }
+  const inst = getInstanceState(tenant);
+  if (!inst?.sock || inst.state !== "open") {
+    return res.status(400).json({ status: 400, error: "Instance not connected" });
+  }
+  const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
+  try {
+    const result = await inst.sock.sendMessage(jid, {
+      document: { url },
+      fileName: filename || "documento.pdf",
+      mimetype: "application/pdf",
+      ...(caption ? { caption } : {}),
+    });
+    res.json({ key: result.key, status: "PENDING" });
+  } catch (err) {
+    res.status(500).json({ status: 500, error: err.message });
+  }
+});
+
 // ---- Contacts ----
 
 app.post("/chat/whatsappNumbers/:instanceName", async (req, res) => {
