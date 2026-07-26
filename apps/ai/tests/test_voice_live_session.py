@@ -1,41 +1,19 @@
-"""Tests de VoiceSession/DeepgramSTT/DeepgramTTS con dobles — sin red real
-a Deepgram ni al agente RAG (Postgres). `asyncio_mode = auto` (pytest.ini)
-detecta las funciones `async def` solas, sin marcar cada una.
+"""Tests de `VoiceSession` (arquitectura Voice Agent de Deepgram) con
+dobles — sin red real a Deepgram ni a Postgres. `asyncio_mode = auto`
+(pytest.ini) detecta las funciones `async def` solas, sin marcar cada una.
 
-Nota: igual que test_voice_live.py, `conftest.py` saltea TODA la suite sin
-un Postgres local en localhost:5432 (política preexistente del proyecto,
-no relacionada con este archivo). Ejecución directa más abajo documentada
-en el reporte de la tanda — no se modifica esa política acá.
+Reemplaza la suite vieja de `DeepgramSTT`/`DeepgramTTS`/`looks_like_echo`
+(arquitectura anterior, borrada — ver openspec/changes/voice-agent-migration).
+La clase de transporte (`DeepgramVoiceAgent`) tiene su propia suite en
+test_voice_agent.py; acá se prueba la ORQUESTACIÓN de `VoiceSession`
+(traducción de eventos, barge-in, ejecución de herramientas) con `_agent`
+mockeado.
 """
 import asyncio
 import json
 from unittest.mock import AsyncMock
 
 from app import voice_live
-from app.voice_live import looks_like_echo
-
-
-class FakeDeepgramConnection:
-    """Doble de websockets.ClientConnection: async iterable + send/close."""
-
-    def __init__(self, incoming=None):
-        self.sent = []
-        self.closed = False
-        self._incoming = list(incoming or [])
-
-    async def send(self, data):
-        self.sent.append(data)
-
-    async def close(self):
-        self.closed = True
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self._incoming:
-            raise StopAsyncIteration
-        return self._incoming.pop(0)
 
 
 class FakeClientWebSocket:
@@ -54,44 +32,6 @@ class FakeClientWebSocket:
 
     async def close(self, code=1000):
         self.closed_code = code
-
-
-async def test_deepgram_stt_transcripts_yields_partial_and_utterance():
-    """Solo `speech_final` cierra la frase; `is_final` intermedio es partial."""
-    incoming = [
-        json.dumps({"type": "Metadata", "request_id": "x"}),
-        json.dumps({"type": "Results", "is_final": False, "speech_final": False,
-                    "channel": {"alternatives": [{"transcript": "hola"}]}}),
-        json.dumps({"type": "Results", "is_final": True, "speech_final": False,
-                    "channel": {"alternatives": [{"transcript": "hola"}]}}),
-        json.dumps({"type": "Results", "is_final": True, "speech_final": True,
-                    "channel": {"alternatives": [{"transcript": "como estas"}]}}),
-        json.dumps({"type": "Results", "is_final": True, "speech_final": True,
-                    "channel": {"alternatives": [{"transcript": ""}]}}),
-    ]
-    stt = voice_live.DeepgramSTT()
-    stt._ws = FakeDeepgramConnection(incoming)
-
-    results = [r async for r in stt.transcripts()]
-
-    assert ("partial", "hola") in results
-    assert ("utterance", "hola como estas") in results
-    # Sin speech_final no debe haber utterance del primer segmento solo.
-    assert ("utterance", "hola") not in results
-
-
-async def test_deepgram_tts_cancel_sends_clear_without_closing():
-    """Conexión persistente: `cancel()` (barge-in) manda `Clear` pero NO
-    cierra el socket — sigue viva para el resto de la llamada."""
-    tts = voice_live.DeepgramTTS()
-    fake = FakeDeepgramConnection()
-    tts._ws = fake
-
-    await tts.cancel()
-
-    assert json.loads(fake.sent[0]) == {"type": "Clear"}
-    assert fake.closed is False
-    assert tts._ws is fake
 
 
 async def test_authenticate_success_sets_identity_and_sends_auth_ok(monkeypatch):
@@ -121,268 +61,204 @@ async def test_authenticate_rejects_invalid_token(monkeypatch):
     assert ws.sent_json[-1]["type"] == "auth_error"
 
 
-async def test_barge_in_cancels_tts_and_notifies_client():
-    """Conexión persistente: barge-in llama `cancel()` (Clear) sobre la
-    MISMA instancia de TTS — ya no se anula/reabre por turno."""
+async def test_barge_in_notifies_client_and_stops_speaking():
     ws = FakeClientWebSocket()
     session = voice_live.VoiceSession(ws)
-    fake_tts = AsyncMock()
-    session._tts = fake_tts
     session.assistant_speaking = True
-    speak_gen_before = session._speak_gen
 
     await session._barge_in()
 
     assert session.assistant_speaking is False
-    assert session._speak_gen == speak_gen_before + 1
-    fake_tts.cancel.assert_awaited_once()
-    assert session._tts is fake_tts
     assert ws.sent_json[-1] == {"type": "barge_in", "data": {}}
 
 
-async def test_stt_loop_interim_while_speaking_barge_in_no_turn():
-    """Partial con la IA hablando: corta TTS, NO arranca turno."""
+async def test_client_loop_forwards_audio_to_agent():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+    session._agent = AsyncMock()
+
+    pcm = b"\x01\x02"
+    ws.receive = AsyncMock(side_effect=[
+        {"type": "websocket.receive", "bytes": pcm},
+        {"type": "websocket.disconnect"},
+    ])
+
+    await session._client_loop()
+
+    session._agent.send_audio.assert_awaited_once_with(pcm)
+
+
+async def test_client_loop_respects_mute():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+    session._agent = AsyncMock()
+
+    ws.receive = AsyncMock(side_effect=[
+        {"type": "websocket.receive", "text": json.dumps({"type": "mute"})},
+        {"type": "websocket.receive", "bytes": b"\x01\x02"},
+        {"type": "websocket.disconnect"},
+    ])
+
+    await session._client_loop()
+
+    session._agent.send_audio.assert_not_awaited()
+    assert session.muted is True
+
+
+async def test_handle_agent_event_audio_forwards_bytes():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+
+    await session._handle_agent_event("audio", b"\x00\x01")
+
+    assert ws.sent_bytes == [b"\x00\x01"]
+
+
+async def test_handle_agent_event_user_text_emits_transcript_and_remembers(monkeypatch):
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+    session.user_id = "web:u"
+    session.tenant_id = "t"
+    remember_calls = []
+
+    async def fake_remember(user_id, content, tenant_id):
+        remember_calls.append((user_id, content, tenant_id))
+
+    monkeypatch.setattr(voice_live, "_remember", fake_remember)
+
+    await session._handle_agent_event(
+        "ConversationText", {"role": "user", "content": "quiero un seguro de vida"})
+    await asyncio.sleep(0)  # _remember se dispara como task de fondo
+
+    assert {"type": "transcript_final", "data": {"text": "quiero un seguro de vida"}} in ws.sent_json
+    assert remember_calls == [("web:u", "quiero un seguro de vida", "t")]
+
+
+async def test_handle_agent_event_user_text_while_ai_speaking_triggers_barge_in(monkeypatch):
     ws = FakeClientWebSocket()
     session = voice_live.VoiceSession(ws)
     session.assistant_speaking = True
-    fake_tts = AsyncMock()
-    session._tts = fake_tts
+    monkeypatch.setattr(voice_live, "_remember", AsyncMock())
 
-    async def fake_transcripts():
-        yield "partial", "hola"
-
-    session.stt.transcripts = fake_transcripts
-    session._run_turn = AsyncMock()
-
-    await session._stt_loop()
-
-    fake_tts.cancel.assert_awaited_once()
-    assert session.assistant_speaking is False
-    assert {"type": "transcript_partial", "data": {"text": "hola"}} in ws.sent_json
-    assert {"type": "barge_in", "data": {}} in ws.sent_json
-    assert session._turn_task is None
-    session._run_turn.assert_not_awaited()
-
-
-async def test_stt_loop_starts_turn_on_utterance():
-    """Solo un evento utterance (speech_final) dispara el turno."""
-    ws = FakeClientWebSocket()
-    session = voice_live.VoiceSession(ws)
-
-    async def fake_transcripts():
-        yield "partial", "quiero cotizar"
-        yield "utterance", "quiero cotizar un seguro de auto"
-
-    session.stt.transcripts = fake_transcripts
-    session._run_turn = AsyncMock()
-
-    await session._stt_loop()
-    if session._turn_task:
-        await session._turn_task
-
-    session._run_turn.assert_awaited_once_with("quiero cotizar un seguro de auto")
-    assert {"type": "transcript_final", "data": {"text": "quiero cotizar un seguro de auto"}} in ws.sent_json
-
-
-async def test_stt_loop_discards_echo_of_last_spoken():
-    """Utterance casi igual al último TTS no crea turno (anti-eco)."""
-    ws = FakeClientWebSocket()
-    session = voice_live.VoiceSession(ws)
-    session._last_spoken_text = (
-        "¡Hola! Soy Tequendama, tu asesora de seguros. ¿En qué te ayudo hoy?"
-    )
-
-    async def fake_transcripts():
-        yield "utterance", "Hola soy Tequendama tu asesora de seguros en qué te ayudo hoy"
-
-    session.stt.transcripts = fake_transcripts
-    session._run_turn = AsyncMock()
-
-    await session._stt_loop()
-
-    assert session._turn_task is None
-    session._run_turn.assert_not_awaited()
-    assert {"type": "transcript_final", "data": {
-        "text": "Hola soy Tequendama tu asesora de seguros en qué te ayudo hoy",
-    }} in ws.sent_json
-
-
-def test_looks_like_echo_detects_overlap():
-    last = "¡Hola! Soy Tequendama, tu asesora de seguros. ¿En qué te ayudo hoy?"
-    assert looks_like_echo(
-        "Hola soy Tequendama tu asesora de seguros en qué te ayudo hoy", last,
-    )
-    assert not looks_like_echo("quiero un seguro de auto para Bogotá", last)
-
-
-async def test_speak_sentence_barge_in_race_cleans_without_attribute_error():
-    """Barge-in a mitad de `_speak_sentence`: la conexión TTS es persistente
-    (ya no se anula/reabre), pero el drenaje de `messages()` debe cortar
-    apenas `_barge_in()` invalida el `_speak_gen` vigente."""
-    ws = FakeClientWebSocket()
-    session = voice_live.VoiceSession(ws)
-
-    class SlowTTS(voice_live.DeepgramTTS):
-        def __init__(self):
-            super().__init__()
-            self._chunks = [("audio", b"\x00\x01"), ("audio", b"\x02\x03"), ("audio", b"\x04\x05")]
-
-        async def connect(self):
-            self._ws = FakeDeepgramConnection()
-
-        async def speak(self, text: str):
-            return None
-
-        async def flush(self):
-            return None
-
-        async def cancel(self):
-            return None
-
-        async def messages(self):
-            for i, item in enumerate(self._chunks):
-                if i == 1:
-                    await session._barge_in()
-                yield item
-
-        async def close(self):
-            self._ws = None
-
-    session._tts = SlowTTS()
-    gen = session._speak_gen
-
-    await session._speak_sentence(gen, "texto largo de prueba para el barge-in")
+    await session._handle_agent_event("ConversationText", {"role": "user", "content": "espera"})
 
     assert session.assistant_speaking is False
-    assert ws.sent_bytes == [b"\x00\x01"]  # corta antes del segundo chunk
     assert {"type": "barge_in", "data": {}} in ws.sent_json
-    assert {"type": "assistant_speaking_start", "data": {}} in ws.sent_json
-    # No speaking_end limpio tras barge-in (el flag ya estaba en false).
-    assert not any(m["type"] == "assistant_speaking_end" for m in ws.sent_json)
 
 
-async def test_run_turn_cancelled_does_not_speak():
-    """Turno cancelado (gen invalidado) no llama _speak_sentence ni emite turn_end."""
+async def test_handle_agent_event_assistant_text_emits_token():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+
+    await session._handle_agent_event(
+        "ConversationText", {"role": "assistant", "content": "¡Hola!"})
+
+    assert {"type": "token", "data": {"text": "¡Hola!"}} in ws.sent_json
+
+
+async def test_handle_agent_event_user_started_speaking_triggers_barge_in():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+    session.assistant_speaking = True
+
+    await session._handle_agent_event("UserStartedSpeaking", {"type": "UserStartedSpeaking"})
+
+    assert session.assistant_speaking is False
+    assert {"type": "barge_in", "data": {}} in ws.sent_json
+
+
+async def test_handle_agent_event_user_started_speaking_noop_if_ai_silent():
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+    session.assistant_speaking = False
+
+    await session._handle_agent_event("UserStartedSpeaking", {"type": "UserStartedSpeaking"})
+
+    assert not any(m["type"] == "barge_in" for m in ws.sent_json)
+
+
+async def test_handle_agent_event_error_notifies_client_without_raising():
+    """`FAILED_TO_THINK` (observado de forma intermitente en el spike) no
+    debe tumbar la sesión — solo se traduce a un evento `error`."""
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+
+    await session._handle_agent_event(
+        "Error", {"type": "Error", "description": "Failed to think. Please check your agent.think settings."})
+
+    assert {"type": "error", "data": {
+        "message": "Failed to think. Please check your agent.think settings."}} in ws.sent_json
+
+
+async def test_handle_function_call_executes_tool_and_responds(monkeypatch):
     ws = FakeClientWebSocket()
     session = voice_live.VoiceSession(ws)
     session.user_id = "web:u"
     session.tenant_id = "t"
-    session._speak_sentence = AsyncMock()
+    session.role = "cliente"
+    session._agent = AsyncMock()
 
-    import app.voice_live as vl
+    fake_result = {"opciones": [{"quote_id": "q1"}]}
+    captured_args = {}
 
-    async def gen_runner(*_a, **_k):
-        await asyncio.sleep(10)
-        return
-        yield  # pragma: no cover
+    def fake_exec_tool(name, args, **kwargs):
+        captured_args["name"] = name
+        captured_args["args"] = args
+        captured_args["kwargs"] = kwargs
+        return fake_result
 
-    original_demo = vl._run_demo
-    original_key = vl.config.DEEPSEEK_API_KEY
-    original_mem = vl.memory.get_memory_context
-    original_remember = vl._remember
+    monkeypatch.setattr(voice_live, "_exec_tool", fake_exec_tool)
 
-    vl.config.DEEPSEEK_API_KEY = ""
-    vl._run_demo = gen_runner
-    vl.memory.get_memory_context = AsyncMock(return_value="")
-    vl._remember = AsyncMock()
+    await session._handle_function_call({
+        "id": "call_1", "name": "cotizar",
+        "arguments": json.dumps({"country": "CO", "tipo": "vida"}),
+    })
 
-    try:
-        task = asyncio.create_task(session._run_turn("hola"))
-        await asyncio.sleep(0.05)
-        session._turn_gen += 1
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        await asyncio.sleep(0)
-    finally:
-        vl._run_demo = original_demo
-        vl.memory.get_memory_context = original_mem
-        vl._remember = original_remember
-        vl.config.DEEPSEEK_API_KEY = original_key
-
-    session._speak_sentence.assert_not_awaited()
-    assert not any(m["type"] == "turn_end" for m in ws.sent_json)
+    assert captured_args["name"] == "cotizar"
+    assert captured_args["args"] == {"country": "CO", "tipo": "vida"}
+    assert captured_args["kwargs"] == {"phone": "web:u", "role": "cliente", "tenant_id": "t"}
+    assert {"type": "tool_start", "data": {
+        "tool": "cotizar", "args": {"country": "CO", "tipo": "vida"}}} in ws.sent_json
+    assert any(m["type"] == "tool_result" and m["data"]["tool"] == "cotizar" for m in ws.sent_json)
+    session._agent.respond_function_call.assert_awaited_once_with("call_1", "cotizar", fake_result)
 
 
-async def test_run_turn_passes_voice_channel_without_hint_prefix():
-    """`_run_turn` ya no antepone ningún hint de canal al transcript —
-    channel='voice' selecciona el prompt de cierre completo (Camilo), que ya
-    trae esas restricciones (ver SYSTEM_PROMPT_VOICE en agent_core.py). Antes
-    de este cambio, `message` llevaba un prefijo `[Canal voz en vivo: ...]`
-    que terminaba persistido en `chat_history` como si fuera habla real."""
+async def test_handle_function_call_tool_exception_does_not_raise(monkeypatch):
     ws = FakeClientWebSocket()
     session = voice_live.VoiceSession(ws)
-    session.user_id = "web:u"
-    session.tenant_id = "t"
+    session._agent = AsyncMock()
 
-    import app.voice_live as vl
+    def failing_tool(name, args, **kwargs):
+        raise RuntimeError("boom")
 
-    received: dict = {}
+    monkeypatch.setattr(voice_live, "_exec_tool", failing_tool)
 
-    async def capture_runner(session_id, message, mem_ctx, role, user_id, tenant_id, out,
-                             channel="web", history_content=None):
-        received["message"] = message
-        received["channel"] = channel
-        received["history_content"] = history_content
-        out["reply"] = "ok"
-        yield 'event: done\ndata: {}\n\n'
+    await session._handle_function_call({"id": "call_1", "name": "cotizar", "arguments": "{}"})
 
-    original_demo = vl._run_demo
-    original_key = vl.config.DEEPSEEK_API_KEY
-    original_mem = vl.memory.get_memory_context
-    original_remember = vl._remember
-    vl.config.DEEPSEEK_API_KEY = ""
-    vl._run_demo = capture_runner
-    vl.memory.get_memory_context = AsyncMock(return_value="")
-    vl._remember = AsyncMock()
-    try:
-        await session._run_turn("quiero un seguro de vida")
-    finally:
-        vl._run_demo = original_demo
-        vl.config.DEEPSEEK_API_KEY = original_key
-        vl.memory.get_memory_context = original_mem
-        vl._remember = original_remember
-
-    assert received["message"] == "quiero un seguro de vida"
-    assert received["channel"] == "voice"
+    session._agent.respond_function_call.assert_awaited_once()
+    call_args = session._agent.respond_function_call.call_args.args
+    assert call_args[0] == "call_1"
+    assert call_args[1] == "cotizar"
+    assert "error" in call_args[2]
 
 
-async def test_run_turn_invalidated_gen_skips_speak_after_llm():
-    """Si el gen cambia durante el LLM, no habla aunque el runner termine."""
+async def test_cleanup_closes_agent_and_websocket():
     ws = FakeClientWebSocket()
     session = voice_live.VoiceSession(ws)
-    session.user_id = "web:u"
-    session.tenant_id = "t"
-    session._turn_gen = 1
-    session._speak_sentence = AsyncMock()
+    session._agent = AsyncMock()
 
-    import app.voice_live as vl
+    await session._cleanup()
 
-    async def quick_runner(session_id, message, mem_ctx, role, user_id, tenant_id, out,
-                           channel="web", history_content=None):
-        out["reply"] = "hola de nuevo"
-        # Invalida el turno como haría un barge-in / nuevo final.
-        session._turn_gen += 1
-        yield 'event: token\ndata: {"text": "hola"}\n\n'
-        yield 'event: done\ndata: {}\n\n'
+    session._agent.close.assert_awaited_once()
+    assert ws.closed_code == 1000
 
-    original_demo = vl._run_demo
-    original_key = vl.config.DEEPSEEK_API_KEY
-    original_mem = vl.memory.get_memory_context
-    original_remember = vl._remember
-    vl.config.DEEPSEEK_API_KEY = ""
-    vl._run_demo = quick_runner
-    vl.memory.get_memory_context = AsyncMock(return_value="")
-    vl._remember = AsyncMock()
-    try:
-        await session._run_turn("eco fantasma")
-    finally:
-        vl._run_demo = original_demo
-        vl.config.DEEPSEEK_API_KEY = original_key
-        vl.memory.get_memory_context = original_mem
-        vl._remember = original_remember
 
-    session._speak_sentence.assert_not_awaited()
-    assert not any(m["type"] == "turn_end" for m in ws.sent_json)
+async def test_cleanup_without_agent_still_closes_websocket():
+    """`_agent` puede seguir en `None` si `run()` corta antes de conectar
+    (ej. sin DEEPSEEK_API_KEY) — `_cleanup` no debe romper por eso."""
+    ws = FakeClientWebSocket()
+    session = voice_live.VoiceSession(ws)
+
+    await session._cleanup()
+
+    assert ws.closed_code == 1000

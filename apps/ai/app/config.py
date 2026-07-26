@@ -77,10 +77,17 @@ DEMO_TENANT_ID = os.getenv("DEMO_TENANT_ID", "11111111-1111-1111-1111-1111111111
 # derivar tenant (`claims.teamId`) y rol (`claims.role`). Clave COMPARTIDA con el backend.
 JWT_SECRET = os.getenv("JWT_SECRET", "demo-secret-seguria-2026")
 
-# LLM del orquestador web (DeepSeek u otro endpoint OpenAI-compatible)
+# LLM del orquestador web (DeepSeek u otro endpoint OpenAI-compatible).
+# "deepseek-chat" quedó DEPRECADO por DeepSeek (confirmado jul 2026 contra
+# la API real: devuelve 400 "The supported API model names are
+# deepseek-v4-pro or deepseek-v4-flash") — cualquier .env que no
+# sobreescriba DEEPSEEK_MODEL con un nombre viejo rompía TODAS las
+# llamadas reales a DeepSeek (voz, chat web, WhatsApp), cayendo a demo o
+# fallando. `-flash` es la variante rápida; `-pro` es más capaz pero más
+# lenta, cambiar acá si hace falta más calidad que velocidad.
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 # Pasarela de pagos Polar: el access token vive SOLO en Nest
 # (`POLAR_ACCESS_TOKEN` en apps/backend). Este proceso IA es cliente delgado

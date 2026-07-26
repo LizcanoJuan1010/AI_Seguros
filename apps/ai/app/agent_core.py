@@ -380,6 +380,17 @@ _TOOL_ENVIAR_NOTA_VOZ = {"type": "function", "function": {
 
 TOOLS_SCHEMA_WHATSAPP = TOOLS_SCHEMA + [_TOOL_ENVIAR_NOTA_VOZ]
 
+# Herramientas para el Voice Agent de Deepgram (voice_live.py): mismo
+# catálogo que el resto de canales, pero aplanado — el `functions` de
+# Deepgram espera {name, description, parameters} directo, no envuelto en
+# {"type": "function", "function": {...}} como el formato de OpenAI/DeepSeek
+# que usa TOOLS_SCHEMA. Verificado empíricamente (openspec/changes/
+# voice-agent-spike): el schema completo de una tool (enums, objetos
+# anidados) se acepta tal cual; el único campo que NO va es `client_side`
+# (Deepgram lo agrega él mismo en el FunctionCallRequest, agregarlo acá
+# rompe el parseo del Settings).
+VOICE_AGENT_FUNCTIONS = [t["function"] for t in TOOLS_SCHEMA]
+
 
 # ---------- Store de sesión de cierre (checkout) ----------
 

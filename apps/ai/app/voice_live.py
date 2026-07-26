@@ -1,31 +1,23 @@
-"""WebSocket de voz en tiempo real (/ws/voice/live) — Deepgram STT/TTS +
-el MISMO agente RAG que ya usa el chat SSE (assistant.py). Deepgram solo
-transcribe y genera audio; el turno lo resuelve `_run_llm`/`_run_demo` sin
-tocarlos — mismo RAG, mismas tools, misma memoria que el chat web.
+"""WebSocket de voz en tiempo real (/ws/voice/live) — una sola conexión al
+Voice Agent de Deepgram (STT+LLM+TTS administrado por ellos), en vez de
+orquestar STT/TTS/DeepSeek por separado (arquitectura vieja, ver
+openspec/changes/live-call-deepgram y live-call-voice-quality). El LLM
+sigue siendo DeepSeek (conectado como proveedor `think` custom) y las
+herramientas son las mismas de `agent_core.TOOLS_SCHEMA` — cambia CÓMO se
+orquesta la conversación, no la lógica de negocio.
 
-Solo lo consume el gateway WS de NestJS (nunca el navegador directo, ver
-design.md) — Nest relaya audio binario + frames JSON en ambas direcciones
-sin transformarlos. Este módulo NO escribe en Postgres (AiCall/CallMessage):
-esa persistencia la hace Nest espiando `transcript_final`/`turn_end`.
+Solo lo consume el gateway WS de NestJS (nunca el navegador directo) — Nest
+relaya audio binario + frames JSON en ambas direcciones sin transformarlos.
+Este módulo NO escribe en Postgres (AiCall/CallMessage): esa persistencia
+la hace Nest espiando `transcript_final`/`turn_end`.
 
-Protocolo completo: openspec/changes/live-call-deepgram/design.md,
-openspec/changes/live-call-voice-quality/design.md
-Verificado contra developers.deepgram.com (jul 2026):
-  - STT `nova-*` wss://api.deepgram.com/v1/listen — Authorization: Token
-    <key>, audio binario crudo, respuestas JSON {"type":"Results",
-    is_final, channel.alternatives[0].transcript}.
-  - STT `flux-*` wss://api.deepgram.com/v2/listen — mismo audio binario,
-    respuestas {"type":"TurnInfo", "event": ..., "transcript": ...} (turno
-    semántico, no de silencio; ver DeepgramSTT.transcripts()).
-  - TTS wss://api.deepgram.com/v1/speak — Authorization: Token <key>,
-    {"type":"Speak","text":...} encola texto, {"type":"Flush"} pide el
-    audio ya (conexión PERSISTENTE para toda la llamada, no por turno),
-    {"type":"Clear"} descarta todo sin cerrar (usado en el barge-in).
+Protocolo completo y qué se verificó EMPÍRICAMENTE contra la API real
+(la doc pública de Deepgram no traía un ejemplo completo para este caso):
+openspec/changes/voice-agent-spike/, openspec/changes/voice-agent-migration/design.md
 """
 import asyncio
 import json
 import logging
-import re
 import uuid
 from typing import AsyncIterator, Optional
 
@@ -34,7 +26,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
 
 from . import auth, config, memory
-from .assistant import _remember, _run_demo, _run_llm
+from .agent_core import SYSTEM_PROMPT_VOICE, VOICE_AGENT_FUNCTIONS, _exec_tool
+from .assistant import _remember
 
 log = logging.getLogger("seguria.voice_live")
 router = APIRouter()
@@ -42,88 +35,11 @@ router = APIRouter()
 _AUTH_TIMEOUT_S = 10
 
 
-def _deepgram_listen_url() -> str:
-    """STT en español (LATAM). Con un modelo `flux-*` usa el endpoint nuevo
-    `/v2/listen` (detección de turno SEMÁNTICA, no de silencio — ver
-    `DeepgramSTT.transcripts()`); con cualquier otro modelo (`nova-3` por
-    defecto) sigue en `/v1/listen`, donde el turno cierra con `speech_final`
-    tras `endpointing` ms de silencio. Cambiar de uno a otro es solo
-    `DEEPGRAM_STT_MODEL` (rollback sin tocar código)."""
-    if config.DEEPGRAM_STT_MODEL.startswith("flux-"):
-        return (
-            "wss://api.deepgram.com/v2/listen"
-            f"?model={config.DEEPGRAM_STT_MODEL}"
-            f"&language_hint={config.DEEPGRAM_LANGUAGE}"
-            "&encoding=linear16&sample_rate=16000"
-        )
-    endpointing = max(10, config.DEEPGRAM_ENDPOINTING_MS)
-    return (
-        "wss://api.deepgram.com/v1/listen"
-        f"?model={config.DEEPGRAM_STT_MODEL}"
-        f"&language={config.DEEPGRAM_LANGUAGE}"
-        "&encoding=linear16&sample_rate=16000&channels=1"
-        f"&interim_results=true&endpointing={endpointing}"
-    )
-
-
-def _deepgram_speak_url() -> str:
-    return (
-        "wss://api.deepgram.com/v1/speak"
-        f"?model={config.DEEPGRAM_VOICE_MODEL}&encoding=linear16&sample_rate=24000"
-    )
-
-
-def _normalize_echo_text(text: str) -> str:
-    """Minúsculas + sin puntuación, para comparar eco TTS→mic."""
-    lowered = text.strip().lower()
-    return re.sub(r"[^\w\s]", "", lowered, flags=re.UNICODE)
-
-
-def looks_like_echo(transcript: str, last_spoken: str, *, min_chars: int = 8) -> bool:
-    """True si el transcript final parece eco del último TTS (parlante→mic)."""
-    t = _normalize_echo_text(transcript)
-    last = _normalize_echo_text(last_spoken)
-    if len(t) < min_chars or len(last) < min_chars:
-        return False
-    if t in last or last in t:
-        return True
-    t_words = set(t.split())
-    last_words = set(last.split())
-    if not t_words:
-        return False
-    overlap = len(t_words & last_words) / len(t_words)
-    return overlap >= 0.8 and len(t_words) <= len(last_words) + 2
-
-
-_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
-
-
-class _SentenceSplitter:
-    """Acumula texto de `token` y libera oraciones completas a medida que
-    llegan — así se puede hablar la primera oración sin esperar a que el
-    LLM termine la respuesta entera."""
-
-    def __init__(self) -> None:
-        self.buf = ""
-
-    def push(self, delta: str) -> list[str]:
-        self.buf += delta
-        parts = _SENTENCE_END_RE.split(self.buf)
-        if len(parts) <= 1:
-            return []
-        *complete, self.buf = parts
-        return [p.strip() for p in complete if p.strip()]
-
-    def finish(self) -> str:
-        rest = self.buf.strip()
-        self.buf = ""
-        return rest
-
-
 def _parse_sse_frame(frame: str) -> Optional[tuple[str, dict]]:
     """Parsea 'event: X\\ndata: {json}\\n\\n' (formato de `_frame` en
-    assistant.py) de vuelta a (event, data). Así se reusan `_run_llm`/
-    `_run_demo` literalmente sin tocarlos ni duplicar su lógica."""
+    assistant.py) de vuelta a (event, data) — se reusa para traducir la
+    salida de `_checkout_frames`/`_summarize_tool` (chat web) a eventos del
+    canal de voz sin duplicar esa lógica."""
     lines = frame.strip("\n").split("\n")
     if len(lines) != 2 or not lines[0].startswith("event: ") or not lines[1].startswith("data: "):
         return None
@@ -135,136 +51,109 @@ def _parse_sse_frame(frame: str) -> Optional[tuple[str, dict]]:
     return event, data
 
 
-class DeepgramSTT:
-    """Conexión saliente a Deepgram `/v1/listen`. Reenvía el audio del
-    navegador (ya relayado por Nest) y expone los transcripts parciales y
-    finales tal como los devuelve Deepgram."""
+_VOICE_AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 
-    def __init__(self) -> None:
+
+class DeepgramVoiceAgent:
+    """Conexión ÚNICA al Voice Agent de Deepgram (STT+LLM+TTS en un solo
+    WebSocket) — reemplaza las viejas `DeepgramSTT`+`DeepgramTTS`+el loop
+    `_run_llm`/`_run_demo` de `VoiceSession` (ver
+    openspec/changes/voice-agent-migration). `VoiceSession._agent_loop`
+    traduce sus eventos nativos al vocabulario que ya consume el frontend.
+    Detalle completo del protocolo y qué se verificó empíricamente (la doc
+    pública de Deepgram no traía un ejemplo completo para este caso): ver
+    ese change.
+
+    Puntos que NO calzan con lo que dice la doc pública, confirmados contra
+    la API real:
+      - Auth: `Authorization: Token <key>` (la doc dice Bearer; con Bearer
+        la API real devuelve 401).
+      - Endpoint: `/v1/agent/converse` (`wss://agent.deepgram.com` solo da 404).
+      - `think.endpoint` (LLM custom) va HERMANO de `think.provider`, NO
+        anidado adentro — anidado, Deepgram rechaza con
+        `UNPARSABLE_CLIENT_MESSAGE` sin importar el `provider.type` usado.
+      - `functions` es flat (`name`/`description`/`parameters`) — el campo
+        `client_side` NO va en la función (Deepgram lo agrega él mismo en
+        el `FunctionCallRequest`; incluirlo en Settings rompe el parseo).
+      - `FunctionCallRequest` anida las llamadas en un array `functions`
+        (cada una con `id`/`name`/`arguments` — `arguments` es un STRING
+        JSON, no un dict).
+    """
+
+    def __init__(self, *, system_prompt: str) -> None:
         self._ws = None
+        self._system_prompt = system_prompt
+
+    def _settings_message(self) -> dict:
+        think: dict = {
+            "provider": {"type": "groq", "model": config.DEEPSEEK_MODEL},
+            "prompt": self._system_prompt,
+            "functions": VOICE_AGENT_FUNCTIONS,
+        }
+        if config.DEEPSEEK_API_KEY:
+            # `type: "groq"` es arbitrario entre los no-managed: Deepgram
+            # solo lo usa para la convención de auth del `endpoint`, no
+            # restringe qué proveedor real hay detrás de la URL (verificado
+            # — DeepSeek funciona así, y no aparece como type nombrado).
+            think["endpoint"] = {
+                "url": f"{config.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",
+                "headers": {"authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
+            }
+        return {
+            "type": "Settings",
+            "audio": {
+                "input": {"encoding": "linear16", "sample_rate": 16000},
+                "output": {"encoding": "linear16", "sample_rate": 24000, "container": "none"},
+            },
+            "agent": {
+                "language": "es",
+                "listen": {"provider": {"type": "deepgram", "model": "nova-3"}},
+                "think": think,
+                "speak": {"provider": {"type": "deepgram", "model": config.DEEPGRAM_VOICE_MODEL}},
+            },
+        }
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(
-            _deepgram_listen_url(),
+            _VOICE_AGENT_URL,
             additional_headers={"Authorization": f"Token {config.DEEPGRAM_API_KEY}"},
         )
+        await self._ws.recv()  # Welcome — no trae nada que necesitemos.
+        await self._ws.send(json.dumps(self._settings_message()))
+        reply = json.loads(await self._ws.recv())
+        if reply.get("type") != "SettingsApplied":
+            raise RuntimeError(f"Voice Agent rechazó la configuración: {reply}")
 
     async def send_audio(self, chunk: bytes) -> None:
-        if self._ws is not None:
+        """Deepgram puede cerrar la conexión de su lado en cualquier
+        momento (ej. tras un `FAILED_TO_THINK` — observado en pruebas
+        reales). Un chunk de audio perdido justo en ese instante no debe
+        tumbar `_client_loop` con un traceback; `events()` ya se entera del
+        cierre por su cuenta y termina la sesión con normalidad."""
+        if self._ws is None:
+            return
+        try:
             await self._ws.send(chunk)
-
-    async def close(self) -> None:
-        if self._ws is None:
-            return
-        try:
-            await self._ws.send(json.dumps({"type": "CloseStream"}))
         except ConnectionClosed:
             pass
-        await self._ws.close()
-        self._ws = None
 
-    async def transcripts(self) -> AsyncIterator[tuple[str, str]]:
-        """Yields (`partial`|`utterance`, text).
-
-        - `partial`: interim o segmento `is_final` a mitad de frase (solo UI / barge-in).
-        - `utterance`: el usuario dejó de hablar; ahí arranca el turno.
-
-        Dos esquemas de mensaje según `DEEPGRAM_STT_MODEL` (ver `_deepgram_listen_url`):
-        - `nova-*` (`/v1/listen`): `speech_final` tras `endpointing` ms de
-          silencio cierra el turno. Arrancar el agente en cada `is_final`
-          cancelaba el LLM a mitad de frase y se sentía trabado.
-        - `flux-*` (`/v2/listen`): un solo tipo `TurnInfo` con un campo
-          `event` (`Update`/`StartOfTurn`/`EagerEndOfTurn`/`TurnResumed`/
-          `EndOfTurn`) y el transcript del turno en curso en `transcript`
-          (raíz del mensaje, NO bajo `channel.alternatives` — verificado
-          contra developers.deepgram.com/reference/speech-to-text/listen-flux,
-          jul 2026). `EndOfTurn` es el cierre semántico (<400ms, no
-          silencio); `EagerEndOfTurn` es un adelanto que `TurnResumed` puede
-          desmentir si el usuario sigue hablando — ambos se tratan como
-          `partial` acá, nunca disparan el turno por sí solos.
-        """
-        assert self._ws is not None
-        is_flux = config.DEEPGRAM_STT_MODEL.startswith("flux-")
-        pending: list[str] = []
-        try:
-            async for raw in self._ws:
-                if isinstance(raw, (bytes, bytearray)):
-                    continue
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-
-                if is_flux:
-                    if msg.get("type") != "TurnInfo":
-                        continue
-                    transcript = (msg.get("transcript") or "").strip()
-                    event = msg.get("event")
-                    if event == "EndOfTurn":
-                        if transcript:
-                            yield "utterance", transcript
-                    elif event in ("Update", "EagerEndOfTurn") and transcript:
-                        yield "partial", transcript
-                    continue
-
-                if msg.get("type") != "Results":
-                    continue
-                alternatives = msg.get("channel", {}).get("alternatives", [])
-                transcript = (alternatives[0].get("transcript") if alternatives else "") or ""
-                is_final = bool(msg.get("is_final"))
-                speech_final = bool(msg.get("speech_final"))
-
-                if not is_final:
-                    shown = (" ".join(pending + [transcript.strip()])).strip()
-                    if shown:
-                        yield "partial", shown
-                    continue
-
-                if transcript.strip():
-                    pending.append(transcript.strip())
-                    # Progreso de la frase ya confirmada (aún sin silencio final).
-                    if not speech_final:
-                        yield "partial", " ".join(pending)
-
-                if speech_final:
-                    full = " ".join(pending).strip()
-                    pending.clear()
-                    if full:
-                        yield "utterance", full
-        except ConnectionClosed:
-            return
-
-
-class DeepgramTTS:
-    """Conexión saliente a Deepgram `/v1/speak` — PERSISTENTE para toda la
-    llamada (se conecta una vez en `VoiceSession.run()`, no por turno).
-    `cancel()` (barge-in) manda `Clear` SIN cerrar la conexión; solo
-    `close()` la cierra de verdad, al terminar la llamada."""
-
-    def __init__(self) -> None:
-        self._ws = None
-
-    async def connect(self) -> None:
-        self._ws = await websockets.connect(
-            _deepgram_speak_url(),
-            additional_headers={"Authorization": f"Token {config.DEEPGRAM_API_KEY}"},
-        )
-
-    async def speak(self, text: str) -> None:
-        if self._ws is not None and text:
-            await self._ws.send(json.dumps({"type": "Speak", "text": text}))
-
-    async def flush(self) -> None:
-        if self._ws is not None:
-            await self._ws.send(json.dumps({"type": "Flush"}))
-
-    async def cancel(self) -> None:
-        """Barge-in: descarta el texto/audio en cola. NO cierra el socket —
-        la conexión sigue viva para el resto de la llamada."""
+    async def inject_user_message(self, content: str) -> None:
+        """Solo para pruebas (sin audio real) — ver voice-agent-spike."""
         if self._ws is None:
             return
         try:
-            await self._ws.send(json.dumps({"type": "Clear"}))
+            await self._ws.send(json.dumps({"type": "InjectUserMessage", "content": content}))
+        except ConnectionClosed:
+            pass
+
+    async def respond_function_call(self, call_id: str, name: str, result) -> None:
+        if self._ws is None:
+            return
+        try:
+            await self._ws.send(json.dumps({
+                "type": "FunctionCallResponse", "id": call_id, "name": name,
+                "content": json.dumps(result, ensure_ascii=False, default=str)[:6000],
+            }))
         except ConnectionClosed:
             pass
 
@@ -272,17 +161,22 @@ class DeepgramTTS:
         if self._ws is None:
             return
         try:
-            await self._ws.send(json.dumps({"type": "Close"}))
-        except ConnectionClosed:
+            await self._ws.close()
+        except Exception:
             pass
-        await self._ws.close()
         self._ws = None
 
-    async def messages(self) -> AsyncIterator[tuple[str, Optional[bytes]]]:
-        """Yields `("audio", bytes)` por cada chunk, o `("flushed", None)`
-        cuando Deepgram confirma que ya renderizó todo lo pedido en el
-        último `Flush` — así el llamador sabe cuándo cortar el drenaje de
-        UNA oración sin tener que cerrar la conexión (persistente)."""
+    async def events(self) -> AsyncIterator[tuple[str, dict | bytes]]:
+        """Yields (kind, payload): `kind` es el `type` nativo del mensaje
+        (`ConversationText`, `FunctionCallRequest`, `UserStartedSpeaking`,
+        `Error`, `History`, ...) o `"audio"` con los bytes crudos de TTS.
+
+        `FAILED_TO_THINK` (falla llamando al LLM) se observó en pruebas
+        reales — y a diferencia de otros `Error`, Deepgram cierra la
+        conexión completa justo después (no es un error recuperable a
+        mitad de sesión). El llamador recibe el `Error` para avisarle al
+        usuario, y este generador termina solo (`ConnectionClosed`) apenas
+        después — `VoiceSession` no necesita lógica extra para notarlo."""
         if self._ws is None:
             return
         try:
@@ -294,15 +188,16 @@ class DeepgramTTS:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if msg.get("type") == "Flushed":
-                    yield "flushed", None
+                yield msg.get("type", "Unknown"), msg
         except ConnectionClosed:
             return
 
 
 class VoiceSession:
-    """Estado por conexión: auth -> abre Deepgram STT -> loop de turnos ->
-    limpieza. Un turno = transcript final -> agente RAG -> Deepgram TTS."""
+    """Estado por conexión: auth -> conecta al Voice Agent -> loop de
+    eventos -> limpieza. El Voice Agent resuelve STT+LLM(DeepSeek)+TTS en
+    una sola conexión — ya no orquestamos rondas de tool-calling nosotros
+    (eso era `_run_llm`/`_run_demo`, que este canal ya no usa)."""
 
     def __init__(self, ws: WebSocket) -> None:
         self.ws = ws
@@ -313,13 +208,7 @@ class VoiceSession:
         self.muted = False
         self.assistant_speaking = False
         self.turns_completed = 0
-        self.stt = DeepgramSTT()
-        self._tts = DeepgramTTS()
-        self._turn_task: Optional[asyncio.Task] = None
-        # Tokens de generación: barge-in / cancel invalidan turnos y TTS en vuelo.
-        self._turn_gen = 0
-        self._speak_gen = 0
-        self._last_spoken_text = ""
+        self._agent: Optional[DeepgramVoiceAgent] = None
 
     async def _send_json(self, type_: str, data: dict) -> None:
         await self.ws.send_json({"type": type_, "data": data})
@@ -349,30 +238,32 @@ class VoiceSession:
 
     async def run(self) -> None:
         await self.ws.accept()
-        if not config.DEEPGRAM_API_KEY:
-            await self._send_json("auth_error", {"reason": "Deepgram no configurado"})
+        if not config.DEEPGRAM_API_KEY or not config.DEEPSEEK_API_KEY:
+            # El Voice Agent NO tiene un "modo demo" como el chat de texto:
+            # sin DeepSeek real, Deepgram rechaza el Settings (probado en el
+            # spike — "model not available" sin el endpoint que lo redirige).
+            await self._send_json("auth_error", {"reason": "Voice Agent no configurado"})
             await self.ws.close(code=1011)
             return
         if not await self.authenticate():
             await self.ws.close(code=4401)
             return
 
+        mem_ctx = await memory.get_memory_context(self.user_id, tenant_id=self.tenant_id)
+        system_prompt = f"{SYSTEM_PROMPT_VOICE}\n\n{mem_ctx}" if mem_ctx else SYSTEM_PROMPT_VOICE
+        self._agent = DeepgramVoiceAgent(system_prompt=system_prompt)
         try:
-            await self.stt.connect()
-            # TTS persistente: una sola conexión para TODA la llamada — antes
-            # se abría una por turno, sumando un handshake completo a cada
-            # respuesta hablada.
-            await self._tts.connect()
+            await self._agent.connect()
         except Exception as exc:
-            log.warning("no se pudo conectar a Deepgram STT/TTS: %s", exc)
+            log.warning("no se pudo conectar al Voice Agent: %s", exc)
             await self._send_json("error", {"message": "Deepgram no disponible"})
             await self.ws.close(code=1011)
             return
 
-        stt_task = asyncio.create_task(self._stt_loop())
+        agent_task = asyncio.create_task(self._agent_loop())
         client_task = asyncio.create_task(self._client_loop())
         _done, pending = await asyncio.wait(
-            {stt_task, client_task}, return_when=asyncio.FIRST_COMPLETED
+            {agent_task, client_task}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
@@ -388,7 +279,7 @@ class VoiceSession:
                 data = message.get("bytes")
                 if data is not None:
                     if not self.muted:
-                        await self.stt.send_audio(data)
+                        await self._agent.send_audio(data)
                     continue
                 text = message.get("text")
                 if text is None:
@@ -404,146 +295,89 @@ class VoiceSession:
         except WebSocketDisconnect:
             return
 
-    async def _stt_loop(self) -> None:
-        async for event, transcript in self.stt.transcripts():
-            if event == "partial":
-                await self._send_json("transcript_partial", {"text": transcript})
-                # Interim / segmento parcial: solo corta TTS si la IA habla.
-                if self.assistant_speaking and transcript.strip():
-                    await self._barge_in()
-                continue
+    async def _agent_loop(self) -> None:
+        """Traduce los eventos nativos del Voice Agent al MISMO vocabulario
+        que ya consume el frontend (`useLiveVoiceCall.ts`) — cero cambios
+        ahí. Un hiccup puntual (reenviar audio, un `Error` del agente) no
+        debe tumbar toda la llamada; solo se corta si la conexión al Voice
+        Agent misma se cae (`events()` termina)."""
+        async for kind, payload in self._agent.events():
+            try:
+                await self._handle_agent_event(kind, payload)
+            except Exception:
+                log.warning("fallo manejando evento %s del Voice Agent", kind, exc_info=True)
 
-            # event == "utterance" (speech_final): el usuario terminó de hablar.
-            await self._send_json("transcript_final", {"text": transcript})
+    async def _handle_agent_event(self, kind: str, payload) -> None:
+        if kind == "audio":
+            await self.ws.send_bytes(payload)
+            return
+        if kind == "ConversationText":
+            role = payload.get("role")
+            content = payload.get("content", "")
+            if role == "user":
+                await self._send_json("transcript_final", {"text": content})
+                if self.assistant_speaking:
+                    await self._barge_in()
+                asyncio.create_task(_remember(self.user_id, content, self.tenant_id))
+            elif role == "assistant":
+                await self._send_json("token", {"text": content})
+            return
+        if kind == "UserStartedSpeaking":
             if self.assistant_speaking:
                 await self._barge_in()
+            return
+        if kind == "FunctionCallRequest":
+            for call in payload.get("functions", []):
+                await self._handle_function_call(call)
+            return
+        if kind == "Error":
+            log.warning("Voice Agent error: %s", payload)
+            await self._send_json("error", {
+                "message": payload.get("description") or "Error del agente de voz"})
+            return
+        # AgentAudioDone (fin de turno hablado), History, Welcome,
+        # SettingsApplied, etc.: sin acción por ahora — ver Open Questions
+        # en openspec/changes/voice-agent-migration/design.md.
 
-            if looks_like_echo(transcript, self._last_spoken_text):
-                log.info("descartando transcript eco del TTS: %r", transcript[:120])
-                continue
+    async def _handle_function_call(self, call: dict) -> None:
+        from .assistant import _checkout_frames, _summarize_tool
 
-            self._turn_gen += 1
-            if self._turn_task and not self._turn_task.done():
-                self._turn_task.cancel()
-            self._turn_task = asyncio.create_task(self._run_turn(transcript))
+        name = call.get("name")
+        call_id = call.get("id")
+        try:
+            args = json.loads(call.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        await self._send_json("tool_start", {"tool": name, "args": args})
+        try:
+            result = await asyncio.to_thread(
+                _exec_tool, name, args, phone=self.user_id, role=self.role,
+                tenant_id=self.tenant_id)
+        except Exception as exc:
+            log.exception("tool %s falló", name)
+            result = {"error": f"la herramienta falló: {exc}"}
+        summary, meta = _summarize_tool(name, result)
+        await self._send_json("tool_result", {"tool": name, "summary": summary, "meta": meta})
+        for frame in _checkout_frames(name, result):
+            parsed = _parse_sse_frame(frame)
+            if parsed:
+                await self._send_json(*parsed)
+        await self._agent.respond_function_call(call_id, name, result)
 
     async def _barge_in(self) -> None:
-        """Corta TTS en curso: `Clear` en la MISMA conexión persistente (ya
-        no se cierra/reabre) e invalida `_speak_gen` para que el drenaje de
-        audio en vuelo de `_speak_sentence` corte de inmediato."""
+        """El usuario empezó a hablar mientras la IA sonaba: avisa al
+        frontend para que corte la reproducción. El Voice Agent maneja la
+        interrupción de su lado (a confirmar con una llamada real — ver
+        Open Questions del design.md)."""
         self.assistant_speaking = False
-        self._speak_gen += 1
-        await self._tts.cancel()
         await self._send_json("barge_in", {})
 
-    async def _run_turn(self, transcript: str) -> None:
-        gen = self._turn_gen
-        out: dict = {"reply": ""}
-        splitter = _SentenceSplitter()
-        try:
-            await self._send_json("thinking", {"text": "Analizando tu mensaje..."})
-            mem_ctx = await memory.get_memory_context(self.user_id, tenant_id=self.tenant_id)
-            runner = _run_llm if config.DEEPSEEK_API_KEY else _run_demo
-            # `channel="voice"` selecciona el prompt de cierre (Camilo) en vez
-            # de Sofía — ya trae las restricciones de voz (respuestas cortas,
-            # no leer URLs, no re-saludar si el historial ya tiene turnos
-            # previos), así que el transcript va SIN prefijo/hint: eso antes
-            # ensuciaba `chat_history` con texto de instrucción disfrazado de
-            # habla del cliente (ver `_history_user_message`).
-            async for frame in runner(
-                self.session_id, transcript, mem_ctx, self.role,
-                self.user_id, self.tenant_id, out, channel="voice",
-            ):
-                if gen != self._turn_gen:
-                    return
-                parsed = _parse_sse_frame(frame)
-                if parsed is None:
-                    continue
-                event, data = parsed
-                if event == "done":
-                    continue
-                await self._send_json(event, data)
-                if event == "token":
-                    for sentence in splitter.push(data.get("text", "")):
-                        if gen != self._turn_gen:
-                            return
-                        await self._speak_sentence(gen, sentence)
-            if gen != self._turn_gen:
-                return
-            await _remember(self.user_id, transcript, self.tenant_id)
-        except asyncio.CancelledError:
-            await self._end_speaking()
-            return
-        except Exception as exc:
-            await self._end_speaking()
-            if gen != self._turn_gen:
-                return
-            log.exception("fallo en el turno de voz")
-            await self._send_json("error", {"message": f"Ocurrió un problema técnico: {exc}"})
-            return
-
-        if gen != self._turn_gen:
-            await self._end_speaking()
-            return
-
-        reply_text = out.get("reply", "")
-        await self._send_json("turn_end", {"reply_text": reply_text})
-        self.turns_completed += 1
-        tail = splitter.finish()
-        if tail and gen == self._turn_gen:
-            await self._speak_sentence(gen, tail)
-        await self._end_speaking()
-
-    async def _speak_sentence(self, gen: int, text: str) -> None:
-        """Sintetiza UNA oración ya cerrada sobre la conexión TTS
-        persistente y reenvía su audio hasta el ack `Flushed` de Deepgram —
-        así el audio de la primera oración arranca sin esperar el resto de
-        la respuesta. `gen` es el `_speak_gen` vigente al momento de
-        encolarla: si un barge-in lo invalida, el drenaje corta al toque."""
-        if not text:
-            return
-        if not self.assistant_speaking:
-            self.assistant_speaking = True
-            try:
-                await self._send_json("assistant_speaking_start", {})
-            except Exception:
-                pass
-        self._last_spoken_text = (self._last_spoken_text + " " + text).strip()
-        try:
-            await self._tts.speak(text)
-            await self._tts.flush()
-            async for kind, chunk in self._tts.messages():
-                if gen != self._speak_gen:
-                    return
-                if kind == "audio":
-                    await self.ws.send_bytes(chunk)
-                elif kind == "flushed":
-                    return
-        except Exception as exc:
-            log.warning("fallo en TTS: %s", exc)
-            try:
-                await self._send_json("error", {"message": "Deepgram TTS no disponible"})
-            except Exception:
-                pass
-
-    async def _end_speaking(self) -> None:
-        if self.assistant_speaking:
-            self.assistant_speaking = False
-            try:
-                await self._send_json("assistant_speaking_end", {})
-            except Exception:
-                pass
-
     async def _cleanup(self) -> None:
-        self._turn_gen += 1
-        self._speak_gen += 1
-        if self._turn_task and not self._turn_task.done():
-            self._turn_task.cancel()
-        await self.stt.close()
-        try:
-            await self._tts.close()
-        except Exception:
-            pass
+        if self._agent is not None:
+            try:
+                await self._agent.close()
+            except Exception:
+                pass
         try:
             await self.ws.close()
         except RuntimeError:
